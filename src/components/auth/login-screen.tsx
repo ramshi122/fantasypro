@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Eye, EyeOff, KeyRound, Loader2, Shield, Sparkles, Zap, Lock } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Loader2, Shield, Sparkles, Zap, Lock, ArrowRight } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import { useAuth } from "@/lib/store";
 import { verifyAuth } from "@/lib/api";
@@ -154,6 +154,22 @@ export function LoginScreen() {
                 </>
               )}
             </Button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAuth("guest_skip_" + Date.now(), {
+                  name: "Guest User",
+                  plan: "Browse Only",
+                });
+                toast.success("Bypassed login — browsing as guest");
+              }}
+              disabled={loading}
+              className="w-full h-11 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-semibold text-sm backdrop-blur-sm transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              Skip — Browse as Guest
+              <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
 
           <div className="mt-5 pt-4 border-t border-white/15 text-center">
