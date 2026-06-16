@@ -11,6 +11,7 @@ import {
   ExternalLink,
   Gift,
   Loader2,
+  Lock,
   Pencil,
   Plus,
   RefreshCw,
@@ -52,6 +53,7 @@ import {
   getNonPlayingPlayersInTeam,
   isLineupAnnounced,
 } from "@/lib/lineup";
+import { useLicense } from "@/lib/use-license";
 import { cn } from "@/lib/utils";
 import { roleFromPlayerType, shortName, teamColor } from "@/lib/format";
 
@@ -60,6 +62,7 @@ type Step = "loading" | "ready" | "saving" | "error";
 export function TransferFlow({ match }: { match: MatchInfo }) {
   const token = useAuth((s) => s.token);
   const isGuest = useAuth((s) => s.isGuest);
+  const license = useLicense();
   const [step, setStep] = useState<Step>("loading");
   const [existingTeams, setExistingTeams] = useState<TeamRow[]>([]);
   const [players, setPlayers] = useState<MatchPlayer[]>([]);
@@ -374,25 +377,40 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               <p className="text-sm text-muted-foreground mb-3">
                 No teams yet. Auto-generate up to 500 teams or build one manually from {players.length} real players.
               </p>
+              {/* License lock banner */}
+              {!license.isLicensed && (
+                <div className="mb-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 p-3 text-center">
+                  <div className="flex items-center justify-center gap-1.5 mb-1">
+                    <Lock className="w-4 h-4 text-amber-600" />
+                    <p className="text-xs font-bold text-amber-700 dark:text-amber-300">
+                      License Required to Generate Teams
+                    </p>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Activate your CRICB license key to unlock team generation, auto pick, GL generator & more.
+                  </p>
+                </div>
+              )}
               <div className="flex flex-col sm:flex-row gap-2 justify-center">
                 <Button
-                  onClick={() => setShowSweepGenerator(true)}
-                  className="brand-gradient text-white"
+                  onClick={() => license.requireLicense() && setShowSweepGenerator(true)}
+                  className={cn(license.isLicensed ? "brand-gradient text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400")}
                   disabled={players.length < 11}
                 >
-                  <Zap className="w-4 h-4 mr-1.5" />
-                  Auto Generate Teams
+                  {license.isLicensed ? <Zap className="w-4 h-4 mr-1.5" /> : <Lock className="w-4 h-4 mr-1.5" />}
+                  {license.isLicensed ? "Auto Generate Teams" : "Auto Generate (Locked)"}
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => {
+                  onClick={() => license.requireLicense() && (() => {
                     setEditingTeam(null);
                     setShowEditor(true);
-                  }}
+                  })()}
                   disabled={players.length === 0}
+                  className={cn(!license.isLicensed && "border-amber-300 text-amber-600 dark:border-amber-800 dark:text-amber-400")}
                 >
-                  <Plus className="w-4 h-4 mr-1.5" />
-                  Build Manually
+                  {license.isLicensed ? <Plus className="w-4 h-4 mr-1.5" /> : <Lock className="w-4 h-4 mr-1.5" />}
+                  {license.isLicensed ? "Build Manually" : "Build (Locked)"}
                 </Button>
               </div>
             </div>
@@ -410,43 +428,53 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
             <div className="flex gap-1.5 flex-wrap">
               <Button
                 size="sm"
-                onClick={() => setShowBulkTransfer(true)}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                onClick={() => license.requireLicense() && setShowBulkTransfer(true)}
+                className={cn(
+                  license.isLicensed ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700",
+                  !license.isLicensed && "cursor-pointer"
+                )}
                 disabled={existingTeams.length === 0}
               >
-                <Send className="w-3.5 h-3.5 mr-1" />
-                Bulk Transfer
+                {license.isLicensed ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                {license.isLicensed ? "Bulk Transfer" : "Transfer 🔒"}
               </Button>
               <Button
                 size="sm"
-                onClick={() => setShowFreeContests(true)}
-                className="bg-amber-500 hover:bg-amber-600 text-white"
+                onClick={() => license.requireLicense() && setShowFreeContests(true)}
+                className={cn(
+                  license.isLicensed ? "bg-amber-500 hover:bg-amber-600 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
+                )}
                 disabled={existingTeams.length === 0}
               >
-                <Gift className="w-3.5 h-3.5 mr-1" />
-                Free Contests
+                {license.isLicensed ? <Gift className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                {license.isLicensed ? "Free Contests" : "Contests 🔒"}
               </Button>
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => setShowSweepGenerator(true)}
+                onClick={() => license.requireLicense() && setShowSweepGenerator(true)}
                 disabled={players.length < 11}
-                className="border-violet-200 text-violet-700 dark:text-violet-300"
+                className={cn(
+                  "border-violet-200 text-violet-700 dark:text-violet-300",
+                  !license.isLicensed && "border-amber-300 text-amber-600 dark:border-amber-800 dark:text-amber-400"
+                )}
               >
-                <Zap className="w-3.5 h-3.5 mr-1" />
-                Auto Generate
+                {license.isLicensed ? <Zap className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                {license.isLicensed ? "Auto Generate" : "Generate 🔒"}
               </Button>
               <Button
                 size="sm"
-                onClick={() => {
+                onClick={() => license.requireLicense() && (() => {
                   setEditingTeam(null);
                   setShowEditor(true);
-                }}
-                className="brand-gradient text-white"
+                })()}
+                className={cn(
+                  license.isLicensed ? "brand-gradient text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
+                )}
                 disabled={players.length === 0}
               >
-                <Plus className="w-4 h-4 mr-1" />
-                Add Team
+                {license.isLicensed ? <Plus className="w-4 h-4 mr-1" /> : <Lock className="w-4 h-4 mr-1" />}
+                {license.isLicensed ? "Add Team" : "Add 🔒"}
               </Button>
             </div>
           </div>
