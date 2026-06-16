@@ -20,7 +20,11 @@ export const metadata: Metadata = {
   keywords: ["FantasyPro", "fantasy cricket", "fantasy football", "Dream11", "team generator", "fantasy sports"],
   authors: [{ name: "FantasyPro" }],
   icons: {
-    icon: "/logo.svg",
+    icon: [
+      { url: "/logo.png", type: "image/png", sizes: "64x64" },
+      { url: "/logo-square.png", type: "image/png", sizes: "256x256" },
+    ],
+    apple: "/logo-square.png",
   },
   manifest: "/manifest.json",
   openGraph: {

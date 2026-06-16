@@ -78,7 +78,16 @@ export function LoginScreen() {
           className="text-center pt-6 pb-10"
         >
           <div className="flex justify-center mb-6">
-            <BrandLogo size={72} />
+            <div className="w-28 h-28 rounded-2xl overflow-hidden shadow-2xl bg-white/10 backdrop-blur-sm">
+              <img
+                src="/logo-full.png"
+                alt="FantasyPro"
+                className="w-full h-full object-contain"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            </div>
           </div>
           <h1 className="text-3xl font-black text-white tracking-tight">
             Welcome 👋
