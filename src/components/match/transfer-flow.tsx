@@ -9,6 +9,7 @@ import {
   Copy,
   Crown,
   ExternalLink,
+  Gift,
   Loader2,
   Pencil,
   Plus,
@@ -42,6 +43,7 @@ import {
 import { TeamDisplay } from "./team-display";
 import { AutoGenerator } from "./auto-generator";
 import { BulkTransferModal } from "./bulk-transfer-modal";
+import { FreeContestsModal } from "./free-contests-modal";
 import { OtpLoginModal } from "@/components/auth/otp-login-modal";
 import { cn } from "@/lib/utils";
 import { roleFromPlayerType, shortName, teamColor } from "@/lib/format";
@@ -60,6 +62,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [showSweepGenerator, setShowSweepGenerator] = useState(false);
   const [showBulkTransfer, setShowBulkTransfer] = useState(false);
+  const [showFreeContests, setShowFreeContests] = useState(false);
   const [showOtpLogin, setShowOtpLogin] = useState(false);
   const [linkedApp, setLinkedApp] = useState<FantasyApp | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -317,6 +320,15 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               </Button>
               <Button
                 size="sm"
+                onClick={() => setShowFreeContests(true)}
+                className="bg-amber-500 hover:bg-amber-600 text-white"
+                disabled={existingTeams.length === 0}
+              >
+                <Gift className="w-3.5 h-3.5 mr-1" />
+                Free Contests
+              </Button>
+              <Button
+                size="sm"
                 variant="outline"
                 onClick={() => setShowSweepGenerator(true)}
                 disabled={players.length < 11}
@@ -473,6 +485,18 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         teams={existingTeams}
         onOpenOtpLogin={() => {
           setShowBulkTransfer(false);
+          setShowOtpLogin(true);
+        }}
+      />
+
+      {/* Free Contests modal */}
+      <FreeContestsModal
+        open={showFreeContests}
+        onClose={() => setShowFreeContests(false)}
+        match={match}
+        teams={existingTeams}
+        onOpenOtpLogin={() => {
+          setShowFreeContests(false);
           setShowOtpLogin(true);
         }}
       />

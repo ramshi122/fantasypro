@@ -166,6 +166,7 @@ interface ApiResponse {
   teams_list?: Array<{ team_id: string | number; team_number: number }>;
   joinResults?: Array<{ teamId: string | number; success: boolean }>;
   summary?: { successCount: number; failedCount: number };
+  contests?: unknown[];
   expertTeamData?: string[];
   expertPredictionData?: string[];
   expertVideoData?: string[];
@@ -1139,4 +1140,175 @@ export async function bulkTransferToLinkedAccount(
     results,
     transferLinks,
   };
+}
+
+/* ---------- Free Contest Join ---------- */
+
+export interface FreeContest {
+  contestId: string;
+  contestName?: string;
+  totalPrizeAmount?: number;
+  prizeDisplayText?: string;
+  maxAllowedTeams?: number;
+  maxJoinTeamCount?: number;
+  joinedTeamIds?: number[];
+  joinedCount?: number;
+  availableSlots?: number;
+  notJoinedTeamIds?: number[];
+  canJoinMore?: boolean;
+  [k: string]: unknown;
+}
+
+export interface FreeContestsResult {
+  status: "success" | "fail";
+  message?: string;
+  contests: FreeContest[];
+}
+
+/**
+ * Fetch all free contests available for a match + the user's linked account.
+ *
+ * In guest mode (no real auth token), simulates 2 mock free contests so the
+ * UI is fully functional for testing.
+ */
+export async function fetchFreeContests(params: {
+  fantasyApp: FantasyApp;
+  authToken: string;
+  matchId: string;
+  allTeamIds: number[];
+}): Promise<FreeContestsResult> {
+  const isGuestToken = !params.authToken || params.authToken.startsWith("guest_") || params.authToken.startsWith("test_");
+
+  if (isGuestToken) {
+    await new Promise((r) => setTimeout(r, 600));
+    return {
+      status: "success",
+      contests: [
+        {
+          contestId: "free_mega_" + params.matchId,
+          contestName: "Mega Free Contest",
+          totalPrizeAmount: 1000,
+          prizeDisplayText: "₹1,000",
+          maxAllowedTeams: 5,
+          maxJoinTeamCount: 5,
+          joinedTeamIds: [],
+          joinedCount: 0,
+          availableSlots: Math.min(5, params.allTeamIds.length),
+          notJoinedTeamIds: params.allTeamIds,
+          canJoinMore: params.allTeamIds.length > 0,
+        },
+        {
+          contestId: "free_practice_" + params.matchId,
+          contestName: "Practice Contest",
+          totalPrizeAmount: 100,
+          prizeDisplayText: "₹100",
+          maxAllowedTeams: 1,
+          maxJoinTeamCount: 1,
+          joinedTeamIds: [],
+          joinedCount: 0,
+          availableSlots: Math.min(1, params.allTeamIds.length),
+          notJoinedTeamIds: params.allTeamIds,
+          canJoinMore: params.allTeamIds.length > 0,
+        },
+      ],
+    };
+  }
+
+  try {
+    const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (userToken) headers.Authorization = `Bearer ${userToken}`;
+    const endpoint =
+      params.fantasyApp === "dream11"
+        ? `/api/dream11/contest/all-free-status`
+        : `/api/my11circle/contest/all-free-status`;
+    const res = await rawFetch<ApiResponse>(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        authToken: params.authToken,
+        matchId: params.matchId,
+        allTeamIds: params.allTeamIds,
+      }),
+    });
+    if (res.status === "success") {
+      return { status: "success", contests: (res.contests || []) as FreeContest[] };
+    }
+    return {
+      status: "fail",
+      message: resp_message(res) || "Failed to fetch free contests",
+      contests: [],
+    };
+  } catch (err: any) {
+    return { status: "fail", message: err?.message || "Network error", contests: [] };
+  }
+}
+
+export interface JoinContestFullResult {
+  status: "success" | "fail";
+  message?: string;
+  contestId: string;
+  joinResults: Array<{ teamId: number; success: boolean }>;
+  summary: { successCount: number; failedCount: number };
+}
+
+/**
+ * Join a free contest with the given team IDs.
+ * In guest mode, simulates success.
+ */
+export async function joinFreeContest(params: {
+  fantasyApp: FantasyApp;
+  authToken: string;
+  matchId: string;
+  contestId: string;
+  teamIds: number[];
+}): Promise<JoinContestFullResult> {
+  const isGuestToken = !params.authToken || params.authToken.startsWith("guest_") || params.authToken.startsWith("test_");
+  if (isGuestToken) {
+    await new Promise((r) => setTimeout(r, 800));
+    return {
+      status: "success",
+      contestId: params.contestId,
+      joinResults: params.teamIds.map((id) => ({ teamId: id, success: true })),
+      summary: { successCount: params.teamIds.length, failedCount: 0 },
+      message: `Joined ${params.teamIds.length} team(s) (simulated)`,
+    };
+  }
+  try {
+    const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (userToken) headers.Authorization = `Bearer ${userToken}`;
+    const endpoint =
+      params.fantasyApp === "dream11"
+        ? `/api/dream11/contest/join-contest`
+        : `/api/my11circle/contest/join-contest`;
+    const res = await rawFetch<ApiResponse>(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        authToken: params.authToken,
+        matchId: params.matchId,
+        contestId: params.contestId,
+        teamIds: params.teamIds,
+      }),
+    });
+    return {
+      status: res.status === "success" ? "success" : "fail",
+      message: resp_message(res),
+      contestId: params.contestId,
+      joinResults: (res.joinResults || []) as Array<{ teamId: number; success: boolean }>,
+      summary: (res.summary as { successCount: number; failedCount: number }) || {
+        successCount: 0,
+        failedCount: params.teamIds.length,
+      },
+    };
+  } catch (err: any) {
+    return {
+      status: "fail",
+      message: err?.message || "Network error",
+      contestId: params.contestId,
+      joinResults: [],
+      summary: { successCount: 0, failedCount: params.teamIds.length },
+    };
+  }
 }
