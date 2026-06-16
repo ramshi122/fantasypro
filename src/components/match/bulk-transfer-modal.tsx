@@ -98,6 +98,20 @@ export function BulkTransferModal({
       const firstSupported = supported[0] as FantasyApp;
       setSelectedApp((firstLinked as FantasyApp) || firstSupported || "dream11");
 
+      // Auto-select the best mode:
+      // - If user has a linked+supported account → use "linked" (no login prompt)
+      // - Else if match supports dream11 direct → use "direct"
+      // - Else default to "linked" (will prompt for OTP)
+      const hasLinkedSupported = apps.some((a) => supported.includes(a));
+      const supportsDirect = supported.includes("dream11");
+      if (hasLinkedSupported) {
+        setMode("linked");
+      } else if (supportsDirect) {
+        setMode("direct");
+      } else {
+        setMode("linked"); // will prompt for OTP
+      }
+
       // Build player ID map for ALL supported apps
       const map: Record<string, string> = {};
       const all = [...(d.left_team_players || []), ...(d.right_team_players || [])].filter(Boolean);
