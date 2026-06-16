@@ -13,6 +13,15 @@ interface MatchCardProps {
   index?: number;
 }
 
+// Fantasy app badge metadata
+const FANTASY_APPS: Record<string, { label: string; emoji: string; bg: string; text: string }> = {
+  dream11: { label: "D11", emoji: "🏏", bg: "bg-red-500", text: "text-white" },
+  my11circle: { label: "M11", emoji: "⭕", bg: "bg-sky-500", text: "text-white" },
+  myteam11: { label: "MT11", emoji: "👥", bg: "bg-emerald-500", text: "text-white" },
+  vision11: { label: "V11", emoji: "👁️", bg: "bg-violet-500", text: "text-white" },
+  myfab11: { label: "MF11", emoji: "🎯", bg: "bg-pink-500", text: "text-white" },
+};
+
 export function MatchCard({ match, index = 0 }: MatchCardProps) {
   const openMatch = useApp((s) => s.openMatch);
   const toggleSaveMatch = useApp((s) => s.toggleSaveMatch);
@@ -33,6 +42,12 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
   const live = isMatchLive(match.startTime);
   const countdown = formatCountdown(match.startTime);
   const saved = isSaved(id);
+
+  // Detect supported fantasy apps from fantasy_version field
+  const fantasyVersions = (match as any).fantasy_version || (match as any).fantasy_list || [];
+  const supportedApps: string[] = Array.isArray(fantasyVersions)
+    ? fantasyVersions.map((v: any) => typeof v === "string" ? v : v?.name).filter(Boolean)
+    : [];
 
   function onCardClick() {
     openMatch(match);
@@ -106,6 +121,31 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
           </span>
         </div>
       </div>
+
+      {/* Fantasy app support badges */}
+      {supportedApps.length > 0 && (
+        <div className="px-4 pb-2 flex items-center gap-1 flex-wrap">
+          <span className="text-[8px] font-bold text-muted-foreground uppercase tracking-wider mr-0.5">
+            Supports:
+          </span>
+          {supportedApps.map((app) => {
+            const meta = FANTASY_APPS[app] || { label: app.toUpperCase().slice(0, 4), emoji: "🎮", bg: "bg-slate-500", text: "text-white" };
+            return (
+              <span
+                key={app}
+                className={cn(
+                  "inline-flex items-center gap-0.5 text-[8px] font-bold px-1.5 py-0.5 rounded-md",
+                  meta.bg,
+                  meta.text
+                )}
+                title={app}
+              >
+                {meta.emoji} {meta.label}
+              </span>
+            );
+          })}
+        </div>
+      )}
 
       {/* Footer badges */}
       <div className="px-4 pb-3 pt-2 border-t border-violet-50 dark:border-violet-900/20 flex items-center justify-between">
