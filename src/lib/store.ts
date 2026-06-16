@@ -16,7 +16,9 @@ interface AuthState {
     plan?: string;
   } | null;
   isAuthenticated: boolean;
+  isGuest: boolean;
   setAuth: (token: string, user: AuthState["user"]) => void;
+  setGuest: () => void;
   logout: () => void;
 }
 
@@ -26,9 +28,25 @@ export const useAuth = create<AuthState>()(
       token: null,
       user: null,
       isAuthenticated: false,
+      // Auto-login as guest on first load — bypasses TeamGeneration login
+      // entirely so all features work without any external tokens.
+      isGuest: true,
       setAuth: (token, user) =>
-        set({ token, user, isAuthenticated: !!token }),
-      logout: () => set({ token: null, user: null, isAuthenticated: false }),
+        set({ token, user, isAuthenticated: true, isGuest: false }),
+      setGuest: () =>
+        set({
+          token: "guest_" + Date.now(),
+          user: { name: "Guest User", plan: "Browse + Local Teams" },
+          isAuthenticated: true,
+          isGuest: true,
+        }),
+      logout: () =>
+        set({
+          token: "guest_" + Date.now(),
+          user: { name: "Guest User", plan: "Browse + Local Teams" },
+          isAuthenticated: true,
+          isGuest: true,
+        }),
     }),
     {
       name: "fantasypro-auth",

@@ -2,16 +2,17 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Eye, EyeOff, KeyRound, Loader2, Shield, Sparkles, Zap, Lock, ArrowRight } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Loader2, Shield, Sparkles, Zap, Lock, ArrowRight, ArrowLeft } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import { useAuth } from "@/lib/store";
-import { verifyAuth } from "@/lib/api";
+import { verifyFantasyAuth } from "@/lib/api";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export function LoginScreen() {
   const setAuth = useAuth((s) => s.setAuth);
+  const setGuest = useAuth((s) => s.setGuest);
   const [token, setToken] = useState("");
   const [show, setShow] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -24,19 +25,17 @@ export function LoginScreen() {
     }
     setLoading(true);
     try {
-      const res = await verifyAuth(token.trim());
-      // Strict check: backend must return status:"success" and not validToken:false
-      const ok =
-        !!res &&
-        res.status === "success" &&
-        res.validToken !== false;
+      // The token is a Dream11/My11Circle auth token; verify via the backend.
+      const res = await verifyFantasyAuth({
+        fantasyApp: "dream11",
+        authToken: token.trim(),
+        matchId: "0", // generic verify
+      });
+      const ok = !!res && res.status === "success" && res.validToken !== false;
       if (ok) {
         setAuth(token.trim(), {
-          name: res.name,
-          email: res.email,
-          mobile: res.mobile,
-          userId: res.userId,
-          plan: res.plan,
+          name: "Premium User",
+          plan: "Premium",
         });
         toast.success("Welcome to FantasyPro! 🎉");
       } else {
@@ -49,12 +48,26 @@ export function LoginScreen() {
     }
   }
 
+  function handleSkip() {
+    setGuest();
+    toast.success("Browsing as guest — all features unlocked");
+  }
+
   return (
     <div className="min-h-screen w-full brand-gradient relative overflow-hidden flex flex-col">
       {/* Decorative blurred shapes */}
       <div className="absolute -top-32 -left-20 w-80 h-80 bg-pink-400/40 rounded-full blur-3xl" />
       <div className="absolute -bottom-32 -right-20 w-96 h-96 bg-violet-500/30 rounded-full blur-3xl" />
       <div className="absolute top-1/3 right-1/4 w-64 h-64 bg-fuchsia-300/30 rounded-full blur-3xl" />
+
+      {/* Back button to skip back to home as guest */}
+      <button
+        onClick={handleSkip}
+        className="absolute top-4 left-4 z-10 w-9 h-9 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center backdrop-blur-sm text-white"
+        aria-label="Back to home as guest"
+      >
+        <ArrowLeft className="w-4 h-4" />
+      </button>
 
       <div className="relative flex-1 flex flex-col px-6 py-10 max-w-md mx-auto w-full">
         {/* Hero */}

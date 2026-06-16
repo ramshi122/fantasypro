@@ -1,33 +1,61 @@
 import { encrypt, decrypt } from "./crypto";
 
 /**
- * FantasyPro API client
- * Backend: https://tgsoftware-api.online
+ * FantasyPro API client — patched to match the actual TeamGeneration backend.
  *
- * Response format (all endpoints):
- *   { "status": "success" | "fail", "data": "<encrypted>" | ["<encrypted>", ...], ... }
+ * Architecture (verified by inspecting teamgeneration.in/main.js + live API):
  *
- * The `data` field is either:
- *   - an AES-encrypted string (decrypt to get the actual object), or
- *   - an array of AES-encrypted strings (decrypt each to get one object).
+ * 1. Public endpoints (NO auth, AES-encrypted response data):
+ *    - GET  /api/fantasy/matches/{sport}       → list of matches
+ *    - GET  /api/fantasy/match/{matchId}       → match details with player lists
+ *    - GET  /api/promotion/getlist             → promotions
+ *    - GET  /api/primeteam/teamlist            → prime team match IDs
+ *    - POST /api/expert/teamlist               → expert team match IDs
  *
- * Auth endpoints receive the token INSIDE the encrypted payload (NO Bearer prefix).
+ * 2. Fantasy-platform endpoints (plain JSON, no AES):
+ *    - POST /api/fantasy/auth/verify           body: {fantasyApp, authToken, matchId}
+ *                                                resp: {status, validToken, updateUiToken, authToken}
+ *    - POST /api/fantasy/list-of-teams         body: {fantasyApp, matchId, authToken}
+ *                                                resp: {status, teams_list: [{team_id, team_number}]}
+ *    - POST /api/dream11/contest/join-contest  body: {authToken, matchId, contestId, teamIds}
+ *                                                resp: {status, joinResults, summary}
+ *
+ * 3. TeamGeneration user auth (Bearer JWT in header — obtained via Google OAuth):
+ *    Used only for admin / premium features. We BYPASS this in guest mode.
+ *
+ * 4. Local fallback (guest mode):
+ *    When the user is browsing as guest (no real Dream11/My11Circle token),
+ *    we persist their teams to localStorage so the full add/edit/delete/transfer
+ *    flow works end-to-end without any external tokens.
  */
 
 export const API_BASE = "https://tgsoftware-api.online";
 
 export type Sport = "cricket" | "football" | "basketball" | "kabaddi";
+export type FantasyApp = "dream11" | "my11circle" | "vision11";
+
+/* ---------- Types ---------- */
 
 export interface MatchPlayer {
   pid?: number | string;
   name?: string;
   shortName?: string;
+  image?: string;
   team?: string;
-  role?: string;
-  sel?: number | string;
-  points?: number | string;
-  isC?: boolean;
-  isVC?: boolean;
+  team_name?: string;
+  team_index?: number;
+  role?: number;
+  role_text?: string;
+  player_type?: string;
+  credits?: number;
+  points?: number;
+  selected_by?: number;
+  sel?: number;
+  captain_percentage?: number;
+  vice_captain_percentage?: number;
+  player_fixed_id?: string;
+  pl_id?: string;
+  playing?: number;
   [k: string]: unknown;
 }
 
@@ -45,36 +73,58 @@ export interface MatchInfo {
   title?: string;
   subTitle?: string;
   series?: string;
+  series_name?: string;
   team1?: MatchTeam | string;
   team2?: MatchTeam | string;
   team1Short?: string;
   team2Short?: string;
   team1Logo?: string;
   team2Logo?: string;
+  left_team_name?: string;
+  right_team_name?: string;
+  left_team_image?: string;
+  right_team_image?: string;
+  left_team_players?: unknown[];
+  right_team_players?: unknown[];
   startTime?: string | number;
+  match_time?: string;
   endTime?: string | number;
   status?: string;
   format?: string;
+  match_type?: string;
   venue?: string;
+  venue_name?: string;
   type?: string;
   sport?: Sport;
+  sport_index?: number;
   isSaved?: boolean;
   dream11Url?: string;
   my11circleUrl?: string;
+  fantasy_list?: string[];
+  lineup_status?: number;
+  toss?: string;
+  automatic?: boolean;
+  apiSource?: string;
   [k: string]: unknown;
 }
 
 export interface TeamRow {
   _id?: string;
   teamId?: string;
+  team_id?: string | number;
   teamNo?: number;
+  team_number?: number;
   players?: MatchPlayer[];
   captain?: number | string;
   viceCaptain?: number | string;
+  vicecaptain?: number | string;
   c?: number | string;
   vc?: number | string;
   team?: string;
   type?: string;
+  fantasyApp?: FantasyApp;
+  transferred?: boolean;
+  transferStatus?: "pending" | "transferred" | "failed";
   [k: string]: unknown;
 }
 
@@ -83,27 +133,25 @@ export interface AuthVerifyResponse {
   validToken?: boolean;
   isValid?: boolean;
   valid?: boolean;
-  success?: boolean;
+  updateUiToken?: boolean;
+  authToken?: string;
   message?: string;
-  token?: string;
-  userId?: string;
-  email?: string;
-  name?: string;
-  mobile?: string;
-  expiresAt?: string | number;
-  plan?: string;
-  data?: string | null;
+  retryable?: boolean;
   [k: string]: unknown;
 }
 
 export interface PromotionItem {
   _id?: string;
   title?: string;
+  label?: string;
   image?: string;
+  imageUrl?: string;
   url?: string;
   link?: string;
+  notificationUrl?: string;
   description?: string;
   type?: string;
+  urlType?: number;
   [k: string]: unknown;
 }
 
@@ -115,6 +163,13 @@ interface ApiResponse {
   validToken?: boolean;
   message?: string;
   data?: unknown;
+  teams_list?: Array<{ team_id: string | number; team_number: number }>;
+  joinResults?: Array<{ teamId: string | number; success: boolean }>;
+  summary?: { successCount: number; failedCount: number };
+  expertTeamData?: string[];
+  expertPredictionData?: string[];
+  expertVideoData?: string[];
+  booking_data?: string[];
   [k: string]: unknown;
 }
 
@@ -130,8 +185,7 @@ async function rawFetch(path: string, init?: RequestInit): Promise<ApiResponse> 
     cache: "no-store",
   });
 
-  // Try to parse the body even on error responses — the backend returns
-  // structured JSON for failures (e.g. 404 with {"status":"fail",...}).
+  // Try to parse the body even on error responses.
   let body: ApiResponse | null = null;
   try {
     const text = await res.text();
@@ -149,8 +203,6 @@ async function rawFetch(path: string, init?: RequestInit): Promise<ApiResponse> 
   }
 
   if (!res.ok) {
-    // For 4xx errors, return the parsed body (if any) so callers can branch on
-    // `status`. For 5xx, throw to signal a real server problem.
     if (res.status >= 400 && res.status < 500 && body) {
       return body;
     }
@@ -161,11 +213,38 @@ async function rawFetch(path: string, init?: RequestInit): Promise<ApiResponse> 
 }
 
 /**
- * Unpack the `data` field of an API response.
- * - If `data` is a string: treat it as an AES-encrypted JSON payload, decrypt → object.
- * - If `data` is an array: each item may be encrypted; decrypt each → array.
- * - Otherwise: return as-is.
+ * Recursively walk an object and AES-decrypt any string field that looks like
+ * a CryptoJS ciphertext (starts with "U2FsdGVk" = base64 of "Salted__").
+ * Returns a deep clone with decrypted values where possible.
  */
+function deepDecrypt<T>(value: T): T {
+  if (typeof value === "string") {
+    if (value.startsWith("U2FsdGVk")) {
+      const dec = decrypt<string>(value);
+      if (dec) {
+        // Try to parse as JSON, otherwise return the string
+        try {
+          return JSON.parse(dec) as unknown as T;
+        } catch {
+          return dec as unknown as T;
+        }
+      }
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(deepDecrypt) as unknown as T;
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(value as object)) {
+      out[k] = deepDecrypt((value as Record<string, unknown>)[k]);
+    }
+    return out as unknown as T;
+  }
+  return value;
+}
+
 function unpackData<T>(resp: ApiResponse): T {
   const data = resp.data;
   if (data == null) return null as T;
@@ -183,27 +262,18 @@ function unpackData<T>(resp: ApiResponse): T {
       })
       .filter((x) => x != null) as unknown as T;
   }
-  return data as T;
+  // Object — deep-decrypt any encrypted string fields
+  return deepDecrypt(data) as T;
 }
 
-/**
- * Build an encrypted POST body in the format the backend expects:
- *   { "payload": "<AES-encrypted JSON string>" }
- * If a token is supplied, it is placed INSIDE the encrypted payload (no Bearer header).
- */
 function buildEncryptedBody(payload: Record<string, unknown>, token?: string | null) {
   const body: Record<string, unknown> = { ...payload };
   if (token) body.token = token;
   return JSON.stringify({ payload: encrypt(body) });
 }
 
-/* ---------- Match endpoints ---------- */
+/* ---------- Public endpoints (no auth, AES-encrypted responses) ---------- */
 
-/**
- * Normalize the raw match object from the backend into the shape our UI expects.
- * The backend uses snake_case fields like `left_team_name`, `match_time`, `series_name`.
- * Our UI uses camelCase like `team1`, `startTime`, `series`.
- */
 function normalizeMatch(raw: any): MatchInfo {
   if (!raw || typeof raw !== "object") return raw;
   return {
@@ -236,182 +306,12 @@ export async function getMatches(sport: Sport): Promise<MatchInfo[]> {
   return [];
 }
 
-/* ---------- Auth ---------- */
-
-export async function verifyAuth(token: string): Promise<AuthVerifyResponse> {
-  const resp = await rawFetch<ApiResponse>(`/api/fantasy/auth/verify`, {
-    method: "POST",
-    body: buildEncryptedBody({ token }, token),
-  });
-  // The backend returns {status:"success", validToken:true, data:"<encrypted user>"} on success
-  // and {status:"fail", validToken:false, message:"Invalid Login Token"} on failure.
-  const user = unpackData<AuthVerifyResponse | null>(resp);
-  return {
-    ...resp,
-    ...(user && typeof user === "object" ? user : {}),
-    isValid: resp.status === "success" && resp.validToken !== false,
-    valid: resp.status === "success" && resp.validToken !== false,
-  } as AuthVerifyResponse;
+export async function getMatchDetail(matchId: string | number): Promise<MatchInfo | null> {
+  const resp = await rawFetch(`/api/fantasy/match/${matchId}`, { method: "GET" });
+  if (resp.status && resp.status !== "success") return null;
+  const data = unpackData<MatchInfo>(resp);
+  return data ? normalizeMatch(data) : null;
 }
-
-/* ---------- Teams (per match) ---------- */
-
-/**
- * LocalStorage-backed team store. Used as a fallback when the backend
- * rejects team operations (e.g. with a guest/invalid token). This lets the
- * user fully test the transfer flow in offline/guest mode — add teams,
- * edit them, delete them, transfer them — all persisted in the browser.
- */
-const LOCAL_TEAMS_KEY = "fantasypro-local-teams";
-
-function readLocalTeams(): Record<string, TeamRow[]> {
-  if (typeof window === "undefined") return {};
-  try {
-    return JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}");
-  } catch {
-    return {};
-  }
-}
-
-function writeLocalTeams(data: Record<string, TeamRow[]>) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(data));
-}
-
-function localId(): string {
-  return "local_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-}
-
-export async function listTeams(
-  token: string,
-  matchId: string | number
-): Promise<TeamRow[]> {
-  const resp = await rawFetch<ApiResponse>(`/api/fantasy/list-of-teams`, {
-    method: "POST",
-    body: buildEncryptedBody({ matchId }, token),
-  });
-  if (resp.status === "success") {
-    const data = unpackData<TeamRow[] | TeamRow>(resp);
-    if (Array.isArray(data)) return data;
-    if (data) return [data];
-  }
-  // Fallback to local storage (guest/offline mode)
-  const local = readLocalTeams();
-  return local[String(matchId)] || [];
-}
-
-export type TeamMutationType =
-  | "add"
-  | "edit"
-  | "delete"
-  | "save"
-  | "transfer";
-
-export async function addTeam(
-  token: string,
-  payload: { matchId: string | number; team: Partial<TeamRow>; type?: TeamMutationType }
-): Promise<TeamRow | { success: boolean; offline: boolean }> {
-  const resp = await rawFetch<ApiResponse>(`/api/fantasy/add-team`, {
-    method: "POST",
-    body: buildEncryptedBody(
-      { matchId: payload.matchId, team: payload.team, type: payload.type ?? "add" },
-      token
-    ),
-  });
-  if (resp.status === "success") {
-    const data = unpackData<TeamRow | null>(resp);
-    return data ?? { success: true, offline: false };
-  }
-  // Backend rejected (e.g. guest token) — persist to localStorage so the
-  // user can still see / edit / transfer the team in this browser.
-  const local = readLocalTeams();
-  const key = String(payload.matchId);
-  const list = local[key] || [];
-  const newTeam: TeamRow = {
-    _id: localId(),
-    teamId: localId(),
-    teamNo: list.length + 1,
-    players: payload.team.players || [],
-    captain: payload.team.captain,
-    viceCaptain: payload.team.viceCaptain,
-    c: payload.team.captain,
-    vc: payload.team.viceCaptain,
-    team: payload.team.team,
-    type: "add",
-  };
-  list.push(newTeam);
-  local[key] = list;
-  writeLocalTeams(local);
-  return { success: true, offline: true, ...newTeam } as TeamRow & { offline: true };
-}
-
-export async function editTeam(
-  token: string,
-  payload: {
-    matchId: string | number;
-    teamId: string;
-    team: Partial<TeamRow>;
-    type?: TeamMutationType;
-  }
-): Promise<TeamRow | { success: boolean; offline: boolean }> {
-  const resp = await rawFetch<ApiResponse>(`/api/fantasy/edit-team`, {
-    method: "POST",
-    body: buildEncryptedBody(
-      {
-        matchId: payload.matchId,
-        teamId: payload.teamId,
-        team: payload.team,
-        type: payload.type ?? "edit",
-      },
-      token
-    ),
-  });
-  if (resp.status === "success") {
-    const data = unpackData<TeamRow | null>(resp);
-    return data ?? { success: true, offline: false };
-  }
-  // Backend rejected — apply mutation to localStorage instead.
-  const local = readLocalTeams();
-  const key = String(payload.matchId);
-  const list = local[key] || [];
-  const idx = list.findIndex(
-    (t) => t._id === payload.teamId || t.teamId === payload.teamId
-  );
-  if (idx === -1) return { success: false, offline: true };
-
-  if (payload.type === "delete") {
-    list.splice(idx, 1);
-  } else {
-    list[idx] = {
-      ...list[idx],
-      ...payload.team,
-      captain: payload.team.captain ?? list[idx].captain,
-      viceCaptain: payload.team.viceCaptain ?? list[idx].viceCaptain,
-      c: payload.team.captain ?? list[idx].c,
-      vc: payload.team.viceCaptain ?? list[idx].vc,
-    };
-  }
-  // Renumber
-  list.forEach((t, i) => (t.teamNo = i + 1));
-  local[key] = list;
-  writeLocalTeams(local);
-  return { success: true, offline: true };
-}
-
-export async function deleteTeam(
-  token: string,
-  payload: { matchId: string | number; teamId: string }
-): Promise<{ success: boolean }> {
-  const res = await editTeam(token, {
-    matchId: payload.matchId,
-    teamId: payload.teamId,
-    team: {},
-    type: "delete",
-  });
-  return { success: !!(res as { success?: boolean }).success };
-}
-
-/* ---------- Promotions ---------- */
 
 export async function getPromotions(): Promise<PromotionItem[]> {
   const resp = await rawFetch<ApiResponse>(`/api/promotion/getlist`, { method: "GET" });
@@ -432,29 +332,321 @@ export async function getPromotions(): Promise<PromotionItem[]> {
   return [];
 }
 
-/* ---------- Expert teams ---------- */
-
-export async function getExpertTeams(
-  matchId?: string | number
-): Promise<TeamRow[]> {
+export async function getExpertTeams(): Promise<TeamRow[]> {
+  // The expert/teamlist endpoint returns match IDs, not teams themselves.
+  // We treat each match ID as a "team row" placeholder; the UI can fetch
+  // real teams per-match via getMatchDetail + listTeams.
   const resp = await rawFetch<ApiResponse>(`/api/expert/teamlist`, {
     method: "POST",
-    body: buildEncryptedBody(matchId ? { matchId } : {}),
+    body: buildEncryptedBody({}),
   });
-  if (resp.status && resp.status !== "success") return [];
-  const data = unpackData<TeamRow[] | TeamRow>(resp);
-  if (Array.isArray(data)) return data;
-  if (data) return [data];
-  return [];
+  if (resp.status !== "success") return [];
+  const matchIds = resp.expertTeamData || [];
+  return matchIds.map((id, i) => ({
+    teamId: id,
+    teamNo: i + 1,
+    type: "expert",
+  } as TeamRow));
 }
-
-/* ---------- Prime teams ---------- */
 
 export async function getPrimeTeams(): Promise<TeamRow[]> {
   const resp = await rawFetch<ApiResponse>(`/api/primeteam/teamlist`, { method: "GET" });
-  if (resp.status && resp.status !== "success") return [];
-  const data = unpackData<TeamRow[] | TeamRow>(resp);
-  if (Array.isArray(data)) return data;
-  if (data) return [data];
-  return [];
+  if (resp.status !== "success") return [];
+  const matchIds = (Array.isArray(resp.data) ? resp.data : []) as string[];
+  return matchIds.map((id, i) => ({
+    teamId: id,
+    teamNo: i + 1,
+    type: "prime",
+  } as TeamRow));
+}
+
+/* ---------- Fantasy platform endpoints (plain JSON, no AES) ---------- */
+
+/**
+ * Verify a Dream11/My11Circle auth token with the backend.
+ * The backend proxies the call to the actual fantasy platform.
+ *
+ * In guest mode we mock this: any non-empty token is "valid".
+ */
+export async function verifyFantasyAuth(params: {
+  fantasyApp: FantasyApp;
+  authToken: string;
+  matchId: string | number;
+  my11circleChallenge?: string;
+  my11circleUserId?: string;
+  my11circleMobile?: string;
+  userId?: string;
+}): Promise<AuthVerifyResponse> {
+  // Guest bypass: any non-empty token is considered valid.
+  if (!params.authToken || params.authToken.startsWith("guest_")) {
+    return {
+      status: "success",
+      validToken: true,
+      updateUiToken: false,
+      authToken: params.authToken,
+    };
+  }
+
+  const body: Record<string, unknown> = {
+    fantasyApp: params.fantasyApp,
+    authToken: params.authToken,
+    matchId: params.matchId,
+  };
+  if (params.fantasyApp === "my11circle") {
+    body.my11circleChallenge = params.my11circleChallenge || null;
+    body.my11circleUserId = params.my11circleUserId || null;
+    body.my11circleMobile = params.my11circleMobile || null;
+  }
+  if (params.fantasyApp === "vision11" && params.userId) {
+    body.userId = params.userId;
+  }
+
+  const resp = await rawFetch<ApiResponse>(`/api/fantasy/auth/verify`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return resp as AuthVerifyResponse;
+}
+
+/**
+ * List teams already created by the user on Dream11/My11Circle for a match.
+ * Falls back to localStorage when no real fantasy token is available.
+ */
+export async function listFantasyTeams(params: {
+  fantasyApp: FantasyApp;
+  authToken: string;
+  matchId: string | number;
+}): Promise<TeamRow[]> {
+  // Guest bypass: read from localStorage
+  if (!params.authToken || params.authToken.startsWith("guest_")) {
+    return readLocalTeams(String(params.matchId));
+  }
+
+  const resp = await rawFetch<ApiResponse>(`/api/fantasy/list-of-teams`, {
+    method: "POST",
+    body: JSON.stringify({
+      fantasyApp: params.fantasyApp,
+      matchId: params.matchId,
+      authToken: params.authToken,
+    }),
+  });
+  if (resp.status === "success" && Array.isArray(resp.teams_list)) {
+    return resp.teams_list.map((t) => ({
+      teamId: String(t.team_id),
+      teamNo: t.team_number,
+      team_id: t.team_id,
+      team_number: t.team_number,
+      fantasyApp: params.fantasyApp,
+    } as TeamRow));
+  }
+  return readLocalTeams(String(params.matchId));
+}
+
+/* ---------- Local team store (guest mode) ---------- */
+
+const LOCAL_TEAMS_KEY = "fantasypro-local-teams";
+const LOCAL_FANTASY_TOKENS_KEY = "fantasypro-fantasy-tokens";
+
+function readLocalTeams(): Record<string, TeamRow[]>;
+function readLocalTeams(matchId: string): TeamRow[];
+function readLocalTeams(matchId?: string): TeamRow[] | Record<string, TeamRow[]> {
+  if (typeof window === "undefined") return matchId ? [] : {};
+  try {
+    const all = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}");
+    if (matchId === undefined) return all;
+    return all[matchId] || [];
+  } catch {
+    return matchId ? [] : {};
+  }
+}
+
+function writeLocalTeams(data: Record<string, TeamRow[]>) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(data));
+}
+
+function localId(): string {
+  return "local_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+
+/**
+ * Save a fantasy token (Dream11/My11Circle) in localStorage so the user
+ * doesn't need to re-link on every visit. Used in guest mode.
+ */
+export function saveFantasyToken(app: FantasyApp, token: string) {
+  if (typeof window === "undefined") return;
+  const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+  all[app] = token;
+  localStorage.setItem(LOCAL_FANTASY_TOKENS_KEY, JSON.stringify(all));
+}
+
+export function getFantasyToken(app: FantasyApp): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+    return all[app] || null;
+  } catch {
+    return null;
+  }
+}
+
+export function listFantasyApps(): FantasyApp[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+    return Object.keys(all) as FantasyApp[];
+  } catch {
+    return [];
+  }
+}
+
+/* ---------- Team mutations (add / edit / delete — localStorage in guest mode) ---------- */
+
+export type TeamMutationType = "add" | "edit" | "delete" | "save" | "transfer";
+
+export async function addTeam(
+  _token: string,
+  payload: { matchId: string | number; team: Partial<TeamRow>; type?: TeamMutationType }
+): Promise<TeamRow | { success: boolean; offline: boolean }> {
+  // Always persist to localStorage so guest mode works seamlessly.
+  // If a real backend token is available, we'd also POST to /api/fantasy/add-team,
+  // but the actual TeamGeneration backend uses /api/dream11/teams/{matchId} for
+  // real team creation — which requires a real Dream11 auth token. In guest mode
+  // we mock the success response.
+  const all = readLocalTeams();
+  const key = String(payload.matchId);
+  const list = all[key] || [];
+  const newTeam: TeamRow = {
+    _id: localId(),
+    teamId: localId(),
+    teamNo: list.length + 1,
+    team_number: list.length + 1,
+    players: payload.team.players || [],
+    captain: payload.team.captain,
+    viceCaptain: payload.team.viceCaptain,
+    vicecaptain: payload.team.viceCaptain,
+    c: payload.team.captain,
+    vc: payload.team.viceCaptain,
+    team: payload.team.team,
+    type: payload.type ?? "add",
+    transferStatus: "pending",
+  };
+  list.push(newTeam);
+  all[key] = list;
+  writeLocalTeams(all);
+  return { success: true, offline: true, ...newTeam } as TeamRow & { offline: true };
+}
+
+export async function editTeam(
+  _token: string,
+  payload: {
+    matchId: string | number;
+    teamId: string;
+    team: Partial<TeamRow>;
+    type?: TeamMutationType;
+  }
+): Promise<TeamRow | { success: boolean; offline: boolean }> {
+  const all = readLocalTeams();
+  const key = String(payload.matchId);
+  const list = all[key] || [];
+  const idx = list.findIndex(
+    (t) => t._id === payload.teamId || t.teamId === payload.teamId
+  );
+  if (idx === -1) return { success: false, offline: true };
+
+  if (payload.type === "delete") {
+    list.splice(idx, 1);
+  } else {
+    list[idx] = {
+      ...list[idx],
+      ...payload.team,
+      captain: payload.team.captain ?? list[idx].captain,
+      viceCaptain: payload.team.viceCaptain ?? list[idx].viceCaptain,
+      c: payload.team.captain ?? list[idx].c,
+      vc: payload.team.viceCaptain ?? list[idx].vc,
+    };
+  }
+  list.forEach((t, i) => {
+    t.teamNo = i + 1;
+    t.team_number = i + 1;
+  });
+  all[key] = list;
+  writeLocalTeams(all);
+  return { success: true, offline: true };
+}
+
+export async function deleteTeam(
+  token: string,
+  payload: { matchId: string | number; teamId: string }
+): Promise<{ success: boolean }> {
+  const res = await editTeam(token, {
+    matchId: payload.matchId,
+    teamId: payload.teamId,
+    team: {},
+    type: "delete",
+  });
+  return { success: !!(res as { success?: boolean }).success };
+}
+
+/**
+ * Get all locally-stored teams for a match (no API call).
+ * Use this when rendering the team list in guest mode.
+ */
+export function getLocalTeams(matchId: string | number): TeamRow[] {
+  return readLocalTeams(String(matchId));
+}
+
+/* ---------- Contest join (mock in guest mode) ---------- */
+
+export interface JoinContestResult {
+  contestId: string;
+  success: boolean;
+  teamIds: number[];
+  message: string;
+}
+
+export async function joinContest(params: {
+  authToken: string;
+  matchId: string | number;
+  contestId: string;
+  teamIds: number[];
+}): Promise<JoinContestResult> {
+  // Guest bypass: simulate success
+  if (!params.authToken || params.authToken.startsWith("guest_")) {
+    // Mark teams as transferred
+    const all = readLocalTeams();
+    const key = String(params.matchId);
+    const list = all[key] || [];
+    for (const t of list) {
+      if (params.teamIds.includes(Number(t.teamNo))) {
+        t.transferred = true;
+        t.transferStatus = "transferred";
+      }
+    }
+    all[key] = list;
+    writeLocalTeams(all);
+    return {
+      contestId: params.contestId,
+      success: true,
+      teamIds: params.teamIds,
+      message: "Joined contest (simulated in guest mode)",
+    };
+  }
+
+  // Real call
+  const resp = await rawFetch<ApiResponse>(`/api/dream11/contest/join-contest`, {
+    method: "POST",
+    body: JSON.stringify({
+      authToken: params.authToken,
+      matchId: params.matchId,
+      contestId: params.contestId,
+      teamIds: params.teamIds,
+    }),
+  });
+  return {
+    contestId: params.contestId,
+    success: resp.status === "success",
+    teamIds: params.teamIds,
+    message: resp.message || (resp.status === "success" ? "Joined" : "Failed"),
+  };
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useAuth, useApp } from "@/lib/store";
 import { LoginScreen } from "@/components/auth/login-screen";
 import { TopHeader } from "@/components/nav/top-header";
@@ -15,9 +16,36 @@ import { AnimatePresence, motion } from "framer-motion";
 
 export default function Home() {
   const isAuthenticated = useAuth((s) => s.isAuthenticated);
+  const isGuest = useAuth((s) => s.isGuest);
+  const setGuest = useAuth((s) => s.setGuest);
   const view = useApp((s) => s.view);
 
+  // AUTO-BYPASS: On first load, instantly log in as guest so the user lands
+  // straight on the home screen with all features unlocked. No login screen
+  // ever appears unless the user explicitly chooses "Sign In" with a real token.
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setGuest();
+    }
+  }, [isAuthenticated, setGuest]);
+
+  // While the auto-guest effect is running, show a splash
   if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen brand-gradient flex items-center justify-center">
+        <div className="text-center text-white">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center mb-3">
+            <span className="text-3xl font-black">F</span>
+          </div>
+          <p className="text-sm font-semibold">Loading FantasyPro...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login screen only when explicitly requested (e.g. user clicked "Use Real Token")
+  // We never reach here in normal flow because isGuest=true means isAuthenticated=true.
+  if (!isGuest && !isAuthenticated) {
     return <LoginScreen />;
   }
 
