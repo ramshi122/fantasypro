@@ -418,6 +418,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 linked={linkedApp === "dream11"}
                 onTransfer={(app) => handleTransfer(t, app)}
                 onLinkClick={() => setShowOtpLogin(true)}
+                onJoinContests={() => setShowFreeContests(true)}
               />
             </motion.div>
           ))}
@@ -578,12 +579,14 @@ function TransferButtons({
   linked,
   onTransfer,
   onLinkClick,
+  onJoinContests,
 }: {
   team: TeamRow;
   match: MatchInfo;
   linked: boolean;
   onTransfer: (app: FantasyApp) => void;
   onLinkClick: () => void;
+  onJoinContests: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -601,14 +604,14 @@ function TransferButtons({
   }
 
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="grid grid-cols-4 gap-1.5">
       <Button
         size="sm"
         variant="outline"
         className="h-9 text-[11px] border-violet-200 hover:bg-violet-50"
         onClick={handleCopy}
       >
-        {copied ? <Check className="w-3.5 h-3.5 mr-1 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+        {copied ? <Check className="w-3.5 h-3.5 mr-0.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 mr-0.5" />}
         {copied ? "Copied" : "Copy"}
       </Button>
       <Button
@@ -620,7 +623,7 @@ function TransferButtons({
         onClick={() => (linked ? onTransfer("dream11") : onLinkClick())}
         disabled={team.transferred}
       >
-        {team.transferred ? <Check className="w-3.5 h-3.5 mr-1" /> : <Send className="w-3.5 h-3.5 mr-1" />}
+        {team.transferred ? <Check className="w-3.5 h-3.5 mr-0.5" /> : <Send className="w-3.5 h-3.5 mr-0.5" />}
         {team.transferred ? "Sent" : "Dream11"}
       </Button>
       <Button
@@ -629,8 +632,16 @@ function TransferButtons({
         onClick={() => (linked ? onTransfer("my11circle") : onLinkClick())}
         disabled={team.transferred}
       >
-        <ExternalLink className="w-3.5 h-3.5 mr-1" />
+        <ExternalLink className="w-3.5 h-3.5 mr-0.5" />
         My11
+      </Button>
+      <Button
+        size="sm"
+        className="h-9 text-[11px] bg-amber-500 hover:bg-amber-600 text-white"
+        onClick={onJoinContests}
+      >
+        <Gift className="w-3.5 h-3.5 mr-0.5" />
+        Join
       </Button>
     </div>
   );
