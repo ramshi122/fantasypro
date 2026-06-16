@@ -101,8 +101,19 @@ export function roleLabel(role?: string | number): string {
 /**
  * Convert API player_type (e.g. "batter", "pacer", "wicket-keeper") to
  * a short code used for the role badge UI.
+ *
+ * Backend uses numeric `role` field (0=WK, 1=BAT, 2=AR, 3=BOWL) which is more
+ * reliable than player_type (which only has "batter"/"pacer"). We try numeric
+ * first, then fall back to player_type string.
  */
-export function roleFromPlayerType(playerType?: string): string {
+export function roleFromPlayerType(playerType?: string, roleNum?: number): string {
+  // Numeric role takes priority
+  if (typeof roleNum === "number") {
+    if (roleNum === 0) return "WK";
+    if (roleNum === 1) return "BAT";
+    if (roleNum === 2) return "AR";
+    if (roleNum === 3) return "BOWL";
+  }
   const p = (playerType || "").toLowerCase();
   if (p.includes("keeper") || p.includes("wk")) return "WK";
   if (p.includes("pacer") || p.includes("bowler") || p.includes("bowl")) return "BOWL";
@@ -112,5 +123,5 @@ export function roleFromPlayerType(playerType?: string): string {
   if (p.includes("def")) return "DEF";
   if (p.includes("mid")) return "MID";
   if (p.includes("forward") || p.includes("fwd") || p.includes("striker")) return "FWD";
-  return "?";
+  return "BAT"; // default fallback (most common)
 }

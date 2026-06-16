@@ -19,6 +19,7 @@ import {
   Star,
   Trash2,
   X,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +40,7 @@ import {
   type FantasyApp,
 } from "@/lib/api";
 import { TeamDisplay } from "./team-display";
+import { AutoGenerator } from "./auto-generator";
 import { cn } from "@/lib/utils";
 import { roleFromPlayerType, shortName, teamColor } from "@/lib/format";
 
@@ -54,6 +56,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   const [showEditor, setShowEditor] = useState(false);
   const [editingTeam, setEditingTeam] = useState<TeamRow | null>(null);
   const [showLinkModal, setShowLinkModal] = useState(false);
+  const [showSweepGenerator, setShowSweepGenerator] = useState(false);
   const [linkedApp, setLinkedApp] = useState<FantasyApp | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -194,6 +197,14 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
     toast.success(`${app} linked successfully`);
   }
 
+  // Called after the auto-generator has finished. The generator already saved
+  // teams to localStorage via bulkAddTeams(), so we just need to refresh the
+  // view and show a success toast.
+  function handleBulkAddTeams(teams: TeamRow[]) {
+    toast.success(`Generated ${teams.length} unique teams`);
+    setRefreshKey((k) => k + 1);
+  }
+
   return (
     <div className="space-y-4">
       {/* Status banner */}
@@ -252,21 +263,33 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         )}
 
         {step === "ready" && existingTeams.length === 0 && !showEditor && (
-          <div className="mt-3 text-center py-4">
-            <p className="text-sm text-muted-foreground mb-3">
-              No teams yet. Build your first team from {players.length} real players.
-            </p>
-            <Button
-              onClick={() => {
-                setEditingTeam(null);
-                setShowEditor(true);
-              }}
-              className="brand-gradient text-white"
-              disabled={players.length === 0}
-            >
-              <Plus className="w-4 h-4 mr-1.5" />
-              {players.length === 0 ? "No players available" : "Build New Team"}
-            </Button>
+          <div className="mt-3 space-y-3">
+            <div className="text-center py-2">
+              <p className="text-sm text-muted-foreground mb-3">
+                No teams yet. Auto-generate up to 500 teams or build one manually from {players.length} real players.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                <Button
+                  onClick={() => setShowSweepGenerator(true)}
+                  className="brand-gradient text-white"
+                  disabled={players.length < 11}
+                >
+                  <Zap className="w-4 h-4 mr-1.5" />
+                  Auto Generate Teams
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setEditingTeam(null);
+                    setShowEditor(true);
+                  }}
+                  disabled={players.length === 0}
+                >
+                  <Plus className="w-4 h-4 mr-1.5" />
+                  Build Manually
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -274,22 +297,34 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
       {/* Existing teams list */}
       {step === "ready" && existingTeams.length > 0 && !showEditor && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="text-xs font-semibold text-muted-foreground">
               {existingTeams.length} team{existingTeams.length !== 1 ? "s" : ""} saved
             </p>
-            <Button
-              size="sm"
-              onClick={() => {
-                setEditingTeam(null);
-                setShowEditor(true);
-              }}
-              className="brand-gradient text-white"
-              disabled={players.length === 0}
-            >
-              <Plus className="w-4 h-4 mr-1" />
-              Add Team
-            </Button>
+            <div className="flex gap-1.5">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowSweepGenerator(true)}
+                disabled={players.length < 11}
+                className="border-violet-200 text-violet-700 dark:text-violet-300"
+              >
+                <Zap className="w-3.5 h-3.5 mr-1" />
+                Auto Generate
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setEditingTeam(null);
+                  setShowEditor(true);
+                }}
+                className="brand-gradient text-white"
+                disabled={players.length === 0}
+              >
+                <Plus className="w-4 h-4 mr-1" />
+                Add Team
+              </Button>
+            </div>
           </div>
 
           {existingTeams.map((t, i) => (
@@ -391,6 +426,36 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
             onClose={() => setShowLinkModal(false)}
             onLink={handleLinkApp}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Auto Team Generator (Sweep) modal */}
+      <AnimatePresence>
+        {showSweepGenerator && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+            onClick={() => setShowSweepGenerator(false)}
+          >
+            <motion.div
+              initial={{ y: 40, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 40, opacity: 0 }}
+              className="bg-background w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[95vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <AutoGenerator
+                match={match}
+                onClose={() => setShowSweepGenerator(false)}
+                onGenerated={(teams) => {
+                  handleBulkAddTeams(teams);
+                  setShowSweepGenerator(false);
+                }}
+              />
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

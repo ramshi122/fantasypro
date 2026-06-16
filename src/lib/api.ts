@@ -589,6 +589,49 @@ export async function deleteTeam(
 }
 
 /**
+ * Bulk-add multiple teams in one localStorage write (used by Sweep Generator).
+ * Optionally clears existing teams first (mode="replace") or appends (mode="append").
+ */
+export async function bulkAddTeams(
+  _token: string,
+  payload: {
+    matchId: string | number;
+    teams: Partial<TeamRow>[];
+    mode?: "append" | "replace";
+  }
+): Promise<{ success: boolean; count: number }> {
+  const all = readLocalTeams();
+  const key = String(payload.matchId);
+  const existing = payload.mode === "replace" ? [] : (all[key] || []);
+  // Clear existing if replace
+  if (payload.mode === "replace") {
+    all[key] = [];
+  }
+  const list = all[key] || [];
+  for (const t of payload.teams) {
+    const newTeam: TeamRow = {
+      _id: "local_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
+      teamId: "local_" + Math.random().toString(36).slice(2, 10),
+      teamNo: list.length + 1,
+      team_number: list.length + 1,
+      players: t.players || [],
+      captain: t.captain,
+      viceCaptain: t.viceCaptain,
+      vicecaptain: t.viceCaptain,
+      c: t.captain,
+      vc: t.viceCaptain,
+      team: t.team,
+      type: t.type ?? "sweep",
+      transferStatus: "pending",
+    };
+    list.push(newTeam);
+  }
+  all[key] = list;
+  writeLocalTeams(all);
+  return { success: true, count: list.length };
+}
+
+/**
  * Get all locally-stored teams for a match (no API call).
  * Use this when rendering the team list in guest mode.
  */

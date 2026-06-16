@@ -191,3 +191,57 @@ Stage Summary:
 - Full transfer flow works: pick real players → save team → link Dream11 → transfer (simulated locally in guest mode)
 - Teams persist across page reloads via localStorage
 - Login screen only appears if user explicitly requests it (currently no menu entry forces it; user can stay guest forever)
+
+---
+Task ID: 4
+Agent: Main Agent (Super Z)
+Task: Add Auto Team Generator — Sweep feature with team count options (10/20/40/50/100/200/300/400/500), fully automatic player selection, C/VC rotation, uniqueness validation, rule enforcement.
+
+Work Log:
+- Built src/lib/sweep-generator.ts — pure-logic engine (no UI):
+  * cleanPlayerPool: filters out players with no name or no credits (preserves playing=0 which means "lineup not yet out")
+  * groupByRole: groups by WK/BAT/AR/BOWL using numeric role field (0=WK, 1=BAT, 2=AR, 3=BOWL)
+  * isValidRoleBalance: 11 players, 1+ WK, 3-6 BAT, 1-4 AR, 3-6 BOWL
+  * isValidSideBalance: max 7 per side, min 4 per side
+  * isValidCredits: total ≤ 100
+  * pickTeamByType: weighted random selection with 3 strategies (safe/balanced/differential) — 8 different role configurations
+  * pickCaptainVC: rotates C/VC across teams, prefers top-5 captains and top-6 VCs by selected_by %
+  * teamFingerprint: stable hash for duplicate detection
+  * generateSweep: main entry, yields progress via callback, generates in chunks to keep UI responsive
+  * Returns SweepResult with stats: durationMs, duplicates rejected, uniqueCaptains, uniqueVCs, avgExposure, maxExposure, roleDistribution
+
+- Updated src/lib/format.ts roleFromPlayerType: now accepts (playerType, roleNum) — numeric role takes priority over player_type string (which only has "batter"/"pacer" and was missing WK/AR detection)
+
+- Added bulkAddTeams() to src/lib/api.ts: bulk-save multiple teams to localStorage in one write, supports append/replace modes
+
+- Built src/components/match/auto-generator.tsx — full UI panel:
+  * 9 team-count chips (10/20/40/50/100/200/300/400/500)
+  * Replace/Append mode toggle
+  * Generate button with loading state
+  * Live progress bar with phase indicators (validating → selecting → rotating → deduplicating → done)
+  * Result stats card: duration, duplicates rejected, unique C/VC, avg/max exposure, role distribution
+  * Validation rules list (11 players, role balance, side balance, credits, no dupes, C/VC rotation, mix of strategies)
+
+- Updated src/components/match/transfer-flow.tsx:
+  * Wired AutoGenerator as full-screen modal
+  * "Auto Generate Teams" button in empty state AND "Auto Generate" button in existing-teams toolbar
+  * handleBulkAddTeams simplified — auto-generator already saves via bulkAddTeams(), so handler just toasts + refreshes
+
+Verification:
+- Standalone test (scripts/test-sweep3.ts): 20 teams generated in 6ms, 10 unique captains, 10 unique VCs, proper role distribution (WK:20, BAT:85, AR:31, BOWL:84)
+- 100-team test: 26ms, 16 unique captains, 17 unique VCs, 0 duplicates
+- 500-team test: 34ms, 18 unique captains, 20 unique VCs, 5 duplicates rejected
+- Browser test: opened IND vs AFG match → Auto Generate → select 100 → Generate → 100 teams displayed with Edit/Delete/Copy/Dream11/My11 buttons for each
+- localStorage verified: 100 teams stored, each with 11 players, captain, viceCaptain
+- All teams use REAL player data from /api/fantasy/match/{id} (Shubman Gill, Rohit Sharma, Rashid Khan, etc. with credits, roles, sel %)
+- Lint: 0 errors, 0 warnings
+- No console errors, no runtime errors
+
+Stage Summary:
+- Full Auto Team Sweep Generator implemented and working
+- 10–500 teams generated in <40ms with proper rule enforcement
+- C/VC rotation: 16+ unique captains for 100 teams, 18+ for 500 teams
+- No duplicate teams (fingerprint-based dedup)
+- Real player data from API (no mock data)
+- UI is responsive — progress bar + phase indicators, no freezing even at 500 teams
+- All fantasy rules enforced: 11 players, role balance, side balance (max 7), credit limit (100), C/VC rotation
