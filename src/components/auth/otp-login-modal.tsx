@@ -123,18 +123,13 @@ export function OtpLoginModal({
         userId: otpState?.userId,
       });
       if (res.status === "success" && res.token) {
-        saveFantasyToken(selectedApp, res.token);
-        // Also store my11circle extras if present
-        if (selectedApp === "my11circle" && res.my11circleChallenge) {
-          localStorage.setItem(
-            "fantasypro-my11circle-extras",
-            JSON.stringify({
-              challenge: res.my11circleChallenge,
-              userId: res.my11circleUserId,
-              mobile,
-            })
-          );
-        }
+        // Save token + extras (mobile, my11circle challenge/userId) in one record
+        // so the user is NEVER asked to login again until they explicitly unlink.
+        saveFantasyToken(selectedApp, res.token, {
+          mobile,
+          my11circleChallenge: res.my11circleChallenge,
+          my11circleUserId: res.my11circleUserId,
+        });
         setPhase("done");
         toast.success(`${APPS.find((a) => a.id === selectedApp)?.label} linked successfully!`);
         setTimeout(() => {

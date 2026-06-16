@@ -357,7 +357,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                     </span>
                   )}
                 </span>
-                <div className="flex gap-1">
+                <div className="flex gap-1 flex-wrap">
                   <Button
                     size="sm"
                     variant="ghost"
@@ -369,6 +369,18 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                   >
                     <Pencil className="w-3 h-3 mr-1" />
                     Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-[11px] text-violet-700 dark:text-violet-300"
+                    onClick={() => {
+                      setEditingTeam(t);
+                      setShowEditor(true);
+                    }}
+                  >
+                    <RefreshCw className="w-3 h-3 mr-1" />
+                    Replace
                   </Button>
                   <Button
                     size="sm"

@@ -472,11 +472,24 @@ function localId(): string {
 /**
  * Save a fantasy token (Dream11/My11Circle) in localStorage so the user
  * doesn't need to re-link on every visit. Used in guest mode.
+ *
+ * The token persists across page reloads and browser sessions. The user is
+ * only asked to login again if they explicitly unlink the app.
  */
-export function saveFantasyToken(app: FantasyApp, token: string) {
+export function saveFantasyToken(
+  app: FantasyApp,
+  token: string,
+  extras?: { mobile?: string; my11circleChallenge?: string; my11circleUserId?: string }
+) {
   if (typeof window === "undefined") return;
   const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
-  all[app] = token;
+  all[app] = {
+    token,
+    mobile: extras?.mobile || null,
+    my11circleChallenge: extras?.my11circleChallenge || null,
+    my11circleUserId: extras?.my11circleUserId || null,
+    linkedAt: Date.now(),
+  };
   localStorage.setItem(LOCAL_FANTASY_TOKENS_KEY, JSON.stringify(all));
 }
 
@@ -484,7 +497,41 @@ export function getFantasyToken(app: FantasyApp): string | null {
   if (typeof window === "undefined") return null;
   try {
     const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
-    return all[app] || null;
+    const entry = all[app];
+    if (!entry) return null;
+    // Backward compat: entry may be a plain string from older versions
+    return typeof entry === "string" ? entry : entry.token;
+  } catch {
+    return null;
+  }
+}
+
+export interface LinkedFantasyAccount {
+  app: FantasyApp;
+  token: string;
+  mobile?: string | null;
+  my11circleChallenge?: string | null;
+  my11circleUserId?: string | null;
+  linkedAt?: number;
+}
+
+export function getLinkedAccount(app: FantasyApp): LinkedFantasyAccount | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+    const entry = all[app];
+    if (!entry) return null;
+    if (typeof entry === "string") {
+      return { app, token: entry };
+    }
+    return {
+      app,
+      token: entry.token,
+      mobile: entry.mobile,
+      my11circleChallenge: entry.my11circleChallenge,
+      my11circleUserId: entry.my11circleUserId,
+      linkedAt: entry.linkedAt,
+    };
   } catch {
     return null;
   }
@@ -497,6 +544,44 @@ export function listFantasyApps(): FantasyApp[] {
     return Object.keys(all) as FantasyApp[];
   } catch {
     return [];
+  }
+}
+
+export function listLinkedAccounts(): LinkedFantasyAccount[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+    return Object.keys(all).map((app) => {
+      const entry = all[app];
+      if (typeof entry === "string") {
+        return { app: app as FantasyApp, token: entry };
+      }
+      return {
+        app: app as FantasyApp,
+        token: entry.token,
+        mobile: entry.mobile,
+        my11circleChallenge: entry.my11circleChallenge,
+        my11circleUserId: entry.my11circleUserId,
+        linkedAt: entry.linkedAt,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Unlink a fantasy account — removes the token + extras from localStorage.
+ * After this, the user will be asked to login again on next transfer.
+ */
+export function unlinkFantasyApp(app: FantasyApp) {
+  if (typeof window === "undefined") return;
+  try {
+    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+    delete all[app];
+    localStorage.setItem(LOCAL_FANTASY_TOKENS_KEY, JSON.stringify(all));
+  } catch {
+    // ignore
   }
 }
 
@@ -969,6 +1054,9 @@ export async function bulkDirectTransfer(
  *
  * Body format (per team):
  *   {matchId, captain, vice_captain, players, fantasyApp, authToken, sportIndex, type: "new"}
+ *
+ * If replaceMode=true and existingTeamIds is provided, sends type:"edit" with id field
+ * to REPLACE existing teams on the linked account instead of creating new ones.
  */
 export async function bulkTransferToLinkedAccount(
   teams: BulkTransferItem[],
@@ -980,6 +1068,8 @@ export async function bulkTransferToLinkedAccount(
     my11circleChallenge?: string;
     my11circleUserId?: string;
     mobileNumber?: string;
+    replaceMode?: boolean;
+    existingTeamIds?: string[]; // team IDs on the fantasy platform to replace
   },
   onProgress?: (done: number, total: number) => void
 ): Promise<BulkTransferResult> {
@@ -991,6 +1081,8 @@ export async function bulkTransferToLinkedAccount(
 
   for (let i = 0; i < teams.length; i++) {
     const t = teams[i];
+    // In replace mode, use type:"edit" + id if we have an existing team ID for this slot
+    const isReplace = params.replaceMode && params.existingTeamIds && i < params.existingTeamIds.length;
     const body: Record<string, unknown> = {
       matchId: params.matchId,
       captain: t.captainId,
@@ -999,8 +1091,11 @@ export async function bulkTransferToLinkedAccount(
       fantasyApp: params.fantasyApp,
       authToken: params.authToken,
       sportIndex: params.sportIndex ?? 0,
-      type: "new",
+      type: isReplace ? "edit" : "new",
     };
+    if (isReplace && params.existingTeamIds) {
+      body.id = params.existingTeamIds[i];
+    }
     if (params.fantasyApp === "my11circle") {
       body.my11circleChallenge = params.my11circleChallenge || null;
       body.my11circleUserId = params.my11circleUserId || null;
@@ -1011,7 +1106,9 @@ export async function bulkTransferToLinkedAccount(
     }
 
     try {
-      const res = await rawFetch<ApiResponse>(`/api/fantasy/add-team`, {
+      // The original site hits /api/fantasy/add-team for new and /api/fantasy/edit-team for edit
+      const endpoint = isReplace ? `/api/fantasy/edit-team` : `/api/fantasy/add-team`;
+      const res = await rawFetch<ApiResponse>(endpoint, {
         method: "POST",
         body: JSON.stringify(body),
       });

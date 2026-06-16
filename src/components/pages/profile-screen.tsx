@@ -1,21 +1,74 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useApp, useAuth } from "@/lib/store";
 import { BrandLogo } from "@/components/brand-logo";
 import { Button } from "@/components/ui/button";
-import { Bell, ChevronRight, Crown, HelpCircle, LogOut, Settings, Shield, Star, User } from "lucide-react";
+import {
+  Bell,
+  ChevronRight,
+  Crown,
+  HelpCircle,
+  Link2,
+  LogOut,
+  Plus,
+  Settings,
+  Shield,
+  Star,
+  Trash2,
+  User,
+  Users,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
+import {
+  listLinkedAccounts,
+  unlinkFantasyApp,
+  type FantasyApp,
+  type LinkedFantasyAccount,
+} from "@/lib/api";
+import { OtpLoginModal } from "@/components/auth/otp-login-modal";
+import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
+
+const APP_META: Record<FantasyApp, { label: string; emoji: string; color: string }> = {
+  dream11: { label: "Dream11", emoji: "🏏", color: "from-red-500 to-rose-600" },
+  my11circle: { label: "My11Circle", emoji: "⭕", color: "from-sky-500 to-blue-600" },
+  myteam11: { label: "MyTeam11", emoji: "👥", color: "from-emerald-500 to-green-600" },
+  vision11: { label: "Vision11", emoji: "👁️", color: "from-violet-500 to-purple-600" },
+};
 
 export function ProfileScreen() {
   const user = useAuth((s) => s.user);
   const logout = useAuth((s) => s.logout);
   const savedMatches = useApp((s) => s.savedMatches);
   const setView = useApp((s) => s.setView);
+  const [linkedAccounts, setLinkedAccounts] = useState<LinkedFantasyAccount[]>([]);
+  const [showOtpLogin, setShowOtpLogin] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Refresh linked accounts list on mount + when refreshKey changes
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLinkedAccounts(listLinkedAccounts());
+  }, [refreshKey]);
 
   function handleLogout() {
     logout();
     toast.success("Logged out");
     setView("home");
+  }
+
+  function handleUnlink(app: FantasyApp) {
+    unlinkFantasyApp(app);
+    setLinkedAccounts(listLinkedAccounts());
+    toast.success(`${APP_META[app].label} unlinked`);
+  }
+
+  function handleLinked(app: FantasyApp) {
+    setShowOtpLogin(false);
+    setRefreshKey((k) => k + 1);
+    toast.success(`${APP_META[app].label} linked successfully`);
   }
 
   const sections = [
@@ -70,7 +123,86 @@ export function ProfileScreen() {
         <StatCard label="Status" value="Active" icon={Shield} />
       </div>
 
-      {/* Sections */}
+      {/* Linked Fantasy Accounts */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between px-1">
+          <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+            <Link2 className="w-3.5 h-3.5" />
+            Linked Fantasy Accounts
+          </h3>
+          <button
+            onClick={() => setShowOtpLogin(true)}
+            className="text-[11px] font-bold text-violet-600 dark:text-violet-300 flex items-center gap-1 hover:underline"
+          >
+            <Plus className="w-3 h-3" />
+            Link New
+          </button>
+        </div>
+
+        {linkedAccounts.length === 0 ? (
+          <div className="bg-white dark:bg-card rounded-2xl border border-dashed border-violet-200 dark:border-violet-800 p-5 text-center">
+            <Users className="w-8 h-8 mx-auto text-violet-300 mb-2" />
+            <p className="text-sm font-semibold text-foreground mb-0.5">No accounts linked</p>
+            <p className="text-[11px] text-muted-foreground mb-3">
+              Link your Dream11/My11Circle account via OTP to enable direct team transfer.
+              Login is required only once.
+            </p>
+            <Button
+              size="sm"
+              className="brand-gradient text-white h-8 text-xs"
+              onClick={() => setShowOtpLogin(true)}
+            >
+              <Plus className="w-3 h-3 mr-1" />
+              Link Account
+            </Button>
+          </div>
+        ) : (
+          <div className="bg-white dark:bg-card rounded-2xl border border-violet-100 dark:border-violet-900/30 overflow-hidden">
+            <AnimatePresence>
+              {linkedAccounts.map((acc, i) => {
+                const meta = APP_META[acc.app];
+                return (
+                  <motion.div
+                    key={acc.app}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10 }}
+                    transition={{ delay: i * 0.05 }}
+                    className={cn(
+                      "flex items-center gap-3 px-4 py-3.5",
+                      i !== linkedAccounts.length - 1 && "border-b border-violet-50 dark:border-violet-900/20"
+                    )}
+                  >
+                    <div className={cn("w-10 h-10 rounded-xl bg-gradient-to-br flex items-center justify-center text-xl flex-shrink-0", meta.color)}>
+                      {meta.emoji}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-foreground">{meta.label}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {acc.mobile ? `+91 ${acc.mobile}` : "Linked"}
+                        {acc.linkedAt && (
+                          <span className="ml-1.5">
+                            · {new Date(acc.linkedAt).toLocaleDateString()}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleUnlink(acc.app)}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Unlink
+                    </button>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
+          </div>
+        )}
+      </div>
+
+      {/* Other sections */}
       {sections.map((section) => (
         <div key={section.title} className="space-y-2">
           <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-1">
@@ -122,6 +254,13 @@ export function ProfileScreen() {
           Logout
         </Button>
       </div>
+
+      {/* OTP Login modal */}
+      <OtpLoginModal
+        open={showOtpLogin}
+        onClose={() => setShowOtpLogin(false)}
+        onLinked={(app) => handleLinked(app)}
+      />
     </div>
   );
 }

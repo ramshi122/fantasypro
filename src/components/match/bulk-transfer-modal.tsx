@@ -20,7 +20,9 @@ import {
   bulkDirectTransfer,
   bulkTransferToLinkedAccount,
   getFantasyToken,
+  getLinkedAccount,
   getMatchDetail,
+  listFantasyTeams,
   type BulkTransferItem,
   type BulkTransferResult,
   type FantasyApp,
@@ -60,9 +62,11 @@ export function BulkTransferModal({
   const [phase, setPhase] = useState<Phase>("select");
   const [mode, setMode] = useState<Mode>("direct");
   const [selectedApp, setSelectedApp] = useState<FantasyApp>("dream11");
+  const [replaceExisting, setReplaceExisting] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [result, setResult] = useState<BulkTransferResult | null>(null);
   const [linkedApps, setLinkedApps] = useState<FantasyApp[]>([]);
+  const [existingTeamIds, setExistingTeamIds] = useState<string[]>([]);
   const [matchNumericId, setMatchNumericId] = useState<string>("");
   const [matchDbId, setMatchDbId] = useState<string>("");
   const [supportedApps, setSupportedApps] = useState<string[]>([]);
@@ -174,21 +178,46 @@ export function BulkTransferModal({
         );
       } else {
         // Linked account transfer — uses numeric matchId
-        const authToken = getFantasyToken(selectedApp)!;
-        const extras =
-          selectedApp === "my11circle"
-            ? JSON.parse(localStorage.getItem("fantasypro-my11circle-extras") || "{}")
-            : {};
+        const account = getLinkedAccount(selectedApp);
+        if (!account) {
+          toast.error(`${APP_LABELS[selectedApp]?.label} account not linked. Please link via OTP first.`);
+          onOpenOtpLogin();
+          setPhase("select");
+          return;
+        }
+
+        // If replace mode, fetch existing teams first
+        let existingIds: string[] | undefined;
+        if (replaceExisting) {
+          try {
+            const existing = await listFantasyTeams({
+              fantasyApp: selectedApp,
+              authToken: account.token,
+              matchId: matchNumericId,
+            });
+            existingIds = existing
+              .map((t) => String(t.team_id ?? t.teamId ?? ""))
+              .filter(Boolean);
+            if (existingIds.length === 0) {
+              toast.info("No existing teams to replace — creating new instead");
+            }
+          } catch {
+            toast.info("Could not fetch existing teams — creating new instead");
+          }
+        }
+
         res = await bulkTransferToLinkedAccount(
           items,
           {
             matchId: matchNumericId, // numeric ID for /api/fantasy/add-team
             fantasyApp: selectedApp,
-            authToken,
+            authToken: account.token,
             sportIndex: 0,
-            my11circleChallenge: extras.challenge,
-            my11circleUserId: extras.userId,
-            mobileNumber: extras.mobile,
+            my11circleChallenge: account.my11circleChallenge || undefined,
+            my11circleUserId: account.my11circleUserId || undefined,
+            mobileNumber: account.mobile || undefined,
+            replaceMode: replaceExisting,
+            existingTeamIds: existingIds,
           },
           (done, total) => setProgress({ done, total })
         );
@@ -348,27 +377,45 @@ export function BulkTransferModal({
 
                 {/* App selector for linked mode */}
                 {mode === "linked" && canUseLinked && (
-                  <div>
-                    <label className="text-xs font-semibold text-foreground mb-1.5 block">
-                      Transfer to:
-                    </label>
-                    <div className="flex gap-2 flex-wrap">
-                      {linkedAndSupported.map((app) => (
-                        <button
-                          key={app}
-                          onClick={() => setSelectedApp(app)}
-                          className={cn(
-                            "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                            selectedApp === app
-                              ? "brand-gradient text-white"
-                              : "bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
-                          )}
-                        >
-                          {APP_LABELS[app]?.emoji} {APP_LABELS[app]?.label || app}
-                        </button>
-                      ))}
+                  <>
+                    <div>
+                      <label className="text-xs font-semibold text-foreground mb-1.5 block">
+                        Transfer to:
+                      </label>
+                      <div className="flex gap-2 flex-wrap">
+                        {linkedAndSupported.map((app) => (
+                          <button
+                            key={app}
+                            onClick={() => setSelectedApp(app)}
+                            className={cn(
+                              "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                              selectedApp === app
+                                ? "brand-gradient text-white"
+                                : "bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
+                            )}
+                          >
+                            {APP_LABELS[app]?.emoji} {APP_LABELS[app]?.label || app}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+
+                    {/* Replace existing teams toggle */}
+                    <label className="flex items-center gap-2.5 p-3 rounded-xl border border-violet-100 dark:border-violet-900/30 bg-violet-50/30 dark:bg-violet-950/20 cursor-pointer hover:bg-violet-50/50 dark:hover:bg-violet-900/30 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={replaceExisting}
+                        onChange={(e) => setReplaceExisting(e.target.checked)}
+                        className="w-4 h-4 rounded accent-violet-600"
+                      />
+                      <div className="flex-1">
+                        <p className="text-xs font-bold text-foreground">Replace existing teams</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          Overwrite teams already on your {APP_LABELS[selectedApp]?.label} account instead of creating new ones. Useful after lineup is out.
+                        </p>
+                      </div>
+                    </label>
+                  </>
                 )}
 
                 {/* Transfer details */}
@@ -378,6 +425,9 @@ export function BulkTransferModal({
                     <li>• Match: {match.series || match.title || matchNumericId}</li>
                     <li>• Teams to transfer: {validTeams.length}</li>
                     <li>• Mode: {mode === "direct" ? "Direct link (no login)" : `Auto to ${APP_LABELS[selectedApp]?.label || selectedApp}`}</li>
+                    {mode === "linked" && (
+                      <li>• Action: {replaceExisting ? "Replace existing teams" : "Create new teams"}</li>
+                    )}
                     <li>• Match ID: {mode === "direct" ? matchDbId : matchNumericId}</li>
                   </ul>
                 </div>
