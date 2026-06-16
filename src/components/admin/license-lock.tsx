@@ -39,16 +39,16 @@ export function LicenseLockOverlay() {
     activate,
   } = useLicense();
 
-  function handleVerify() {
+  async function handleVerify() {
     if (!keyInput.trim()) {
       toast.error("Enter your license key");
       return;
     }
-    const result = activate(keyInput);
-    if (result.success) {
+    const result = await activate(keyInput);
+    if (result?.success) {
       toast.success(result.message);
     } else {
-      toast.error(result.message);
+      toast.error(result?.message || "Verification failed");
     }
   }
 

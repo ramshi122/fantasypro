@@ -41,21 +41,24 @@ export function useLicense() {
     }
   }, []);
 
-  const activate = useCallback((key: string) => {
+  const activate = useCallback(async (key: string): Promise<{ success: boolean; message: string }> => {
     setVerifying(true);
-    setTimeout(() => {
-      const deviceId = getDeviceId();
-      const result = admin.verifyLicense(key.trim().toUpperCase(), deviceId);
-      setVerifying(false);
-      if (result.valid) {
-        setLicenseVerified(key.trim().toUpperCase());
-        setLicenseState({ verified: true, key: key.trim().toUpperCase(), deviceId });
-        setShowActivate(false);
-        setKeyInput("");
-        return { success: true, message: "License activated!" };
-      }
-      return { success: false, message: result.message };
-    }, 800);
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const deviceId = getDeviceId();
+        const result = admin.verifyLicense(key.trim().toUpperCase(), deviceId);
+        setVerifying(false);
+        if (result.valid) {
+          setLicenseVerified(key.trim().toUpperCase());
+          setLicenseState({ verified: true, key: key.trim().toUpperCase(), deviceId });
+          setShowActivate(false);
+          setKeyInput("");
+          resolve({ success: true, message: "License activated!" });
+        } else {
+          resolve({ success: false, message: result.message });
+        }
+      }, 800);
+    });
   }, [admin]);
 
   const deactivate = useCallback(() => {
