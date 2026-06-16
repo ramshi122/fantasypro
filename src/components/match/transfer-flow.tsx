@@ -79,6 +79,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [lineupAnnounced, setLineupAnnounced] = useState(false);
   const [playingPlayerIds, setPlayingPlayerIds] = useState<Set<string>>(new Set());
+  const [matchSupportsDream11, setMatchSupportsDream11] = useState(false);
 
   const matchId = (match.matchId ?? match.id ?? "") as string;
   const team1Name = (typeof match.team1 === "string" ? match.team1 : (match.team1?.shortName || match.team1?.name)) as string ||
@@ -121,6 +122,16 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         // Filter players: after lineup, only show confirmed playing XI
         const visiblePlayers = filterPlayingPlayers(allPlayers, announced);
         setPlayers(visiblePlayers);
+
+        // Detect if match supports Dream11 transfer:
+        // Check if fantasy_version includes "dream11" OR any player has dream11 in fantasy_id_list
+        const versions = (matchDetail as any).fantasy_version || [];
+        const versionSupportsD11 = versions.some((v: any) => v.name === "dream11");
+        const playerSupportsD11 = visiblePlayers.some((p: any) => {
+          const fil = p.fantasy_id_list || [];
+          return fil.some((f: any) => f.name === "dream11");
+        });
+        setMatchSupportsDream11(versionSupportsD11 || playerSupportsD11);
       } else {
         setPlayers([]);
         setLineupAnnounced(false);
@@ -427,23 +438,25 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               {existingTeams.length} team{existingTeams.length !== 1 ? "s" : ""} saved
             </p>
             <div className="flex gap-1.5 flex-wrap">
-              {/* Transfer to Dream11 */}
-              <Button
-                size="sm"
-                onClick={() => {
-                  if (!license.requireLicense()) return;
-                  setSelectedTransferApp("dream11");
-                  setShowBulkTransfer(true);
-                }}
-                className={cn(
-                  license.isLicensed ? "bg-red-600 hover:bg-red-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700",
-                  !license.isLicensed && "cursor-pointer"
-                )}
-                disabled={existingTeams.length === 0}
-              >
-                {license.isLicensed ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
-                {license.isLicensed ? "🏏 Dream11" : "Dream11 🔒"}
-              </Button>
+              {/* Transfer to Dream11 — only show if match supports Dream11 */}
+              {matchSupportsDream11 && (
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    if (!license.requireLicense()) return;
+                    setSelectedTransferApp("dream11");
+                    setShowBulkTransfer(true);
+                  }}
+                  className={cn(
+                    license.isLicensed ? "bg-red-600 hover:bg-red-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700",
+                    !license.isLicensed && "cursor-pointer"
+                  )}
+                  disabled={existingTeams.length === 0}
+                >
+                  {license.isLicensed ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                  {license.isLicensed ? "🏏 Dream11" : "Dream11 🔒"}
+                </Button>
+              )}
               {/* Transfer to My11Circle */}
               <Button
                 size="sm"
