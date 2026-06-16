@@ -41,6 +41,14 @@ interface BulkTransferModalProps {
 type Mode = "direct" | "linked";
 type Phase = "select" | "transferring" | "done";
 
+// Apps supported by the match (from fantasy_version field)
+const APP_LABELS: Record<string, { label: string; emoji: string }> = {
+  dream11: { label: "Dream11", emoji: "🏏" },
+  my11circle: { label: "My11Circle", emoji: "⭕" },
+  myteam11: { label: "MyTeam11", emoji: "👥" },
+  vision11: { label: "Vision11", emoji: "👁️" },
+};
+
 export function BulkTransferModal({
   open,
   onClose,
@@ -51,53 +59,68 @@ export function BulkTransferModal({
   const isGuest = useAuth((s) => s.isGuest);
   const [phase, setPhase] = useState<Phase>("select");
   const [mode, setMode] = useState<Mode>("direct");
+  const [selectedApp, setSelectedApp] = useState<FantasyApp>("dream11");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [result, setResult] = useState<BulkTransferResult | null>(null);
   const [linkedApps, setLinkedApps] = useState<FantasyApp[]>([]);
+  const [matchNumericId, setMatchNumericId] = useState<string>("");
   const [matchDbId, setMatchDbId] = useState<string>("");
+  const [supportedApps, setSupportedApps] = useState<string[]>([]);
+  // Map: "fixedId|appName" → fantasy player ID for that app
   const [playerIdMap, setPlayerIdMap] = useState<Record<string, string>>({});
 
-  // Refresh linked apps when modal opens
+  // Refresh linked apps + match detail when modal opens
   useEffect(() => {
-    if (open) {
-      const apps: FantasyApp[] = [];
-      for (const a of ["dream11", "my11circle", "myteam11", "vision11"] as FantasyApp[]) {
-        if (getFantasyToken(a)) apps.push(a);
-      }
-      setLinkedApps(apps);
-      // Fetch match detail to get the MongoDB _id and player ID mapping
-      (async () => {
-        const detail = await getMatchDetail((match.matchId ?? match.id ?? "") as string);
-        if (detail) {
-          setMatchDbId((detail as any)._id);
-          // Build a map of player_fixed_id → dream11 player ID (from fantasy_id_list)
-          const map: Record<string, string> = {};
-          const all = [
-            ...((detail as any).left_team_players || []),
-            ...((detail as any).right_team_players || []),
-          ].filter(Boolean);
-          for (const p of all) {
-            // p may already be decrypted by deepDecrypt, or still encrypted
-            let player = p;
-            if (typeof p === "string") {
-              // Decrypt manually if needed
-              const { decrypt } = await import("@/lib/crypto");
-              const dec = decrypt<any>(p);
-              if (dec) player = dec;
-            }
-            const fixedId = String(player.player_fixed_id ?? player.pl_id ?? player.pid ?? "");
-            // Find dream11 ID from fantasy_id_list
-            const fil = player.fantasy_id_list || [];
-            const d11 = fil.find((f: any) => f.name === "dream11");
-            const my11 = fil.find((f: any) => f.name === "my11circle");
-            // Prefer dream11 ID, fallback to my11circle, then fixed_id
-            const mappedId = d11?.id || my11?.id || fixedId;
-            if (fixedId && mappedId) map[fixedId] = String(mappedId);
-          }
-          setPlayerIdMap(map);
-        }
-      })();
+    if (!open) return;
+    const apps: FantasyApp[] = [];
+    for (const a of ["dream11", "my11circle", "myteam11", "vision11"] as FantasyApp[]) {
+      if (getFantasyToken(a)) apps.push(a);
     }
+    setLinkedApps(apps);
+
+    (async () => {
+      const detail = await getMatchDetail((match.matchId ?? match.id ?? "") as string);
+      if (!detail) return;
+      const d = detail as any;
+      setMatchNumericId(String(d.id || match.matchId || match.id || ""));
+      setMatchDbId(String(d._id || ""));
+
+      // Detect supported apps from fantasy_version field
+      const versions: string[] = (d.fantasy_version || []).map((v: any) => v.name);
+      const supported = versions.length > 0 ? versions : ["my11circle"]; // fallback
+      setSupportedApps(supported);
+      // Default to first supported app that's also linked, else first supported
+      const firstLinked = supported.find((s) => apps.includes(s as FantasyApp));
+      const firstSupported = supported[0] as FantasyApp;
+      setSelectedApp((firstLinked as FantasyApp) || firstSupported || "dream11");
+
+      // Build player ID map for ALL supported apps
+      const map: Record<string, string> = {};
+      const all = [...(d.left_team_players || []), ...(d.right_team_players || [])].filter(Boolean);
+      for (const p of all) {
+        let player = p;
+        if (typeof p === "string") {
+          const { decrypt } = await import("@/lib/crypto");
+          const dec = decrypt<any>(p);
+          if (dec) player = dec;
+        }
+        const fixedId = String(player.player_fixed_id ?? player.pl_id ?? player.pid ?? "");
+        const fil = player.fantasy_id_list || [];
+        for (const app of supported) {
+          const entry = fil.find((f: any) => f.name === app);
+          if (entry?.id) {
+            map[`${fixedId}|${app}`] = String(entry.id);
+          }
+        }
+        // Fallback: if no fantasy_id_list entry, use fixed_id for all apps
+        if (fixedId && !map[`${fixedId}|dream11`]) {
+          for (const app of supported) {
+            if (!map[`${fixedId}|${app}`]) map[`${fixedId}|${app}`] = fixedId;
+          }
+        }
+      }
+      setPlayerIdMap(map);
+    })();
   }, [open, match]);
 
   // Reset state when modal closes
@@ -113,28 +136,28 @@ export function BulkTransferModal({
 
   const validTeams = teams.filter((t) => (t.players?.length || 0) === 11);
 
-  function buildTransferItems(): BulkTransferItem[] {
+  function buildTransferItems(app: FantasyApp): BulkTransferItem[] {
     return validTeams.map((t) => ({
       teamNo: t.teamNo ?? 0,
       playerIds: (t.players || [])
         .map((p) => {
           const fixedId = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? "");
-          return playerIdMap[fixedId] || fixedId;
+          return playerIdMap[`${fixedId}|${app}`] || fixedId;
         })
         .filter(Boolean),
       captainId: (() => {
         const capFixedId = String(t.captain ?? t.c ?? "");
-        return playerIdMap[capFixedId] || capFixedId;
+        return playerIdMap[`${capFixedId}|${app}`] || capFixedId;
       })(),
       viceCaptainId: (() => {
         const vcFixedId = String(t.viceCaptain ?? t.vc ?? t.vicecaptain ?? "");
-        return playerIdMap[vcFixedId] || vcFixedId;
+        return playerIdMap[`${vcFixedId}|${app}`] || vcFixedId;
       })(),
     }));
   }
 
   async function handleTransfer() {
-    const items = buildTransferItems();
+    const items = buildTransferItems(selectedApp);
     if (items.length === 0) {
       toast.error("No valid teams to transfer (need 11 players each)");
       return;
@@ -145,22 +168,22 @@ export function BulkTransferModal({
     try {
       let res: BulkTransferResult;
       if (mode === "direct") {
-        // Direct link generation — no auth required
+        // Direct link generation — uses matchDbId (MongoDB _id)
         res = await bulkDirectTransfer(items, matchDbId, (done, total) =>
           setProgress({ done, total })
         );
       } else {
-        // Linked account transfer — uses saved authToken
-        const app = (linkedApps[0] || "dream11") as FantasyApp;
-        const authToken = getFantasyToken(app)!;
-        const extras = app === "my11circle"
-          ? JSON.parse(localStorage.getItem("fantasypro-my11circle-extras") || "{}")
-          : {};
+        // Linked account transfer — uses numeric matchId
+        const authToken = getFantasyToken(selectedApp)!;
+        const extras =
+          selectedApp === "my11circle"
+            ? JSON.parse(localStorage.getItem("fantasypro-my11circle-extras") || "{}")
+            : {};
         res = await bulkTransferToLinkedAccount(
           items,
           {
-            matchId: matchDbId,
-            fantasyApp: app,
+            matchId: matchNumericId, // numeric ID for /api/fantasy/add-team
+            fantasyApp: selectedApp,
             authToken,
             sportIndex: 0,
             my11circleChallenge: extras.challenge,
@@ -175,13 +198,18 @@ export function BulkTransferModal({
       if (res.successCount > 0) {
         toast.success(`Transferred ${res.successCount}/${res.totalAttempted} teams`);
       } else {
-        toast.error("All transfers failed — match may not support direct transfer");
+        toast.error("All transfers failed — see details below");
       }
     } catch (err: any) {
       toast.error(err?.message || "Transfer failed");
       setPhase("select");
     }
   }
+
+  // App selector for linked mode
+  const linkedAndSupported = linkedApps.filter((a) => supportedApps.includes(a));
+  const canUseLinked = linkedAndSupported.length > 0;
+  const canUseDirect = supportedApps.includes("dream11"); // direct link only works for dream11
 
   return (
     <AnimatePresence>
@@ -206,7 +234,7 @@ export function BulkTransferModal({
               <div>
                 <h3 className="font-bold text-sm">Bulk Team Transfer</h3>
                 <p className="text-[10px] text-white/80">
-                  {validTeams.length} teams · {teams.length} total
+                  {validTeams.length} teams ready · Match supports: {supportedApps.map(a => APP_LABELS[a]?.label || a).join(", ")}
                 </p>
               </div>
             </div>
@@ -219,15 +247,46 @@ export function BulkTransferModal({
             {/* Phase: Select mode */}
             {phase === "select" && (
               <>
+                {/* Supported apps info */}
+                <div className="rounded-xl bg-violet-50/50 dark:bg-violet-950/20 p-3 text-xs">
+                  <p className="font-semibold text-foreground mb-1">Match compatibility:</p>
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    {supportedApps.map((app) => {
+                      const isLinked = linkedApps.includes(app as FantasyApp);
+                      return (
+                        <span
+                          key={app}
+                          className={cn(
+                            "px-2 py-0.5 rounded-full text-[10px] font-bold",
+                            isLinked
+                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                              : "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
+                          )}
+                        >
+                          {APP_LABELS[app]?.emoji} {APP_LABELS[app]?.label || app}
+                          {isLinked ? " ✓" : ""}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  {linkedApps.length > 0 && (
+                    <p className="text-[10px] text-muted-foreground mt-1.5">
+                      Linked: {linkedApps.map(a => APP_LABELS[a]?.label || a).join(", ")}
+                    </p>
+                  )}
+                </div>
+
                 {/* Mode selection */}
                 <div className="space-y-2">
                   <button
                     onClick={() => setMode("direct")}
+                    disabled={!canUseDirect}
                     className={cn(
                       "w-full p-3 rounded-xl border-2 transition-all text-left flex items-start gap-3",
                       mode === "direct"
                         ? "border-violet-400 bg-violet-50/50 dark:bg-violet-900/20"
-                        : "border-violet-100 dark:border-violet-900/30"
+                        : "border-violet-100 dark:border-violet-900/30",
+                      !canUseDirect && "opacity-50 cursor-not-allowed"
                     )}
                   >
                     <div className="w-9 h-9 rounded-lg brand-gradient flex items-center justify-center flex-shrink-0">
@@ -241,15 +300,17 @@ export function BulkTransferModal({
                         </span>
                       </p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">
-                        Generate Dream11 transfer links for all teams. Open each link to instantly load the team in Dream11 — no OTP needed.
+                        {canUseDirect
+                          ? "Generate Dream11 transfer links for all teams. Open each link to load the team — no OTP needed."
+                          : "Not available — this match doesn't support Dream11 direct transfer."}
                       </p>
                     </div>
                   </button>
 
                   <button
                     onClick={() => {
-                      if (linkedApps.length === 0) {
-                        toast.info("Please link a fantasy account via OTP first");
+                      if (!canUseLinked) {
+                        toast.info("Please link a supported fantasy account via OTP first");
                         onOpenOtpLogin();
                         return;
                       }
@@ -268,9 +329,9 @@ export function BulkTransferModal({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-foreground flex items-center gap-1.5">
                         Auto Transfer to Linked Account
-                        {linkedApps.length > 0 ? (
+                        {canUseLinked ? (
                           <span className="text-[9px] bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 px-1.5 py-0.5 rounded-full font-bold">
-                            {linkedApps.length} LINKED
+                            {linkedAndSupported.length} READY
                           </span>
                         ) : (
                           <span className="text-[9px] bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 px-1.5 py-0.5 rounded-full font-bold">
@@ -279,21 +340,45 @@ export function BulkTransferModal({
                         )}
                       </p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">
-                        Auto-send all teams directly to your linked Dream11/My11Circle account. Requires OTP login first.
+                        Auto-send all teams directly to your linked account. Requires OTP login.
                       </p>
                     </div>
                   </button>
                 </div>
 
-                {/* Match info */}
+                {/* App selector for linked mode */}
+                {mode === "linked" && canUseLinked && (
+                  <div>
+                    <label className="text-xs font-semibold text-foreground mb-1.5 block">
+                      Transfer to:
+                    </label>
+                    <div className="flex gap-2 flex-wrap">
+                      {linkedAndSupported.map((app) => (
+                        <button
+                          key={app}
+                          onClick={() => setSelectedApp(app)}
+                          className={cn(
+                            "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                            selectedApp === app
+                              ? "brand-gradient text-white"
+                              : "bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
+                          )}
+                        >
+                          {APP_LABELS[app]?.emoji} {APP_LABELS[app]?.label || app}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Transfer details */}
                 <div className="rounded-xl bg-violet-50/50 dark:bg-violet-950/20 p-3 text-xs">
                   <p className="font-semibold text-foreground mb-1">Transfer details:</p>
                   <ul className="space-y-0.5 text-muted-foreground">
-                    <li>• Match: {match.series || match.title || match.matchId}</li>
+                    <li>• Match: {match.series || match.title || matchNumericId}</li>
                     <li>• Teams to transfer: {validTeams.length}</li>
-                    <li>• Mode: {mode === "direct" ? "Direct link (no login)" : "Auto to linked account"}</li>
-                    {mode === "direct" && <li>• Rate limit: 200ms between teams</li>}
-                    {mode === "linked" && <li>• Account: {linkedApps[0] || "none linked"}</li>}
+                    <li>• Mode: {mode === "direct" ? "Direct link (no login)" : `Auto to ${APP_LABELS[selectedApp]?.label || selectedApp}`}</li>
+                    <li>• Match ID: {mode === "direct" ? matchDbId : matchNumericId}</li>
                   </ul>
                 </div>
 
@@ -304,7 +389,8 @@ export function BulkTransferModal({
                 ) : (
                   <Button
                     onClick={handleTransfer}
-                    className="w-full h-12 brand-gradient text-white font-bold"
+                    disabled={mode === "direct" && !canUseDirect}
+                    className="w-full h-12 brand-gradient text-white font-bold disabled:opacity-50"
                   >
                     {mode === "direct" ? (
                       <>
@@ -314,14 +400,14 @@ export function BulkTransferModal({
                     ) : (
                       <>
                         <Send className="w-4 h-4 mr-2" />
-                        Transfer {validTeams.length} Teams to {linkedApps[0] || "Account"}
+                        Transfer {validTeams.length} Teams to {APP_LABELS[selectedApp]?.label || selectedApp}
                       </>
                     )}
                   </Button>
                 )}
 
                 {/* Quick link to OTP login */}
-                {mode === "linked" && linkedApps.length === 0 && (
+                {mode === "linked" && !canUseLinked && (
                   <Button
                     variant="outline"
                     className="w-full h-10"
@@ -345,7 +431,7 @@ export function BulkTransferModal({
                   <p className="text-xs text-muted-foreground mt-1">
                     {mode === "direct"
                       ? "Generating Dream11 transfer links"
-                      : "Sending to your linked account"}
+                      : `Sending to your ${APP_LABELS[selectedApp]?.label || selectedApp} account`}
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -397,7 +483,7 @@ export function BulkTransferModal({
                     {result.failCount > 0 && `${result.failCount} failed · `}
                     {mode === "direct"
                       ? "Tap links below to open in Dream11"
-                      : "Teams sent to your linked account"}
+                      : `Sent to ${APP_LABELS[selectedApp]?.label || selectedApp}`}
                   </p>
                 </div>
 
@@ -453,6 +539,17 @@ export function BulkTransferModal({
                     {result.failCount > 10 && (
                       <p className="text-[10px] text-muted-foreground mt-1">
                         ...and {result.failCount - 10} more
+                      </p>
+                    )}
+                    {result.failCount === result.totalAttempted && (
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-2 pt-2 border-t border-red-200 dark:border-red-800">
+                        💡 All teams failed. This usually means:
+                        <br />
+                        • The match doesn't support {mode === "direct" ? "Dream11 direct transfer" : APP_LABELS[selectedApp]?.label} — try another app
+                        <br />
+                        • Your linked account session expired — relink via OTP
+                        <br />
+                        • Backend rate-limited the request — wait and retry
                       </p>
                     )}
                   </div>
