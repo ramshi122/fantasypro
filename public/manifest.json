@@ -1,0 +1,17 @@
+{
+  "name": "FantasyPro",
+  "short_name": "FantasyPro",
+  "description": "AI Fantasy Team Generator",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#7C3AED",
+  "theme_color": "#7C3AED",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
