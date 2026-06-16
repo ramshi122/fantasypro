@@ -6,6 +6,7 @@ import {
   Check,
   CheckCircle2,
   Copy,
+  Crown,
   ExternalLink,
   Loader2,
   Pencil,
@@ -13,6 +14,7 @@ import {
   RefreshCw,
   Save,
   Send,
+  Star,
   Trash2,
   X,
 } from "lucide-react";
@@ -77,8 +79,13 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   async function handleAddTeam(team: Partial<TeamRow>) {
     setStep("saving");
     try {
-      await addTeam(token!, { matchId, team, type: "add" });
-      toast.success("Team added successfully");
+      const res = await addTeam(token!, { matchId, team, type: "add" });
+      const offline = (res as { offline?: boolean }).offline;
+      if (offline) {
+        toast.success("Team saved locally (offline mode)");
+      } else {
+        toast.success("Team added successfully");
+      }
       setShowEditor(false);
       setEditingTeam(null);
       setRefreshKey((k) => k + 1);
@@ -91,8 +98,13 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   async function handleEditTeam(teamId: string, team: Partial<TeamRow>) {
     setStep("saving");
     try {
-      await editTeam(token!, { matchId, teamId, team, type: "edit" });
-      toast.success("Team updated");
+      const res = await editTeam(token!, { matchId, teamId, team, type: "edit" });
+      const offline = (res as { offline?: boolean }).offline;
+      if (offline) {
+        toast.success("Team updated locally (offline mode)");
+      } else {
+        toast.success("Team updated");
+      }
       setShowEditor(false);
       setEditingTeam(null);
       setRefreshKey((k) => k + 1);
@@ -389,13 +401,93 @@ function TeamEditor({
   onSave: (team: Partial<TeamRow>) => void;
   saving: boolean;
 }) {
-  const [players, setPlayers] = useState<string>(
-    team ? (team.players || []).map((p) => p.shortName || p.name || "").join(", ") : ""
+  // Existing players from team being edited, or empty list
+  const [playerList, setPlayerList] = useState<
+    Array<{ pid: number; name: string; shortName: string; team: string; role: string }>
+  >(
+    team?.players?.map((p, i) => ({
+      pid: Number(p.pid ?? i + 1),
+      name: String(p.name || p.shortName || `Player ${i + 1}`),
+      shortName: String(p.shortName || p.name || `P${i + 1}`),
+      team: String(p.team || ""),
+      role: String(p.role || "bat"),
+    })) || []
   );
-  const [captain, setCaptain] = useState(team ? String(team.captain ?? team.c ?? "") : "");
-  const [viceCaptain, setViceCaptain] = useState(team ? String(team.viceCaptain ?? team.vc ?? "") : "");
+  const [nameInput, setNameInput] = useState("");
+  const [teamInput, setTeamInput] = useState("");
+  const [roleInput, setRoleInput] = useState("bat");
+  const [captain, setCaptain] = useState(
+    team ? String(team.captain ?? team.c ?? "") : ""
+  );
+  const [viceCaptain, setViceCaptain] = useState(
+    team ? String(team.viceCaptain ?? team.vc ?? "") : ""
+  );
 
   const matchId = (match.matchId ?? match.id ?? "") as string;
+  const team1Name = typeof match.team1 === "string" ? match.team1 : (match.team1?.shortName || match.team1?.name || "T1") as string;
+  const team2Name = typeof match.team2 === "string" ? match.team2 : (match.team2?.shortName || match.team2?.name || "T2") as string;
+
+  const ROLES = [
+    { id: "wk", label: "WK" },
+    { id: "bat", label: "BAT" },
+    { id: "ar", label: "AR" },
+    { id: "bowl", label: "BOWL" },
+  ];
+
+  function addPlayer() {
+    const name = nameInput.trim();
+    if (!name) return;
+    if (playerList.length >= 11) {
+      toast.error("Maximum 11 players allowed");
+      return;
+    }
+    const pid = playerList.length + 1;
+    const shortName = name.length > 4 ? name.slice(0, 4).toUpperCase() : name.toUpperCase();
+    setPlayerList([
+      ...playerList,
+      { pid, name, shortName, team: teamInput || team1Name, role: roleInput },
+    ]);
+    setNameInput("");
+    // Auto-set captain/vice-captain on first two players
+    if (playerList.length === 0) setCaptain(String(pid));
+    else if (playerList.length === 1 && !viceCaptain) setViceCaptain(String(pid));
+  }
+
+  function removePlayer(pid: number) {
+    const next = playerList.filter((p) => p.pid !== pid).map((p, i) => ({ ...p, pid: i + 1 }));
+    setPlayerList(next);
+    // Reset C/VC if they pointed to removed player
+    if (captain === String(pid)) setCaptain(next[0] ? String(next[0].pid) : "");
+    if (viceCaptain === String(pid)) setViceCaptain(next[1] ? String(next[1].pid) : "");
+  }
+
+  function quickFill() {
+    // Pre-fill 11 demo players split 7-4 between team1 and team2
+    const demo = [
+      { name: "Rohit", team: team1Name, role: "bat" },
+      { name: "Shubman", team: team1Name, role: "bat" },
+      { name: "Kohli", team: team1Name, role: "bat" },
+      { name: "Rahul", team: team1Name, role: "wk" },
+      { name: "Hardik", team: team1Name, role: "ar" },
+      { name: "Jadeja", team: team1Name, role: "ar" },
+      { name: "Bumrah", team: team1Name, role: "bowl" },
+      { name: "Nabi", team: team2Name, role: "ar" },
+      { name: "Rashid", team: team2Name, role: "bowl" },
+      { name: "Gurbaz", team: team2Name, role: "wk" },
+      { name: "Ibrahim", team: team2Name, role: "bat" },
+    ];
+    setPlayerList(
+      demo.map((p, i) => ({
+        pid: i + 1,
+        name: p.name,
+        shortName: p.name.slice(0, 4).toUpperCase(),
+        team: p.team,
+        role: p.role,
+      }))
+    );
+    setCaptain("1");
+    setViceCaptain("2");
+  }
 
   return (
     <motion.div
@@ -409,12 +501,16 @@ function TeamEditor({
         initial={{ y: 40, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 40, opacity: 0 }}
-        className="bg-white dark:bg-background w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto"
+        className="bg-white dark:bg-background w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[92vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 brand-gradient text-white p-4 flex items-center justify-between">
-          <h3 className="font-bold">
+        {/* Header */}
+        <div className="sticky top-0 brand-gradient text-white p-4 flex items-center justify-between z-10">
+          <h3 className="font-bold flex items-center gap-2">
             {team ? "Edit Team" : "Add New Team"}
+            <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">
+              {playerList.length}/11 players
+            </span>
           </h3>
           <button onClick={onClose} className="p-1 rounded-full hover:bg-white/20">
             <X className="w-5 h-5" />
@@ -422,63 +518,170 @@ function TeamEditor({
         </div>
 
         <div className="p-4 space-y-4">
-          <div>
-            <label className="text-xs font-semibold text-foreground mb-1.5 block">
-              Players (comma separated)
-            </label>
-            <textarea
-              value={players}
-              onChange={(e) => setPlayers(e.target.value)}
-              placeholder="VK, RS, KL, ..."
-              className="w-full min-h-[80px] rounded-xl border border-violet-100 dark:border-violet-900/30 bg-violet-50/30 dark:bg-violet-950/20 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 resize-none"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">
-              Enter 11 player short names separated by commas.
+          {/* Quick-fill button */}
+          {playerList.length === 0 && (
+            <button
+              onClick={quickFill}
+              className="w-full text-xs font-semibold text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-900/30 hover:bg-violet-100 dark:hover:bg-violet-900/50 py-2 rounded-lg transition-colors"
+            >
+              ⚡ Quick-fill with demo squad (11 players)
+            </button>
+          )}
+
+          {/* Player list */}
+          {playerList.length > 0 && (
+            <div className="bg-violet-50/30 dark:bg-violet-950/20 rounded-xl p-2 space-y-1.5">
+              {playerList.map((p, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-2 bg-white dark:bg-card rounded-lg p-2 border border-violet-50 dark:border-violet-900/30"
+                >
+                  <span className="w-5 h-5 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                    {i + 1}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-foreground truncate">
+                      {p.name}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {p.team} · {p.role.toUpperCase()}
+                    </p>
+                  </div>
+                  <span
+                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                      captain === String(p.pid)
+                        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                        : viceCaptain === String(p.pid)
+                        ? "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200"
+                        : "bg-transparent"
+                    }`}
+                  >
+                    {captain === String(p.pid) ? "C" : viceCaptain === String(p.pid) ? "VC" : ""}
+                  </span>
+                  <button
+                    onClick={() => removePlayer(p.pid)}
+                    className="text-red-400 hover:text-red-600 p-1"
+                    aria-label="Remove player"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add player form */}
+          {playerList.length < 11 && (
+            <div className="border border-dashed border-violet-200 dark:border-violet-900/40 rounded-xl p-3 space-y-2">
+              <p className="text-xs font-semibold text-foreground">Add a player</p>
+              <Input
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addPlayer();
+                  }
+                }}
+                placeholder="Player name (e.g. Virat Kohli)"
+                className="h-9 text-sm"
+              />
+              <div className="flex gap-2">
+                <select
+                  value={teamInput}
+                  onChange={(e) => setTeamInput(e.target.value)}
+                  className="flex-1 h-9 text-xs rounded-lg border border-violet-100 dark:border-violet-900/30 bg-white dark:bg-card px-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
+                >
+                  <option value="">Team (auto)</option>
+                  <option value={team1Name}>{team1Name}</option>
+                  <option value={team2Name}>{team2Name}</option>
+                </select>
+                <div className="flex gap-1">
+                  {ROLES.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => setRoleInput(r.id)}
+                      className={`h-9 px-2 rounded-lg text-[10px] font-bold transition-colors ${
+                        roleInput === r.id
+                          ? "brand-gradient text-white"
+                          : "bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
+                      }`}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                onClick={addPlayer}
+                disabled={!nameInput.trim()}
+                className="w-full h-9 brand-gradient text-white"
+              >
+                <Plus className="w-3.5 h-3.5 mr-1" />
+                Add Player
+              </Button>
+            </div>
+          )}
+
+          {/* Captain / Vice-Captain pickers */}
+          {playerList.length > 0 && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-foreground mb-1.5 block flex items-center gap-1">
+                  <Crown className="w-3 h-3 text-amber-500" /> Captain
+                </label>
+                <select
+                  value={captain}
+                  onChange={(e) => setCaptain(e.target.value)}
+                  className="w-full h-10 text-sm rounded-lg border border-violet-100 dark:border-violet-900/30 bg-white dark:bg-card px-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
+                >
+                  <option value="">Select C</option>
+                  {playerList.map((p) => (
+                    <option key={p.pid} value={String(p.pid)}>
+                      {p.name} ({p.team})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-foreground mb-1.5 block flex items-center gap-1">
+                  <Star className="w-3 h-3 text-slate-400" /> Vice-Captain
+                </label>
+                <select
+                  value={viceCaptain}
+                  onChange={(e) => setViceCaptain(e.target.value)}
+                  className="w-full h-10 text-sm rounded-lg border border-violet-100 dark:border-violet-900/30 bg-white dark:bg-card px-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
+                >
+                  <option value="">Select VC</option>
+                  {playerList.map((p) => (
+                    <option key={p.pid} value={String(p.pid)}>
+                      {p.name} ({p.team})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* Validation hint */}
+          {playerList.length > 0 && playerList.length < 11 && (
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 text-center">
+              Add {11 - playerList.length} more player{11 - playerList.length !== 1 ? "s" : ""} to complete the squad.
             </p>
-          </div>
+          )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-semibold text-foreground mb-1.5 block">
-                Captain #
-              </label>
-              <Input
-                value={captain}
-                onChange={(e) => setCaptain(e.target.value)}
-                placeholder="1"
-                className="h-10"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-foreground mb-1.5 block">
-                Vice-Captain #
-              </label>
-              <Input
-                value={viceCaptain}
-                onChange={(e) => setViceCaptain(e.target.value)}
-                placeholder="2"
-                className="h-10"
-              />
-            </div>
-          </div>
-
-          <div className="flex gap-2 pt-2">
+          {/* Actions */}
+          <div className="flex gap-2 pt-2 sticky bottom-0 bg-white dark:bg-background pb-1">
             <Button variant="outline" className="flex-1" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
             <Button
               className="flex-1 brand-gradient text-white"
-              disabled={saving || !players.trim()}
+              disabled={saving || playerList.length === 0 || !captain || !viceCaptain}
               onClick={() => {
-                const playerList = players
-                  .split(",")
-                  .map((p) => p.trim())
-                  .filter(Boolean)
-                  .map((name, i) => ({
-                    pid: i + 1,
-                    shortName: name,
-                    name,
-                  }));
                 onSave({
                   players: playerList,
                   captain: captain ? Number(captain) : 1,
