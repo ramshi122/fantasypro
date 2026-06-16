@@ -3,18 +3,19 @@
 import { useApp, useAuth } from "@/lib/store";
 import { BrandLogo } from "@/components/brand-logo";
 import { Button } from "@/components/ui/button";
-import { Bell, ChevronRight, Crown, HelpCircle, LogOut, Settings, Shield, Star, User } from "lucide-react";
+import { Bell, ChevronRight, Crown, HelpCircle, KeyRound, LogOut, Settings, Shield, Star, User } from "lucide-react";
 import { toast } from "sonner";
 
 export function ProfileScreen() {
   const user = useAuth((s) => s.user);
+  const isGuest = useAuth((s) => s.isGuest);
   const logout = useAuth((s) => s.logout);
   const savedMatches = useApp((s) => s.savedMatches);
   const setView = useApp((s) => s.setView);
 
   function handleLogout() {
     logout();
-    toast.success("Logged out successfully");
+    toast.success("Switched to guest mode");
   }
 
   const sections = [
@@ -55,12 +56,43 @@ export function ProfileScreen() {
               {user?.email || user?.mobile || "Premium Member"}
             </p>
             <div className="mt-1 inline-flex items-center gap-1 text-[10px] bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded-full">
-              <Crown className="w-2.5 h-2.5" />
-              {user?.plan || "Free"} Plan
+              {isGuest ? (
+                <>
+                  <User className="w-2.5 h-2.5" />
+                  Guest Mode
+                </>
+              ) : (
+                <>
+                  <Crown className="w-2.5 h-2.5" />
+                  {user?.plan || "Free"} Plan
+                </>
+              )}
             </div>
           </div>
         </div>
       </div>
+
+      {/* Guest mode banner with CTA to use real token */}
+      {isGuest && (
+        <div className="rounded-2xl bg-gradient-to-br from-violet-50 to-pink-50 dark:from-violet-950/40 dark:to-pink-950/40 border border-violet-200 dark:border-violet-800 p-4">
+          <div className="flex items-start gap-3">
+            <KeyRound className="w-5 h-5 text-violet-600 dark:text-violet-300 mt-0.5 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-bold text-foreground mb-0.5">Guest Mode</p>
+              <p className="text-xs text-muted-foreground mb-2">
+                You're browsing as guest. All features work locally. Add a real Dream11 token to transfer teams directly to your account.
+              </p>
+              <Button
+                size="sm"
+                className="brand-gradient text-white h-8 text-xs"
+                onClick={() => toast.info("Open the Login screen from the menu to enter a real token")}
+              >
+                Use Real Token
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-2">

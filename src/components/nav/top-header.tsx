@@ -18,7 +18,7 @@ const MENU_ITEMS = [
   { label: "Disclaimer", href: "#" },
   { label: "Contact us", href: "#" },
   { label: "About us", href: "#" },
-];
+] as const;
 
 export function TopHeader() {
   const [open, setOpen] = useState(false);

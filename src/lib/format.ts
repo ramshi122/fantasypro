@@ -62,51 +62,55 @@ export function shortName(name?: string, max = 4): string {
   return name.slice(0, max).toUpperCase();
 }
 
-export function classForRole(role?: string): string {
-  switch ((role || "").toLowerCase()) {
-    case "wk":
-    case "wicket-keeper":
-    case "wicketkeeper":
-      return "bg-amber-500";
-    case "bat":
-    case "batsman":
-    case "batter":
-      return "bg-sky-500";
-    case "ar":
-    case "all-rounder":
-    case "allrounder":
-      return "bg-emerald-500";
-    case "bowl":
-    case "bowler":
-      return "bg-rose-500";
-    case "gk":
-    case "goalkeeper":
-      return "bg-yellow-500";
-    case "def":
-    case "defender":
-      return "bg-blue-500";
-    case "mid":
-    case "midfielder":
-      return "bg-green-500";
-    case "fwd":
-    case "forward":
-    case "st":
-    case "striker":
-      return "bg-red-500";
-    default:
-      return "bg-slate-500";
-  }
+export function classForRole(role?: string | number): string {
+  const r = String(role || "").toLowerCase();
+  if (r === "wk" || r.includes("keeper")) return "bg-amber-500";
+  if (r === "bat" || r.includes("bats") || r.includes("batter")) return "bg-sky-500";
+  if (r === "ar" || r.includes("all")) return "bg-emerald-500";
+  if (r === "bowl" || r.includes("bowl") || r.includes("pacer")) return "bg-rose-500";
+  if (r === "gk" || r.includes("goalkeeper")) return "bg-yellow-500";
+  if (r === "def" || r.includes("def")) return "bg-blue-500";
+  if (r === "mid" || r.includes("mid")) return "bg-green-500";
+  if (r === "fwd" || r.includes("fwd") || r.includes("strik")) return "bg-red-500";
+  return "bg-slate-500";
 }
 
-export function roleLabel(role?: string): string {
-  const r = (role || "").toLowerCase();
+export function roleLabel(role?: string | number): string {
+  // Numeric role from API: 0=batter, 1=batter, 2=bowler/all-rounder, 3=keeper, 4=pacer
+  // We'll detect from player_type string if present, otherwise fallback to numeric mapping.
+  if (typeof role === "number") {
+    // Numeric fallback (rarely used since player_type is always present)
+    if (role === 0) return "BAT";
+    if (role === 1) return "BAT";
+    if (role === 2) return "AR";
+    if (role === 3) return "WK";
+    if (role === 4) return "BOWL";
+  }
+  const r = String(role || "").toLowerCase();
   if (r === "wk" || r.includes("keeper")) return "WK";
   if (r === "bat" || r.includes("bats") || r.includes("batter")) return "BAT";
   if (r === "ar" || r.includes("all")) return "AR";
-  if (r === "bowl" || r.includes("bowl")) return "BOWL";
+  if (r === "bowl" || r.includes("bowl") || r.includes("pacer")) return "BOWL";
   if (r === "gk" || r.includes("keeper")) return "GK";
   if (r === "def" || r.includes("def")) return "DEF";
   if (r === "mid" || r.includes("mid")) return "MID";
   if (r === "fwd" || r.includes("fwd") || r.includes("strik")) return "FWD";
-  return (role || "?").toUpperCase().slice(0, 4);
+  return (String(role) || "?").toUpperCase().slice(0, 4);
+}
+
+/**
+ * Convert API player_type (e.g. "batter", "pacer", "wicket-keeper") to
+ * a short code used for the role badge UI.
+ */
+export function roleFromPlayerType(playerType?: string): string {
+  const p = (playerType || "").toLowerCase();
+  if (p.includes("keeper") || p.includes("wk")) return "WK";
+  if (p.includes("pacer") || p.includes("bowler") || p.includes("bowl")) return "BOWL";
+  if (p.includes("all")) return "AR";
+  if (p.includes("batter") || p.includes("bat")) return "BAT";
+  if (p.includes("keeper")) return "GK";
+  if (p.includes("def")) return "DEF";
+  if (p.includes("mid")) return "MID";
+  if (p.includes("forward") || p.includes("fwd") || p.includes("striker")) return "FWD";
+  return "?";
 }

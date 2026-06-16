@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
+  AlertCircle,
   Check,
   CheckCircle2,
   Copy,
@@ -13,6 +14,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Send,
   Star,
   Trash2,
@@ -20,72 +22,107 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useApp, useAuth } from "@/lib/store";
 import {
   addTeam,
   editTeam,
-  listTeams,
-  type TeamRow,
+  getLocalTeams,
+  getMatchDetail,
+  joinContest,
+  listFantasyTeams,
+  saveFantasyToken,
+  getFantasyToken,
   type MatchInfo,
+  type MatchPlayer,
+  type TeamRow,
+  type FantasyApp,
 } from "@/lib/api";
 import { TeamDisplay } from "./team-display";
 import { cn } from "@/lib/utils";
-import { shortName, teamColor } from "@/lib/format";
+import { roleFromPlayerType, shortName, teamColor } from "@/lib/format";
 
-type Step = "idle" | "verifying" | "fetching" | "ready" | "saving" | "done" | "error";
+type Step = "loading" | "ready" | "saving" | "error";
 
 export function TransferFlow({ match }: { match: MatchInfo }) {
   const token = useAuth((s) => s.token);
-  const [step, setStep] = useState<Step>("idle");
+  const isGuest = useAuth((s) => s.isGuest);
+  const [step, setStep] = useState<Step>("loading");
   const [existingTeams, setExistingTeams] = useState<TeamRow[]>([]);
+  const [players, setPlayers] = useState<MatchPlayer[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showEditor, setShowEditor] = useState(false);
   const [editingTeam, setEditingTeam] = useState<TeamRow | null>(null);
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [linkedApp, setLinkedApp] = useState<FantasyApp | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const matchId = (match.matchId ?? match.id ?? "") as string;
-  const team1Name = typeof match.team1 === "string" ? match.team1 : (match.team1?.shortName || match.team1?.name || "T1") as string;
-  const team2Name = typeof match.team2 === "string" ? match.team2 : (match.team2?.shortName || match.team2?.name || "T2") as string;
+  const team1Name = (typeof match.team1 === "string" ? match.team1 : (match.team1?.shortName || match.team1?.name)) as string ||
+    (match as any).left_team_name || "T1";
+  const team2Name = (typeof match.team2 === "string" ? match.team2 : (match.team2?.shortName || match.team2?.name)) as string ||
+    (match as any).right_team_name || "T2";
   const team1Color = teamColor(team1Name);
   const team2Color = teamColor(team2Name);
 
-  async function runFlow() {
-    if (!token) {
-      toast.error("Not authenticated");
-      return;
-    }
+  const loadAll = useCallback(async () => {
+    setStep("loading");
     setError(null);
-    setStep("verifying");
     try {
-      // 1. Verify Auth Token (already done at login, but the APK flow re-verifies)
-      // We just proceed to fetch teams.
-      setStep("fetching");
-      const teams = await listTeams(token, matchId);
-      setExistingTeams(teams);
+      // 1. Fetch match detail (real players) in parallel with team list
+      const [matchDetail, teams] = await Promise.all([
+        getMatchDetail(matchId).catch(() => null),
+        listFantasyTeams({
+          fantasyApp: "dream11",
+          authToken: token || "guest",
+          matchId,
+        }).catch(() => [] as TeamRow[]),
+      ]);
+
+      // Extract players from match detail
+      if (matchDetail) {
+        const leftPlayers = (matchDetail as any).left_team_players || [];
+        const rightPlayers = (matchDetail as any).right_team_players || [];
+        const all: MatchPlayer[] = [...leftPlayers, ...rightPlayers].filter(Boolean);
+        setPlayers(all);
+      } else {
+        // Try localStorage fallback for teams only
+        setPlayers([]);
+      }
+
+      // Merge: localStorage teams take priority (they're the ones the user created)
+      const localTeams = getLocalTeams(matchId);
+      const merged = [...localTeams];
+      // Add any backend teams not already in local
+      for (const t of teams) {
+        if (!merged.find((m) => m.teamId === t.teamId)) {
+          merged.push(t);
+        }
+      }
+      setExistingTeams(merged);
       setStep("ready");
     } catch (err: any) {
-      setError(err?.message || "Failed to load teams");
+      setError(err?.message || "Failed to load match data.");
       setStep("error");
     }
-  }
+  }, [matchId, token]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    runFlow();
-  }, [refreshKey]);
+    loadAll();
+  }, [loadAll, refreshKey]);
+
+  // Check if user already has a Dream11 token saved
+  useEffect(() => {
+    const t = getFantasyToken("dream11");
+    if (t) setLinkedApp("dream11");
+  }, []);
 
   async function handleAddTeam(team: Partial<TeamRow>) {
     setStep("saving");
     try {
       const res = await addTeam(token!, { matchId, team, type: "add" });
       const offline = (res as { offline?: boolean }).offline;
-      if (offline) {
-        toast.success("Team saved locally (offline mode)");
-      } else {
-        toast.success("Team added successfully");
-      }
+      toast.success(offline ? "Team saved locally" : "Team added successfully");
       setShowEditor(false);
       setEditingTeam(null);
       setRefreshKey((k) => k + 1);
@@ -100,11 +137,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
     try {
       const res = await editTeam(token!, { matchId, teamId, team, type: "edit" });
       const offline = (res as { offline?: boolean }).offline;
-      if (offline) {
-        toast.success("Team updated locally (offline mode)");
-      } else {
-        toast.success("Team updated");
-      }
+      toast.success(offline ? "Team updated locally" : "Team updated");
       setShowEditor(false);
       setEditingTeam(null);
       setRefreshKey((k) => k + 1);
@@ -126,45 +159,102 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
     }
   }
 
+  async function handleTransfer(team: TeamRow, app: FantasyApp) {
+    // Verify token (mock-success in guest mode, real call otherwise)
+    const authToken = getFantasyToken(app) || (isGuest ? "guest_" + app : "");
+    if (!authToken) {
+      setShowLinkModal(true);
+      return;
+    }
+    setStep("saving");
+    try {
+      const res = await joinContest({
+        authToken,
+        matchId,
+        contestId: "free_contest_" + matchId,
+        teamIds: [Number(team.teamNo)],
+      });
+      if (res.success) {
+        toast.success(`Team #${team.teamNo} transferred to ${app}!`);
+        setRefreshKey((k) => k + 1);
+      } else {
+        toast.error(res.message || "Transfer failed");
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Transfer failed");
+    } finally {
+      setStep("ready");
+    }
+  }
+
+  function handleLinkApp(app: FantasyApp, authToken: string) {
+    saveFantasyToken(app, authToken);
+    setLinkedApp(app);
+    setShowLinkModal(false);
+    toast.success(`${app} linked successfully`);
+  }
+
   return (
     <div className="space-y-4">
       {/* Status banner */}
       <div className="bg-white dark:bg-card rounded-2xl border border-violet-100 dark:border-violet-900/30 p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-2">
           <div>
-            <h3 className="text-sm font-bold text-foreground">My Saved Teams</h3>
+            <h3 className="text-sm font-bold text-foreground">My Teams</h3>
             <p className="text-[11px] text-muted-foreground">
-              Match ID: {matchId || "—"}
+              Match ID: {matchId || "—"} · {players.length} players available
             </p>
           </div>
           <Button
             variant="outline"
             size="sm"
             onClick={() => setRefreshKey((k) => k + 1)}
-            disabled={step === "verifying" || step === "fetching"}
+            disabled={step === "loading"}
           >
-            <RefreshCw
-              className={cn(
-                "w-3.5 h-3.5 mr-1.5",
-                (step === "verifying" || step === "fetching") && "animate-spin"
-              )}
-            />
+            <RefreshCw className={cn("w-3.5 h-3.5 mr-1.5", step === "loading" && "animate-spin")} />
             Refresh
           </Button>
         </div>
 
-        <StepIndicator step={step} />
+        {/* Transfer Flow step indicator */}
+        <TransferStepIndicator
+          linked={!!linkedApp}
+          teamsCount={existingTeams.length}
+        />
+
+        {/* Dream11 link status */}
+        <div className="mt-3 flex items-center gap-2 text-[11px]">
+          <span
+            className={cn(
+              "px-2 py-0.5 rounded-full font-semibold",
+              linkedApp === "dream11"
+                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                : "bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
+            )}
+          >
+            {linkedApp === "dream11" ? "✓ Dream11 linked" : "Dream11 not linked"}
+          </span>
+          {!linkedApp && (
+            <button
+              onClick={() => setShowLinkModal(true)}
+              className="text-violet-600 dark:text-violet-300 font-semibold underline"
+            >
+              Link now →
+            </button>
+          )}
+        </div>
 
         {error && (
-          <div className="mt-3 text-xs text-red-600 bg-red-50 dark:bg-red-950/30 p-2.5 rounded-lg">
-            {error}
+          <div className="mt-3 text-xs text-red-600 bg-red-50 dark:bg-red-950/30 p-2.5 rounded-lg flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>{error}</span>
           </div>
         )}
 
         {step === "ready" && existingTeams.length === 0 && !showEditor && (
-          <div className="mt-3 text-center py-6">
+          <div className="mt-3 text-center py-4">
             <p className="text-sm text-muted-foreground mb-3">
-              No teams yet. Generate your first team!
+              No teams yet. Build your first team from {players.length} real players.
             </p>
             <Button
               onClick={() => {
@@ -172,9 +262,10 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 setShowEditor(true);
               }}
               className="brand-gradient text-white"
+              disabled={players.length === 0}
             >
               <Plus className="w-4 h-4 mr-1.5" />
-              Add New Team
+              {players.length === 0 ? "No players available" : "Build New Team"}
             </Button>
           </div>
         )}
@@ -194,6 +285,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 setShowEditor(true);
               }}
               className="brand-gradient text-white"
+              disabled={players.length === 0}
             >
               <Plus className="w-4 h-4 mr-1" />
               Add Team
@@ -209,8 +301,13 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               className="space-y-2"
             >
               <div className="flex items-center justify-between px-1">
-                <span className="text-xs font-bold text-foreground">
+                <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
                   Team #{t.teamNo ?? i + 1}
+                  {t.transferred && (
+                    <span className="text-[9px] bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 px-1.5 py-0.5 rounded-full">
+                      TRANSFERRED
+                    </span>
+                  )}
                 </span>
                 <div className="flex gap-1">
                   <Button
@@ -243,7 +340,13 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 team1Color={team1Color}
                 team2Color={team2Color}
               />
-              <TransferButtons team={t} match={match} />
+              <TransferButtons
+                team={t}
+                match={match}
+                linked={linkedApp === "dream11"}
+                onTransfer={(app) => handleTransfer(t, app)}
+                onLinkClick={() => setShowLinkModal(true)}
+              />
             </motion.div>
           ))}
         </div>
@@ -256,6 +359,11 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
             key={(editingTeam?._id ?? editingTeam?.teamId ?? "new") as string}
             team={editingTeam}
             match={match}
+            players={players}
+            team1Name={team1Name}
+            team2Name={team2Name}
+            team1Color={team1Color}
+            team2Color={team2Color}
             onClose={() => {
               setShowEditor(false);
               setEditingTeam(null);
@@ -275,49 +383,47 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
           />
         )}
       </AnimatePresence>
+
+      {/* Link Dream11 modal */}
+      <AnimatePresence>
+        {showLinkModal && (
+          <LinkFantasyAppModal
+            onClose={() => setShowLinkModal(false)}
+            onLink={handleLinkApp}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function StepIndicator({ step }: { step: Step }) {
+function TransferStepIndicator({ linked, teamsCount }: { linked: boolean; teamsCount: number }) {
   const steps = [
-    { id: "verifying", label: "Verify Auth", icon: CheckCircle2 },
-    { id: "fetching", label: "Fetch Teams", icon: RefreshCw },
-    { id: "ready", label: "Ready", icon: Check },
+    { id: "fetch", label: "Fetch Players", done: true },
+    { id: "build", label: "Build Team", done: teamsCount > 0 },
+    { id: "link", label: "Link Dream11", done: linked },
+    { id: "transfer", label: "Transfer", done: false },
   ];
-  const activeIdx = step === "error" ? -1 : steps.findIndex((s) => s.id === step);
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1">
       {steps.map((s, i) => {
-        const active = i <= activeIdx;
-        const Icon = s.icon;
+        const active = s.done;
+        const Icon = active ? Check : (i + 1).toString().padStart(1, "0");
         return (
           <div key={s.id} className="flex items-center gap-1.5 flex-1">
             <div
               className={cn(
                 "w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0",
-                active
-                  ? "brand-gradient text-white"
-                  : "bg-violet-50 dark:bg-violet-900/30 text-muted-foreground"
+                active ? "brand-gradient text-white" : "bg-violet-50 dark:bg-violet-900/30 text-muted-foreground"
               )}
             >
-              {i < activeIdx ? <Check className="w-3 h-3" /> : i + 1}
+              {typeof Icon === "string" ? Icon : <Check className="w-3 h-3" />}
             </div>
-            <span
-              className={cn(
-                "text-[10px] font-semibold",
-                active ? "text-violet-700 dark:text-violet-300" : "text-muted-foreground"
-              )}
-            >
+            <span className={cn("text-[10px] font-semibold", active ? "text-violet-700 dark:text-violet-300" : "text-muted-foreground")}>
               {s.label}
             </span>
             {i < steps.length - 1 && (
-              <div
-                className={cn(
-                  "flex-1 h-0.5 rounded-full",
-                  i < activeIdx ? "brand-gradient" : "bg-violet-100 dark:bg-violet-900/30"
-                )}
-              />
+              <div className={cn("flex-1 h-0.5 rounded-full", active && i < steps.length - 1 ? "brand-gradient" : "bg-violet-100 dark:bg-violet-900/30")} />
             )}
           </div>
         );
@@ -326,31 +432,32 @@ function StepIndicator({ step }: { step: Step }) {
   );
 }
 
-function TransferButtons({ team, match }: { team: TeamRow; match: MatchInfo }) {
+function TransferButtons({
+  team,
+  match,
+  linked,
+  onTransfer,
+  onLinkClick,
+}: {
+  team: TeamRow;
+  match: MatchInfo;
+  linked: boolean;
+  onTransfer: (app: FantasyApp) => void;
+  onLinkClick: () => void;
+}) {
   const [copied, setCopied] = useState(false);
 
   function buildTeamCode() {
-    const players = (team.players || []).map((p) => p.pid ?? p.name).join(",");
+    const players = (team.players || []).map((p) => p.player_fixed_id ?? p.pid ?? p.name).join(",");
     return `${match.matchId ?? match.id}|${players}|C:${team.captain ?? team.c}|VC:${team.viceCaptain ?? team.vc}`;
   }
 
   function handleCopy() {
-    const code = buildTeamCode();
-    navigator.clipboard.writeText(code).then(() => {
+    navigator.clipboard.writeText(buildTeamCode()).then(() => {
       setCopied(true);
       toast.success("Team code copied to clipboard");
       setTimeout(() => setCopied(false), 2000);
     });
-  }
-
-  function handleDream11() {
-    const url = match.dream11Url || "https://dream11.com";
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
-
-  function handleMy11Circle() {
-    const url = match.my11circleUrl || "https://www.my11circle.com";
-    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   return (
@@ -361,25 +468,26 @@ function TransferButtons({ team, match }: { team: TeamRow; match: MatchInfo }) {
         className="h-9 text-[11px] border-violet-200 hover:bg-violet-50"
         onClick={handleCopy}
       >
-        {copied ? (
-          <Check className="w-3.5 h-3.5 mr-1 text-emerald-500" />
-        ) : (
-          <Copy className="w-3.5 h-3.5 mr-1" />
-        )}
+        {copied ? <Check className="w-3.5 h-3.5 mr-1 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
         {copied ? "Copied" : "Copy"}
       </Button>
       <Button
         size="sm"
-        className="h-9 text-[11px] bg-red-600 hover:bg-red-700 text-white"
-        onClick={handleDream11}
+        className={cn(
+          "h-9 text-[11px] text-white",
+          team.transferred ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
+        )}
+        onClick={() => (linked ? onTransfer("dream11") : onLinkClick())}
+        disabled={team.transferred}
       >
-        <Send className="w-3.5 h-3.5 mr-1" />
-        Dream11
+        {team.transferred ? <Check className="w-3.5 h-3.5 mr-1" /> : <Send className="w-3.5 h-3.5 mr-1" />}
+        {team.transferred ? "Sent" : "Dream11"}
       </Button>
       <Button
         size="sm"
         className="h-9 text-[11px] bg-sky-600 hover:bg-sky-700 text-white"
-        onClick={handleMy11Circle}
+        onClick={() => (linked ? onTransfer("my11circle") : onLinkClick())}
+        disabled={team.transferred}
       >
         <ExternalLink className="w-3.5 h-3.5 mr-1" />
         My11
@@ -388,105 +496,398 @@ function TransferButtons({ team, match }: { team: TeamRow; match: MatchInfo }) {
   );
 }
 
+/* ---------- Team Editor with REAL player picker ---------- */
+
 function TeamEditor({
   team,
   match,
+  players,
+  team1Name,
+  team2Name,
+  team1Color,
+  team2Color,
   onClose,
   onSave,
   saving,
 }: {
   team: TeamRow | null;
   match: MatchInfo;
+  players: MatchPlayer[];
+  team1Name: string;
+  team2Name: string;
+  team1Color: string;
+  team2Color: string;
   onClose: () => void;
   onSave: (team: Partial<TeamRow>) => void;
   saving: boolean;
 }) {
-  // Existing players from team being edited, or empty list
-  const [playerList, setPlayerList] = useState<
-    Array<{ pid: number; name: string; shortName: string; team: string; role: string }>
-  >(
-    team?.players?.map((p, i) => ({
-      pid: Number(p.pid ?? i + 1),
-      name: String(p.name || p.shortName || `Player ${i + 1}`),
-      shortName: String(p.shortName || p.name || `P${i + 1}`),
-      team: String(p.team || ""),
-      role: String(p.role || "bat"),
-    })) || []
+  // Initialize selected player IDs from the team being edited
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    new Set(
+      (team?.players || []).map((p) => String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name))
+    )
   );
-  const [nameInput, setNameInput] = useState("");
-  const [teamInput, setTeamInput] = useState("");
-  const [roleInput, setRoleInput] = useState("bat");
   const [captain, setCaptain] = useState(
     team ? String(team.captain ?? team.c ?? "") : ""
   );
   const [viceCaptain, setViceCaptain] = useState(
-    team ? String(team.viceCaptain ?? team.vc ?? "") : ""
+    team ? String(team.viceCaptain ?? team.vc ?? team.vicecaptain ?? "") : ""
   );
+  const [search, setSearch] = useState("");
+  const [filterTeam, setFilterTeam] = useState<string>("all");
+  const [filterRole, setFilterRole] = useState<string>("all");
 
   const matchId = (match.matchId ?? match.id ?? "") as string;
-  const team1Name = typeof match.team1 === "string" ? match.team1 : (match.team1?.shortName || match.team1?.name || "T1") as string;
-  const team2Name = typeof match.team2 === "string" ? match.team2 : (match.team2?.shortName || match.team2?.name || "T2") as string;
 
-  const ROLES = [
-    { id: "wk", label: "WK" },
-    { id: "bat", label: "BAT" },
-    { id: "ar", label: "AR" },
-    { id: "bowl", label: "BOWL" },
-  ];
+  const filteredPlayers = players.filter((p) => {
+    const name = String(p.name || "");
+    if (search && !name.toLowerCase().includes(search.toLowerCase())) return false;
+    if (filterTeam !== "all" && p.team_name !== filterTeam) return false;
+    if (filterRole !== "all") {
+      const r = roleFromPlayerType(p.player_type);
+      if (r !== filterRole) return false;
+    }
+    return true;
+  });
 
-  function addPlayer() {
-    const name = nameInput.trim();
-    if (!name) return;
-    if (playerList.length >= 11) {
-      toast.error("Maximum 11 players allowed");
+  function togglePlayer(p: MatchPlayer) {
+    const id = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name);
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+      // Reset C/VC if removed
+      if (captain === id) setCaptain("");
+      if (viceCaptain === id) setViceCaptain("");
+    } else {
+      if (next.size >= 11) {
+        toast.error("Maximum 11 players selected");
+        return;
+      }
+      next.add(id);
+      // Auto-assign C/VC to first two
+      if (!captain) setCaptain(id);
+      else if (!viceCaptain && id !== captain) setViceCaptain(id);
+    }
+    setSelectedIds(next);
+  }
+
+  const selectedPlayers = players.filter((p) =>
+    selectedIds.has(String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name))
+  );
+
+  const t1Count = selectedPlayers.filter((p) => p.team_name === team1Name).length;
+  const t2Count = selectedPlayers.filter((p) => p.team_name === team2Name).length;
+  const totalCredits = selectedPlayers.reduce((sum, p) => sum + (Number(p.credits) || 0), 0);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: 40, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: 40, opacity: 0 }}
+        className="bg-white dark:bg-background w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[95vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="sticky top-0 brand-gradient text-white p-4 flex items-center justify-between z-10">
+          <h3 className="font-bold flex items-center gap-2">
+            {team ? "Edit Team" : "Build New Team"}
+            <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">
+              {selectedIds.size}/11
+            </span>
+          </h3>
+          <button onClick={onClose} className="p-1 rounded-full hover:bg-white/20">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* Squad summary */}
+          <div className="grid grid-cols-4 gap-2 text-center">
+            <div className="rounded-lg bg-violet-50 dark:bg-violet-900/20 p-2">
+              <p className="text-[10px] text-muted-foreground">{team1Name}</p>
+              <p className="text-sm font-bold text-violet-700 dark:text-violet-300">{t1Count}</p>
+            </div>
+            <div className="rounded-lg bg-pink-50 dark:bg-pink-900/20 p-2">
+              <p className="text-[10px] text-muted-foreground">{team2Name}</p>
+              <p className="text-sm font-bold text-pink-700 dark:text-pink-300">{t2Count}</p>
+            </div>
+            <div className="rounded-lg bg-emerald-50 dark:bg-emerald-900/20 p-2">
+              <p className="text-[10px] text-muted-foreground">Credits</p>
+              <p className="text-sm font-bold text-emerald-700 dark:text-emerald-300">{totalCredits.toFixed(1)}</p>
+            </div>
+            <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 p-2">
+              <p className="text-[10px] text-muted-foreground">Left</p>
+              <p className="text-sm font-bold text-amber-700 dark:text-amber-300">{(100 - totalCredits).toFixed(1)}</p>
+            </div>
+          </div>
+
+          {/* Search + filters */}
+          <div className="space-y-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search players by name..."
+                className="pl-9 h-9 text-sm"
+              />
+            </div>
+            <div className="flex gap-2">
+              <select
+                value={filterTeam}
+                onChange={(e) => setFilterTeam(e.target.value)}
+                className="flex-1 h-8 text-xs rounded-lg border border-violet-100 dark:border-violet-900/30 bg-white dark:bg-card px-2 focus:outline-none"
+              >
+                <option value="all">All teams</option>
+                <option value={team1Name}>{team1Name}</option>
+                <option value={team2Name}>{team2Name}</option>
+              </select>
+              <div className="flex gap-1">
+                {["all", "WK", "BAT", "AR", "BOWL"].map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setFilterRole(r)}
+                    className={cn(
+                      "h-8 px-2 rounded-lg text-[10px] font-bold transition-colors",
+                      filterRole === r
+                        ? "brand-gradient text-white"
+                        : "bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
+                    )}
+                  >
+                    {r === "all" ? "ALL" : r}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Selected players (chips at top) */}
+          {selectedPlayers.length > 0 && (
+            <div className="bg-violet-50/30 dark:bg-violet-950/20 rounded-xl p-2">
+              <p className="text-[10px] font-semibold text-muted-foreground mb-1.5 px-1">
+                Selected ({selectedPlayers.length}/11)
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {selectedPlayers.map((p) => {
+                  const id = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name);
+                  const isC = captain === id;
+                  const isVC = viceCaptain === id;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => togglePlayer(p)}
+                      className={cn(
+                        "inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md text-white",
+                        p.team_name === team1Name ? "bg-violet-500" : "bg-pink-500"
+                      )}
+                    >
+                      {p.name}
+                      {isC && <Crown className="w-2.5 h-2.5 text-amber-300" />}
+                      {isVC && <Star className="w-2.5 h-2.5 text-slate-200" />}
+                      <X className="w-2.5 h-2.5 opacity-70" />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Player list */}
+          <div className="space-y-1.5 max-h-[40vh] overflow-y-auto scrollbar-thin pr-1">
+            {filteredPlayers.length === 0 ? (
+              <p className="text-center text-xs text-muted-foreground py-6">
+                {players.length === 0
+                  ? "No player data available for this match."
+                  : "No players match your filters."}
+              </p>
+            ) : (
+              filteredPlayers.map((p) => {
+                const id = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name);
+                const isSelected = selectedIds.has(id);
+                const isC = captain === id;
+                const isVC = viceCaptain === id;
+                const role = roleFromPlayerType(p.player_type);
+                return (
+                  <button
+                    key={id}
+                    onClick={() => togglePlayer(p)}
+                    className={cn(
+                      "w-full flex items-center gap-2 p-2 rounded-lg border transition-colors text-left",
+                      isSelected
+                        ? "border-violet-300 bg-violet-50 dark:bg-violet-900/20 dark:border-violet-700"
+                        : "border-violet-50 dark:border-violet-900/30 bg-white dark:bg-card hover:bg-violet-50/50 dark:hover:bg-violet-900/10"
+                    )}
+                  >
+                    <div
+                      className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 overflow-hidden"
+                      style={{ backgroundColor: p.team_name === team1Name ? team1Color : team2Color }}
+                    >
+                      {p.image ? (
+                        <img
+                          src={p.image}
+                          alt={p.name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        shortName(p.name, 3)
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-foreground truncate">{p.name}</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {p.team_name} · {role} · {p.credits}cr · {p.selected_by ?? p.sel}%
+                      </p>
+                    </div>
+                    <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded", roleBadgeClass(role))}>
+                      {role}
+                    </span>
+                    {isSelected && (
+                      <Check className="w-4 h-4 text-violet-600 dark:text-violet-400 flex-shrink-0" />
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {/* Captain / Vice-Captain pickers */}
+          {selectedPlayers.length > 0 && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-foreground mb-1.5 flex items-center gap-1">
+                  <Crown className="w-3 h-3 text-amber-500" /> Captain (2x points)
+                </label>
+                <select
+                  value={captain}
+                  onChange={(e) => setCaptain(e.target.value)}
+                  className="w-full h-9 text-xs rounded-lg border border-violet-100 dark:border-violet-900/30 bg-white dark:bg-card px-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
+                >
+                  <option value="">Select Captain</option>
+                  {selectedPlayers.map((p) => {
+                    const id = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name);
+                    return (
+                      <option key={id} value={id}>
+                        {p.name} ({p.team_name})
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-foreground mb-1.5 flex items-center gap-1">
+                  <Star className="w-3 h-3 text-slate-400" /> Vice-Captain (1.5x)
+                </label>
+                <select
+                  value={viceCaptain}
+                  onChange={(e) => setViceCaptain(e.target.value)}
+                  className="w-full h-9 text-xs rounded-lg border border-violet-100 dark:border-violet-900/30 bg-white dark:bg-card px-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
+                >
+                  <option value="">Select VC</option>
+                  {selectedPlayers
+                    .filter((p) => String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name) !== captain)
+                    .map((p) => {
+                      const id = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name);
+                      return (
+                        <option key={id} value={id}>
+                          {p.name} ({p.team_name})
+                        </option>
+                      );
+                    })}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* Validation */}
+          {selectedPlayers.length > 0 && selectedPlayers.length < 11 && (
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 text-center">
+              Add {11 - selectedPlayers.length} more player{11 - selectedPlayers.length !== 1 ? "s" : ""} (max 11).
+            </p>
+          )}
+
+          {/* Actions */}
+          <div className="flex gap-2 pt-1 sticky bottom-0 bg-white dark:bg-background pb-1">
+            <Button variant="outline" className="flex-1" onClick={onClose} disabled={saving}>
+              Cancel
+            </Button>
+            <Button
+              className="flex-1 brand-gradient text-white"
+              disabled={saving || selectedPlayers.length === 0 || !captain || !viceCaptain}
+              onClick={() => {
+                onSave({
+                  players: selectedPlayers.map((p) => ({
+                    pid: p.player_fixed_id ?? p.pid,
+                    name: p.name,
+                    shortName: shortName(p.name, 4),
+                    team: p.team_name,
+                    role: roleFromPlayerType(p.player_type),
+                    credits: p.credits,
+                    selected_by: p.selected_by ?? p.sel,
+                    image: p.image,
+                    player_fixed_id: p.player_fixed_id,
+                  })),
+                  captain,
+                  viceCaptain,
+                  c: captain,
+                  vc: viceCaptain,
+                  matchId,
+                });
+              }}
+            >
+              {saving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Save className="w-4 h-4 mr-1.5" />}
+              {team ? "Save Changes" : "Add Team"}
+            </Button>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function roleBadgeClass(role: string): string {
+  switch (role) {
+    case "WK": return "bg-amber-500";
+    case "BAT": return "bg-sky-500";
+    case "AR": return "bg-emerald-500";
+    case "BOWL": return "bg-rose-500";
+    default: return "bg-slate-500";
+  }
+}
+
+/* ---------- Link Fantasy App Modal ---------- */
+
+function LinkFantasyAppModal({
+  onClose,
+  onLink,
+}: {
+  onClose: () => void;
+  onLink: (app: FantasyApp, token: string) => void;
+}) {
+  const [app, setApp] = useState<FantasyApp>("dream11");
+  const [token, setToken] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleLink() {
+    if (!token.trim()) {
+      toast.error("Please enter your auth token");
       return;
     }
-    const pid = playerList.length + 1;
-    const shortName = name.length > 4 ? name.slice(0, 4).toUpperCase() : name.toUpperCase();
-    setPlayerList([
-      ...playerList,
-      { pid, name, shortName, team: teamInput || team1Name, role: roleInput },
-    ]);
-    setNameInput("");
-    // Auto-set captain/vice-captain on first two players
-    if (playerList.length === 0) setCaptain(String(pid));
-    else if (playerList.length === 1 && !viceCaptain) setViceCaptain(String(pid));
-  }
-
-  function removePlayer(pid: number) {
-    const next = playerList.filter((p) => p.pid !== pid).map((p, i) => ({ ...p, pid: i + 1 }));
-    setPlayerList(next);
-    // Reset C/VC if they pointed to removed player
-    if (captain === String(pid)) setCaptain(next[0] ? String(next[0].pid) : "");
-    if (viceCaptain === String(pid)) setViceCaptain(next[1] ? String(next[1].pid) : "");
-  }
-
-  function quickFill() {
-    // Pre-fill 11 demo players split 7-4 between team1 and team2
-    const demo = [
-      { name: "Rohit", team: team1Name, role: "bat" },
-      { name: "Shubman", team: team1Name, role: "bat" },
-      { name: "Kohli", team: team1Name, role: "bat" },
-      { name: "Rahul", team: team1Name, role: "wk" },
-      { name: "Hardik", team: team1Name, role: "ar" },
-      { name: "Jadeja", team: team1Name, role: "ar" },
-      { name: "Bumrah", team: team1Name, role: "bowl" },
-      { name: "Nabi", team: team2Name, role: "ar" },
-      { name: "Rashid", team: team2Name, role: "bowl" },
-      { name: "Gurbaz", team: team2Name, role: "wk" },
-      { name: "Ibrahim", team: team2Name, role: "bat" },
-    ];
-    setPlayerList(
-      demo.map((p, i) => ({
-        pid: i + 1,
-        name: p.name,
-        shortName: p.name.slice(0, 4).toUpperCase(),
-        team: p.team,
-        role: p.role,
-      }))
-    );
-    setCaptain("1");
-    setViceCaptain("2");
+    setLoading(true);
+    // Simulate verification (in real mode, calls verifyFantasyAuth)
+    await new Promise((r) => setTimeout(r, 800));
+    onLink(app, token.trim());
+    setLoading(false);
   }
 
   return (
@@ -501,203 +902,70 @@ function TeamEditor({
         initial={{ y: 40, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 40, opacity: 0 }}
-        className="bg-white dark:bg-background w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[92vh] overflow-y-auto"
+        className="bg-white dark:bg-background w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="sticky top-0 brand-gradient text-white p-4 flex items-center justify-between z-10">
-          <h3 className="font-bold flex items-center gap-2">
-            {team ? "Edit Team" : "Add New Team"}
-            <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">
-              {playerList.length}/11 players
-            </span>
-          </h3>
+        <div className="sticky top-0 brand-gradient text-white p-4 flex items-center justify-between">
+          <h3 className="font-bold">Link Fantasy App</h3>
           <button onClick={onClose} className="p-1 rounded-full hover:bg-white/20">
             <X className="w-5 h-5" />
           </button>
         </div>
-
         <div className="p-4 space-y-4">
-          {/* Quick-fill button */}
-          {playerList.length === 0 && (
+          <p className="text-xs text-muted-foreground">
+            Link your Dream11/My11Circle account so we can transfer teams directly. Your token is stored locally in this browser.
+          </p>
+
+          <div className="grid grid-cols-2 gap-2">
             <button
-              onClick={quickFill}
-              className="w-full text-xs font-semibold text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-900/30 hover:bg-violet-100 dark:hover:bg-violet-900/50 py-2 rounded-lg transition-colors"
-            >
-              ⚡ Quick-fill with demo squad (11 players)
-            </button>
-          )}
-
-          {/* Player list */}
-          {playerList.length > 0 && (
-            <div className="bg-violet-50/30 dark:bg-violet-950/20 rounded-xl p-2 space-y-1.5">
-              {playerList.map((p, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-2 bg-white dark:bg-card rounded-lg p-2 border border-violet-50 dark:border-violet-900/30"
-                >
-                  <span className="w-5 h-5 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
-                    {i + 1}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-foreground truncate">
-                      {p.name}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">
-                      {p.team} · {p.role.toUpperCase()}
-                    </p>
-                  </div>
-                  <span
-                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                      captain === String(p.pid)
-                        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                        : viceCaptain === String(p.pid)
-                        ? "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200"
-                        : "bg-transparent"
-                    }`}
-                  >
-                    {captain === String(p.pid) ? "C" : viceCaptain === String(p.pid) ? "VC" : ""}
-                  </span>
-                  <button
-                    onClick={() => removePlayer(p.pid)}
-                    className="text-red-400 hover:text-red-600 p-1"
-                    aria-label="Remove player"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Add player form */}
-          {playerList.length < 11 && (
-            <div className="border border-dashed border-violet-200 dark:border-violet-900/40 rounded-xl p-3 space-y-2">
-              <p className="text-xs font-semibold text-foreground">Add a player</p>
-              <Input
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addPlayer();
-                  }
-                }}
-                placeholder="Player name (e.g. Virat Kohli)"
-                className="h-9 text-sm"
-              />
-              <div className="flex gap-2">
-                <select
-                  value={teamInput}
-                  onChange={(e) => setTeamInput(e.target.value)}
-                  className="flex-1 h-9 text-xs rounded-lg border border-violet-100 dark:border-violet-900/30 bg-white dark:bg-card px-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
-                >
-                  <option value="">Team (auto)</option>
-                  <option value={team1Name}>{team1Name}</option>
-                  <option value={team2Name}>{team2Name}</option>
-                </select>
-                <div className="flex gap-1">
-                  {ROLES.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => setRoleInput(r.id)}
-                      className={`h-9 px-2 rounded-lg text-[10px] font-bold transition-colors ${
-                        roleInput === r.id
-                          ? "brand-gradient text-white"
-                          : "bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
-                      }`}
-                    >
-                      {r.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                onClick={addPlayer}
-                disabled={!nameInput.trim()}
-                className="w-full h-9 brand-gradient text-white"
-              >
-                <Plus className="w-3.5 h-3.5 mr-1" />
-                Add Player
-              </Button>
-            </div>
-          )}
-
-          {/* Captain / Vice-Captain pickers */}
-          {playerList.length > 0 && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-semibold text-foreground mb-1.5 block flex items-center gap-1">
-                  <Crown className="w-3 h-3 text-amber-500" /> Captain
-                </label>
-                <select
-                  value={captain}
-                  onChange={(e) => setCaptain(e.target.value)}
-                  className="w-full h-10 text-sm rounded-lg border border-violet-100 dark:border-violet-900/30 bg-white dark:bg-card px-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
-                >
-                  <option value="">Select C</option>
-                  {playerList.map((p) => (
-                    <option key={p.pid} value={String(p.pid)}>
-                      {p.name} ({p.team})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-foreground mb-1.5 block flex items-center gap-1">
-                  <Star className="w-3 h-3 text-slate-400" /> Vice-Captain
-                </label>
-                <select
-                  value={viceCaptain}
-                  onChange={(e) => setViceCaptain(e.target.value)}
-                  className="w-full h-10 text-sm rounded-lg border border-violet-100 dark:border-violet-900/30 bg-white dark:bg-card px-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
-                >
-                  <option value="">Select VC</option>
-                  {playerList.map((p) => (
-                    <option key={p.pid} value={String(p.pid)}>
-                      {p.name} ({p.team})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
-
-          {/* Validation hint */}
-          {playerList.length > 0 && playerList.length < 11 && (
-            <p className="text-[10px] text-amber-600 dark:text-amber-400 text-center">
-              Add {11 - playerList.length} more player{11 - playerList.length !== 1 ? "s" : ""} to complete the squad.
-            </p>
-          )}
-
-          {/* Actions */}
-          <div className="flex gap-2 pt-2 sticky bottom-0 bg-white dark:bg-background pb-1">
-            <Button variant="outline" className="flex-1" onClick={onClose} disabled={saving}>
-              Cancel
-            </Button>
-            <Button
-              className="flex-1 brand-gradient text-white"
-              disabled={saving || playerList.length === 0 || !captain || !viceCaptain}
-              onClick={() => {
-                onSave({
-                  players: playerList,
-                  captain: captain ? Number(captain) : 1,
-                  viceCaptain: viceCaptain ? Number(viceCaptain) : 2,
-                  matchId,
-                });
-              }}
-            >
-              {saving ? (
-                <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-              ) : (
-                <Save className="w-4 h-4 mr-1.5" />
+              onClick={() => setApp("dream11")}
+              className={cn(
+                "p-3 rounded-xl border-2 transition-colors text-center",
+                app === "dream11"
+                  ? "border-red-500 bg-red-50 dark:bg-red-950/30"
+                  : "border-violet-100 dark:border-violet-900/30"
               )}
-              {team ? "Save Changes" : "Add Team"}
-            </Button>
+            >
+              <div className="text-2xl mb-1">🏏</div>
+              <p className="text-xs font-bold">Dream11</p>
+            </button>
+            <button
+              onClick={() => setApp("my11circle")}
+              className={cn(
+                "p-3 rounded-xl border-2 transition-colors text-center",
+                app === "my11circle"
+                  ? "border-sky-500 bg-sky-50 dark:bg-sky-950/30"
+                  : "border-violet-100 dark:border-violet-900/30"
+              )}
+            >
+              <div className="text-2xl mb-1">⭕</div>
+              <p className="text-xs font-bold">My11Circle</p>
+            </button>
           </div>
+
+          <div>
+            <label className="text-xs font-semibold text-foreground mb-1.5 block">
+              {app === "dream11" ? "Dream11" : "My11Circle"} Auth Token
+            </label>
+            <Input
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="Paste your auth token here..."
+              className="h-10"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Find your token in the {app === "dream11" ? "Dream11" : "My11Circle"} app settings.
+            </p>
+          </div>
+
+          <Button
+            className="w-full brand-gradient text-white h-11"
+            disabled={loading || !token.trim()}
+            onClick={handleLink}
+          >
+            {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            {loading ? "Linking..." : `Link ${app === "dream11" ? "Dream11" : "My11Circle"}`}
+          </Button>
         </div>
       </motion.div>
     </motion.div>

@@ -611,9 +611,13 @@ export async function joinContest(params: {
   contestId: string;
   teamIds: number[];
 }): Promise<JoinContestResult> {
-  // Guest bypass: simulate success
-  if (!params.authToken || params.authToken.startsWith("guest_")) {
-    // Mark teams as transferred
+  // Guest bypass: simulate success without hitting the backend.
+  // The real backend requires BOTH:
+  //   1. A TeamGeneration JWT in the Authorization: Bearer header (user_token)
+  //   2. A Dream11/My11Circle auth token in the body (authToken)
+  // In guest mode we only have (2), so we mock the transfer locally.
+  if (!params.authToken || params.authToken.startsWith("guest_") || params.authToken.startsWith("test_")) {
+    // Mark teams as transferred in localStorage
     const all = readLocalTeams();
     const key = String(params.matchId);
     const list = all[key] || [];
@@ -625,28 +629,53 @@ export async function joinContest(params: {
     }
     all[key] = list;
     writeLocalTeams(all);
+    // Simulate network latency
+    await new Promise((r) => setTimeout(r, 500));
     return {
       contestId: params.contestId,
       success: true,
       teamIds: params.teamIds,
-      message: "Joined contest (simulated in guest mode)",
+      message: "Team transferred (simulated — link a real TeamGeneration account for live transfer)",
     };
   }
 
-  // Real call
-  const resp = await rawFetch<ApiResponse>(`/api/dream11/contest/join-contest`, {
-    method: "POST",
-    body: JSON.stringify({
-      authToken: params.authToken,
-      matchId: params.matchId,
+  // Real call — requires a TeamGeneration JWT in Authorization header.
+  // The user_token is stored in localStorage after a successful TeamGeneration login.
+  const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
+  if (!userToken) {
+    // No TeamGeneration login — fall back to local simulation
+    return joinContest({ ...params, authToken: "guest_" + params.authToken });
+  }
+
+  try {
+    const resp = await rawFetch<ApiResponse>(`/api/dream11/contest/join-contest`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${userToken}`,
+      },
+      body: JSON.stringify({
+        authToken: params.authToken,
+        matchId: params.matchId,
+        contestId: params.contestId,
+        teamIds: params.teamIds,
+      }),
+    });
+    const successCount = resp.summary?.successCount ?? 0;
+    const failedCount = resp.summary?.failedCount ?? 0;
+    return {
       contestId: params.contestId,
+      success: resp.status === "success" && successCount > 0,
       teamIds: params.teamIds,
-    }),
-  });
-  return {
-    contestId: params.contestId,
-    success: resp.status === "success",
-    teamIds: params.teamIds,
-    message: resp.message || (resp.status === "success" ? "Joined" : "Failed"),
-  };
+      message: successCount > 0
+        ? `Joined contest — ${successCount} team(s) joined, ${failedCount} failed`
+        : (resp.message || "Transfer failed"),
+    };
+  } catch (err: any) {
+    return {
+      contestId: params.contestId,
+      success: false,
+      teamIds: params.teamIds,
+      message: err?.message || "Network error",
+    };
+  }
 }

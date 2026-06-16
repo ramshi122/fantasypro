@@ -5,7 +5,6 @@ import { getPromotions, type PromotionItem } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { motion } from "framer-motion";
 import { ExternalLink, Gift, Sparkles, Tag } from "lucide-react";
-import { toast } from "sonner";
 
 const GRADIENTS = [
   "from-violet-500 to-purple-600",
@@ -19,22 +18,21 @@ const GRADIENTS = [
 export function PromotionsScreen() {
   const [items, setItems] = useState<PromotionItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
         const data = await getPromotions();
-        if (active) setItems(data);
-      } catch {
         if (active) {
-          toast.error("Could not load promotions.");
-          // fallback demo
-          setItems([
-            { _id: "p1", title: "Refer & Earn ₹100", description: "Invite friends and earn ₹100 instantly.", type: "referral" },
-            { _id: "p2", title: "Prime Subscription Discount", description: "Get 30% off on annual Prime plan.", type: "discount" },
-            { _id: "p3", title: "Free Prime Teams", description: "Free daily prime teams for new users.", type: "freebie" },
-          ]);
+          setItems(data);
+          if (data.length === 0) setError("No promotions available right now.");
+        }
+      } catch (err: any) {
+        if (active) {
+          setError(err?.message || "Could not load promotions.");
+          setItems([]);
         }
       } finally {
         if (active) setLoading(false);
@@ -65,7 +63,11 @@ export function PromotionsScreen() {
         </div>
       ) : items.length === 0 ? (
         <div className="text-center py-12">
-          <p className="text-sm text-muted-foreground">No promotions available right now.</p>
+          <Gift className="w-12 h-12 mx-auto text-violet-300 mb-3" />
+          <p className="text-sm font-semibold mb-1">No promotions available</p>
+          <p className="text-xs text-muted-foreground px-6">
+            {error || "Check back later for new offers."}
+          </p>
         </div>
       ) : (
         <div className="space-y-3">

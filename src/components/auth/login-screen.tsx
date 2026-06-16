@@ -170,13 +170,7 @@ export function LoginScreen() {
 
             <button
               type="button"
-              onClick={() => {
-                setAuth("guest_skip_" + Date.now(), {
-                  name: "Guest User",
-                  plan: "Browse Only",
-                });
-                toast.success("Bypassed login — browsing as guest");
-              }}
+              onClick={handleSkip}
               disabled={loading}
               className="w-full h-11 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-semibold text-sm backdrop-blur-sm transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
             >

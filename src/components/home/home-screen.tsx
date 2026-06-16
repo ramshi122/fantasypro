@@ -9,7 +9,6 @@ import { MatchCard } from "./match-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
 
 export function HomeScreen() {
   const sport = useApp((s) => s.sport);
@@ -24,12 +23,16 @@ export function HomeScreen() {
     setError(null);
     try {
       const data = await getMatches(sport);
-      setMatches(data);
+      if (data.length === 0) {
+        setError("No matches returned by the API. Try another sport.");
+        setMatches([]);
+      } else {
+        setMatches(data);
+      }
     } catch (err: any) {
-      setError(err?.message || "Failed to load matches");
-      toast.error("Could not load matches. Using demo data.");
-      // Demo data fallback so the UI is always functional
-      setMatches(getDemoMatches(sport));
+      console.error("[home] getMatches failed:", err);
+      setError(err?.message || "Failed to load matches from the server.");
+      setMatches([]);
     } finally {
       setLoading(false);
     }
@@ -119,22 +122,4 @@ function StatCard({ label, value, gradient }: { label: string; value: string; gr
       <p className="text-base font-black mt-0.5 leading-tight">{value}</p>
     </div>
   );
-}
-
-function getDemoMatches(sport: string): MatchInfo[] {
-  const now = Date.now();
-  const hour = 3600 * 1000;
-  if (sport === "cricket") {
-    return [
-      { matchId: "demo1", title: "Afghanistan in India ODI", team1: { shortName: "IND" }, team2: { shortName: "AFG" }, startTime: now + 13 * hour, series: "Afghanistan in India ODI" },
-      { matchId: "demo2", title: "India vs Afghanistan ODI", team1: { shortName: "IND" }, team2: { shortName: "AFG" }, startTime: now + 13 * hour, series: "India vs Afghanistan ODI" },
-      { matchId: "demo3", title: "Women's World Trophy T20", team1: { shortName: "IND-W" }, team2: { shortName: "NED-W" }, startTime: now + 18 * hour, series: "Women's World Trophy T20" },
-      { matchId: "demo4", title: "Women's T20 World Cup", team1: { shortName: "IND" }, team2: { shortName: "NED" }, startTime: now + 18 * hour, series: "Women's T20 World Cup" },
-      { matchId: "demo5", title: "Women's T20 World Cup", team1: { shortName: "SA" }, team2: { shortName: "PAK" }, startTime: now + 22 * hour, series: "Women's T20 World Cup" },
-    ];
-  }
-  return [
-    { matchId: "demo1", title: `${sport.toUpperCase()} Match 1`, team1: { shortName: "TEAM A" }, team2: { shortName: "TEAM B" }, startTime: now + 5 * hour, series: `${sport} League` },
-    { matchId: "demo2", title: `${sport.toUpperCase()} Match 2`, team1: { shortName: "TEAM C" }, team2: { shortName: "TEAM D" }, startTime: now + 8 * hour, series: `${sport} League` },
-  ];
 }
