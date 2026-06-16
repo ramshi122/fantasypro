@@ -93,33 +93,25 @@ export function BulkTransferModal({
 
       // Detect supported apps from fantasy_version field
       const versions: string[] = (d.fantasy_version || []).map((v: any) => v.name);
-      const supported = versions.length > 0 ? versions : ["my11circle"]; // fallback
+      const supported = versions.length > 0 ? versions : ["my11circle"];
       setSupportedApps(supported);
 
-      // ALWAYS use defaultApp if provided — user explicitly chose Dream11 or My11Circle
-      if (defaultApp) {
-        setSelectedApp(defaultApp);
-      } else {
-        const firstLinked = supported.find((s) => apps.includes(s as FantasyApp));
-        const firstSupported = supported[0] as FantasyApp;
-        setSelectedApp((firstLinked as FantasyApp) || firstSupported || "dream11");
-      }
+      // ALWAYS use defaultApp if provided
+      const chosenApp = defaultApp || (apps.find((a) => supported.includes(a)) as FantasyApp) || (supported[0] as FantasyApp) || "dream11";
+      setSelectedApp(chosenApp);
 
-      // Auto-select the best mode based on the chosen app:
-      // - Dream11 → prefer "direct" (link generation, no login needed)
-      // - My11Circle/other → prefer "linked" (requires OTP)
-      // - Override: if user has the app linked, use "linked"
-      const chosenApp = defaultApp || (apps.find((a) => supported.includes(a)) as FantasyApp) || "dream11";
-      const isChosenLinked = apps.includes(chosenApp);
-      if (isChosenLinked) {
-        setMode("linked");
-      } else if (chosenApp === "dream11") {
+      // Mode selection — based on the CHOSEN app, not what's linked:
+      // - Dream11 → ALWAYS "direct" (link generation, NO login/auth needed)
+      // - My11Circle/other → "linked" if linked, else "linked" (will prompt OTP)
+      if (chosenApp === "dream11") {
         setMode("direct");
       } else {
         setMode("linked");
       }
 
-      // Build player ID map for ALL supported apps
+      // Build player ID map for ALL apps (not just supported ones)
+      // so Dream11 transfer works even on My11Circle-only matches
+      const allApps = Array.from(new Set([...supported, "dream11", "my11circle", chosenApp]));
       const map: Record<string, string> = {};
       const all = [...(d.left_team_players || []), ...(d.right_team_players || [])].filter(Boolean);
       for (const p of all) {
@@ -131,16 +123,19 @@ export function BulkTransferModal({
         }
         const fixedId = String(player.player_fixed_id ?? player.pl_id ?? player.pid ?? "");
         const fil = player.fantasy_id_list || [];
-        for (const app of supported) {
+        // Map IDs for every possible app
+        for (const app of allApps) {
           const entry = fil.find((f: any) => f.name === app);
           if (entry?.id) {
             map[`${fixedId}|${app}`] = String(entry.id);
           }
         }
-        // Fallback: if no fantasy_id_list entry, use fixed_id for all apps
-        if (fixedId && !map[`${fixedId}|dream11`]) {
-          for (const app of supported) {
-            if (!map[`${fixedId}|${app}`]) map[`${fixedId}|${app}`] = fixedId;
+        // Fallback: use fixed_id for any app that doesn't have a specific mapping
+        if (fixedId) {
+          for (const app of allApps) {
+            if (!map[`${fixedId}|${app}`]) {
+              map[`${fixedId}|${app}`] = fixedId;
+            }
           }
         }
       }
@@ -252,8 +247,12 @@ export function BulkTransferModal({
         // Partial success
         toast.success(`${res.successCount} transferred, ${res.failCount} failed`);
       } else {
-        // All failed — show honest error with relink CTA
-        toast.error("Transfer failed — relink your account via OTP");
+        // All failed — show honest error
+        if (mode === "direct") {
+          toast.error("Dream11 transfer failed — this match may not support Dream11. Try My11Circle instead.");
+        } else {
+          toast.error("Transfer failed — relink your account via OTP");
+        }
       }
     } catch (err: any) {
       setResult({
@@ -286,7 +285,9 @@ export function BulkTransferModal({
   // App selector for linked mode
   const linkedAndSupported = linkedApps.filter((a) => supportedApps.includes(a));
   const canUseLinked = linkedAndSupported.length > 0;
-  const canUseDirect = supportedApps.includes("dream11"); // direct link only works for dream11
+  // Direct link ALWAYS works for Dream11 — no match support restriction
+  // because /api/classic/dream11/addteam generates a transfer link regardless
+  const canUseDirect = selectedApp === "dream11";
 
   return (
     <AnimatePresence>
@@ -648,24 +649,38 @@ export function BulkTransferModal({
                     )}
                     {result.failCount === result.totalAttempted && (
                       <div className="mt-3 pt-3 border-t border-red-200 dark:border-red-800">
-                        <p className="text-[11px] font-bold text-red-700 dark:text-red-300 mb-2">
-                          ⚠️ Relink your account to fix this
-                        </p>
-                        <p className="text-[10px] text-muted-foreground mb-2.5">
-                          The backend rejected the transfer because your {APP_LABELS[selectedApp]?.label} session is invalid or expired.
-                          Complete OTP login with your real mobile number to get a fresh auth token.
-                        </p>
-                        <Button
-                          size="sm"
-                          className="w-full h-8 brand-gradient text-white text-xs"
-                          onClick={() => {
-                            onClose();
-                            onOpenOtpLogin();
-                          }}
-                        >
-                          <Zap className="w-3 h-3 mr-1" />
-                          Relink {APP_LABELS[selectedApp]?.label} via OTP
-                        </Button>
+                        {mode === "direct" ? (
+                          <>
+                            <p className="text-[11px] font-bold text-red-700 dark:text-red-300 mb-2">
+                              ⚠️ Dream11 Transfer Failed
+                            </p>
+                            <p className="text-[10px] text-muted-foreground mb-2.5">
+                              This match may not have Dream11 player IDs mapped. The backend couldn't generate a transfer link.
+                              Try transferring to My11Circle instead (⭕ My11Circle button).
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-[11px] font-bold text-red-700 dark:text-red-300 mb-2">
+                              ⚠️ Relink your account to fix this
+                            </p>
+                            <p className="text-[10px] text-muted-foreground mb-2.5">
+                              The backend rejected the transfer because your {APP_LABELS[selectedApp]?.label} session is invalid or expired.
+                              Complete OTP login with your real mobile number to get a fresh auth token.
+                            </p>
+                            <Button
+                              size="sm"
+                              className="w-full h-8 brand-gradient text-white text-xs"
+                              onClick={() => {
+                                onClose();
+                                onOpenOtpLogin();
+                              }}
+                            >
+                              <Zap className="w-3 h-3 mr-1" />
+                              Relink {APP_LABELS[selectedApp]?.label} via OTP
+                            </Button>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
