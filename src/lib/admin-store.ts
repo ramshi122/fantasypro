@@ -184,7 +184,7 @@ function uid(): string {
 /* ---------- Store ---------- */
 
 const DEFAULT_SETTINGS: AdminSettings = {
-  adminPassword: "admin123",
+  adminPassword: "8950888988",
   apiUrl: "https://tgsoftware-api.online",
   firebaseConfig: "",
   licensePrefix: LICENSE_PREFIX_DEFAULT,
@@ -251,14 +251,14 @@ export const useAdmin = create<AdminState>()(
       announcements: [],
       settings: DEFAULT_SETTINGS,
 
-      login: (username, password) => {
-        // Demo auth: username "admin", password from settings
-        if (username === "admin" && password === get().settings.adminPassword) {
-          set({ isAdminAuthenticated: true, adminUsername: username });
-          get().addLog("admin_action", `Admin ${username} logged in`);
+      login: (_username, password) => {
+        // Password-only auth — no username required
+        if (password === get().settings.adminPassword) {
+          set({ isAdminAuthenticated: true, adminUsername: "admin" });
+          get().addLog("admin_action", "Admin logged in");
           return true;
         }
-        get().addLog("login_attempt", `Failed admin login: ${username}`);
+        get().addLog("login_attempt", "Failed admin login attempt");
         return false;
       },
 
@@ -503,6 +503,20 @@ export const useAdmin = create<AdminState>()(
     {
       name: "fantasypro-admin",
       storage: createJSONStorage(() => localStorage),
+      version: 2, // bump to force password update from admin123 → 8950888988
+      merge: (persisted, current) => {
+        const p = persisted as Partial<AdminState> | undefined;
+        // Always use the latest default password from current settings
+        return {
+          ...current,
+          ...p,
+          settings: {
+            ...current.settings,
+            ...(p?.settings || {}),
+            adminPassword: current.settings.adminPassword, // always use latest default
+          },
+        };
+      },
     }
   )
 );

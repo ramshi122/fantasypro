@@ -162,7 +162,6 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
 
 function AdminLoginModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const admin = useAdmin();
-  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -170,18 +169,18 @@ function AdminLoginModal({ open, onClose }: { open: boolean; onClose: () => void
   if (!open) return null;
 
   function handleLogin() {
-    if (!username.trim() || !password.trim()) {
-      toast.error("Enter username and password");
+    if (!password.trim()) {
+      toast.error("Enter password");
       return;
     }
     setLoading(true);
     setTimeout(() => {
-      const ok = admin.login(username.trim(), password);
+      const ok = admin.login("", password);
       setLoading(false);
       if (ok) {
         toast.success("Admin login successful");
       } else {
-        toast.error("Invalid credentials");
+        toast.error("Invalid password");
       }
     }, 400);
   }
@@ -216,31 +215,22 @@ function AdminLoginModal({ open, onClose }: { open: boolean; onClose: () => void
                 <Shield className="w-7 h-7" />
               </motion.div>
               <h2 className="font-black text-lg">FANTASYPRO ADMIN</h2>
-              <p className="text-[11px] text-white/70 mt-0.5">Restricted access · JWT protected</p>
+              <p className="text-[11px] text-white/70 mt-0.5">Restricted access · Password protected</p>
             </div>
 
-            {/* Form */}
+            {/* Form — password only */}
             <div className="p-5 space-y-3">
               <div>
-                <label className="text-[11px] font-bold text-slate-300 mb-1 block">USERNAME</label>
-                <Input
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="admin"
-                  className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 h-10"
-                  autoComplete="off"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] font-bold text-slate-300 mb-1 block">PASSWORD</label>
+                <label className="text-[11px] font-bold text-slate-300 mb-1 block">ADMIN PASSWORD</label>
                 <div className="relative">
                   <Input
                     type={show ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 h-10 pr-10"
+                    placeholder="Enter password"
+                    className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 h-12 text-base pr-10"
                     onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                    autoFocus
                   />
                   <button
                     onClick={() => setShow((s) => !s)}
@@ -253,14 +243,11 @@ function AdminLoginModal({ open, onClose }: { open: boolean; onClose: () => void
               <Button
                 onClick={handleLogin}
                 disabled={loading}
-                className="w-full h-10 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white font-bold"
+                className="w-full h-11 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white font-bold text-base"
               >
                 {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Lock className="w-4 h-4 mr-2" />}
                 {loading ? "Authenticating..." : "Login"}
               </Button>
-              <div className="text-[10px] text-slate-500 text-center pt-1 border-t border-slate-800">
-                Demo: <span className="font-mono text-slate-400">admin</span> / <span className="font-mono text-slate-400">admin123</span>
-              </div>
               <Button variant="ghost" size="sm" className="w-full text-slate-400" onClick={onClose}>
                 Close
               </Button>
