@@ -106,6 +106,12 @@ export function MatchDetailScreen() {
               <div className="mt-1 text-[9px] text-white/60">
                 {match.format || match.type || ""}
               </div>
+              {(match as any).lineup_status === 1 && (
+                <span className="mt-1 inline-flex items-center gap-1 text-[8px] font-bold bg-emerald-500 text-white px-1.5 py-0.5 rounded-full">
+                  <span className="w-1 h-1 bg-white rounded-full" />
+                  XI CONFIRMED
+                </span>
+              )}
             </div>
 
             <motion.div

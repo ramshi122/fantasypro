@@ -55,7 +55,9 @@ export interface MatchPlayer {
   vice_captain_percentage?: number;
   player_fixed_id?: string;
   pl_id?: string;
-  playing?: number;
+  playing?: number; // 0 = not confirmed, 1 = confirmed playing (after lineup)
+  last_play?: number; // 0 = didn't play last match, 1 = played
+  last_play_text?: string;
   [k: string]: unknown;
 }
 
@@ -97,6 +99,8 @@ export interface MatchInfo {
   type?: string;
   sport?: Sport;
   sport_index?: number;
+  lineup_status?: number; // 0 = not announced, 1 = announced/confirmed
+  toss?: string;
   isSaved?: boolean;
   dream11Url?: string;
   my11circleUrl?: string;

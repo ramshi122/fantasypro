@@ -45,6 +45,13 @@ import { AutoGenerator } from "./auto-generator";
 import { BulkTransferModal } from "./bulk-transfer-modal";
 import { FreeContestsModal } from "./free-contests-modal";
 import { OtpLoginModal } from "@/components/auth/otp-login-modal";
+import {
+  autoReplaceNonPlaying,
+  buildPlayingPlayerSet,
+  filterPlayingPlayers,
+  getNonPlayingPlayersInTeam,
+  isLineupAnnounced,
+} from "@/lib/lineup";
 import { cn } from "@/lib/utils";
 import { roleFromPlayerType, shortName, teamColor } from "@/lib/format";
 
@@ -66,6 +73,8 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   const [showOtpLogin, setShowOtpLogin] = useState(false);
   const [linkedApp, setLinkedApp] = useState<FantasyApp | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [lineupAnnounced, setLineupAnnounced] = useState(false);
+  const [playingPlayerIds, setPlayingPlayerIds] = useState<Set<string>>(new Set());
 
   const matchId = (match.matchId ?? match.id ?? "") as string;
   const team1Name = (typeof match.team1 === "string" ? match.team1 : (match.team1?.shortName || match.team1?.name)) as string ||
@@ -90,14 +99,28 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
       ]);
 
       // Extract players from match detail
+      let allPlayers: MatchPlayer[] = [];
       if (matchDetail) {
         const leftPlayers = (matchDetail as any).left_team_players || [];
         const rightPlayers = (matchDetail as any).right_team_players || [];
-        const all: MatchPlayer[] = [...leftPlayers, ...rightPlayers].filter(Boolean);
-        setPlayers(all);
+        allPlayers = [...leftPlayers, ...rightPlayers].filter(Boolean);
+
+        // Detect lineup status
+        const lineupStatus = (matchDetail as any).lineup_status;
+        const announced = Number(lineupStatus) === 1;
+        setLineupAnnounced(announced);
+
+        // Build set of confirmed playing player IDs
+        const playingSet = buildPlayingPlayerSet(allPlayers, announced);
+        setPlayingPlayerIds(playingSet);
+
+        // Filter players: after lineup, only show confirmed playing XI
+        const visiblePlayers = filterPlayingPlayers(allPlayers, announced);
+        setPlayers(visiblePlayers);
       } else {
-        // Try localStorage fallback for teams only
         setPlayers([]);
+        setLineupAnnounced(false);
+        setPlayingPlayerIds(new Set());
       }
 
       // Merge: localStorage teams take priority (they're the ones the user created)
@@ -204,6 +227,42 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
     toast.success(`${app} linked successfully`);
   }
 
+  // Auto-replace non-playing players in the given teams
+  function handleAutoReplaceAll(teamsToFix: TeamRow[]) {
+    try {
+      const all = JSON.parse(localStorage.getItem("fantasypro-local-teams") || "{}");
+      const list = all[matchId] || [];
+      let totalReplaced = 0;
+
+      for (const team of teamsToFix) {
+        const idx = list.findIndex(
+          (t: TeamRow) => t._id === team._id || t.teamId === team.teamId
+        );
+        if (idx === -1) continue;
+
+        const { updatedTeam, replaced } = autoReplaceNonPlaying(
+          list[idx],
+          players as MatchPlayer[],
+          true
+        );
+        list[idx] = updatedTeam;
+        totalReplaced += replaced.length;
+      }
+
+      all[matchId] = list;
+      localStorage.setItem("fantasypro-local-teams", JSON.stringify(all));
+
+      if (totalReplaced > 0) {
+        toast.success(`Replaced ${totalReplaced} non-playing player(s) across ${teamsToFix.length} team(s)`);
+      } else {
+        toast.info("No replacements available — all non-playing players kept (insufficient playing XI)");
+      }
+      setRefreshKey((k) => k + 1);
+    } catch (err: any) {
+      toast.error("Failed to auto-replace players");
+    }
+  }
+
   // Called after the auto-generator has finished. The generator already saved
   // teams to localStorage via bulkAddTeams(), so we just need to refresh the
   // view and show a success toast.
@@ -218,9 +277,23 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
       <div className="bg-white dark:bg-card rounded-2xl border border-violet-100 dark:border-violet-900/30 p-4">
         <div className="flex items-center justify-between mb-2">
           <div>
-            <h3 className="text-sm font-bold text-foreground">My Teams</h3>
+            <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+              My Teams
+              {lineupAnnounced ? (
+                <span className="inline-flex items-center gap-1 text-[9px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 px-2 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+                  PLAYING XI CONFIRMED
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[9px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 px-2 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+                  LINEUP PENDING
+                </span>
+              )}
+            </h3>
             <p className="text-[11px] text-muted-foreground">
               Match ID: {matchId || "—"} · {players.length} players available
+              {lineupAnnounced && " · only confirmed playing XI shown"}
             </p>
           </div>
           <Button
@@ -233,6 +306,32 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
             Refresh
           </Button>
         </div>
+
+        {/* Lineup warning — show if teams have non-playing players */}
+        {lineupAnnounced && existingTeams.length > 0 && (() => {
+          const teamsWithIssues = existingTeams.filter((t) =>
+            getNonPlayingPlayersInTeam(t, true, playingPlayerIds).length > 0
+          );
+          if (teamsWithIssues.length === 0) return null;
+          return (
+            <div className="mt-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3">
+              <p className="text-xs font-bold text-amber-700 dark:text-amber-300 mb-1">
+                ⚠️ Lineup Updated — {teamsWithIssues.length} team(s) have non-playing players
+              </p>
+              <p className="text-[11px] text-muted-foreground mb-2">
+                The official Playing XI has been announced. Some of your teams contain players who are not in the final lineup. Auto-replace them now.
+              </p>
+              <Button
+                size="sm"
+                className="h-8 text-xs bg-amber-500 hover:bg-amber-600 text-white"
+                onClick={() => handleAutoReplaceAll(teamsWithIssues)}
+              >
+                <RefreshCw className="w-3 h-3 mr-1" />
+                Auto-Replace Non-Playing Players
+              </Button>
+            </div>
+          );
+        })()}
 
         {/* Transfer Flow step indicator */}
         <TransferStepIndicator
@@ -368,6 +467,11 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                       TRANSFERRED
                     </span>
                   )}
+                  {lineupAnnounced && getNonPlayingPlayersInTeam(t, true, playingPlayerIds).length > 0 && (
+                    <span className="text-[9px] bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 px-1.5 py-0.5 rounded-full font-bold animate-pulse">
+                      ⚠ {getNonPlayingPlayersInTeam(t, true, playingPlayerIds).length} NON-PLAYING
+                    </span>
+                  )}
                 </span>
                 <div className="flex gap-1 flex-wrap">
                   <Button
@@ -437,6 +541,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
             team2Name={team2Name}
             team1Color={team1Color}
             team2Color={team2Color}
+            lineupAnnounced={lineupAnnounced}
             onClose={() => {
               setShowEditor(false);
               setEditingTeam(null);
@@ -657,6 +762,7 @@ function TeamEditor({
   team2Name,
   team1Color,
   team2Color,
+  lineupAnnounced,
   onClose,
   onSave,
   saving,
@@ -668,6 +774,7 @@ function TeamEditor({
   team2Name: string;
   team1Color: string;
   team2Color: string;
+  lineupAnnounced: boolean;
   onClose: () => void;
   onSave: (team: Partial<TeamRow>) => void;
   saving: boolean;
@@ -759,6 +866,33 @@ function TeamEditor({
         </div>
 
         <div className="p-4 space-y-4">
+          {/* Lineup status notice */}
+          {lineupAnnounced ? (
+            <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 p-3 flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                  Playing XI Confirmed
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Only confirmed playing XI players are shown. Bench, retired, and unavailable players are hidden.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs font-bold text-amber-700 dark:text-amber-300">
+                  Lineup Not Yet Announced
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  All available players are shown. Teams will be auto-refreshed when the official Playing XI is confirmed.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Squad summary */}
           <div className="grid grid-cols-4 gap-2 text-center">
             <div className="rounded-lg bg-violet-50 dark:bg-violet-900/20 p-2">
