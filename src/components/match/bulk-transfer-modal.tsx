@@ -194,7 +194,7 @@ export function BulkTransferModal({
         // Linked account transfer — uses numeric matchId
         const account = getLinkedAccount(selectedApp);
         if (!account) {
-          toast.error(`${APP_LABELS[selectedApp]?.label} account not linked. Please link via OTP first.`);
+          toast.error(`${APP_LABELS[selectedApp]?.label} account not linked`);
           onOpenOtpLogin();
           setPhase("select");
           return;
@@ -212,18 +212,15 @@ export function BulkTransferModal({
             existingIds = existing
               .map((t) => String(t.team_id ?? t.teamId ?? ""))
               .filter(Boolean);
-            if (existingIds.length === 0) {
-              toast.info("No existing teams to replace — creating new instead");
-            }
           } catch {
-            toast.info("Could not fetch existing teams — creating new instead");
+            // ignore — will create new
           }
         }
 
         res = await bulkTransferToLinkedAccount(
           items,
           {
-            matchId: matchNumericId, // numeric ID for /api/fantasy/add-team
+            matchId: matchNumericId,
             fantasyApp: selectedApp,
             authToken: account.token,
             sportIndex: 0,
@@ -236,17 +233,47 @@ export function BulkTransferModal({
           (done, total) => setProgress({ done, total })
         );
       }
+
       setResult(res);
       setPhase("done");
-      if (res.successCount > 0) {
-        toast.success(`Transferred ${res.successCount}/${res.totalAttempted} teams`);
+
+      if (res.successCount > 0 && res.failCount === 0) {
+        // All succeeded — mark teams as transferred locally
+        markTeamsTransferred();
+        toast.success(`Transferred ${res.successCount}/${res.totalAttempted} teams to ${APP_LABELS[selectedApp]?.label || selectedApp}`);
+      } else if (res.successCount > 0) {
+        // Partial success
+        toast.success(`${res.successCount} transferred, ${res.failCount} failed`);
       } else {
-        toast.error("All transfers failed — see details below");
+        // All failed — show honest error with relink CTA
+        toast.error("Transfer failed — relink your account via OTP");
       }
     } catch (err: any) {
-      toast.error(err?.message || "Transfer failed");
-      setPhase("select");
+      setResult({
+        totalAttempted: items.length,
+        successCount: 0,
+        failCount: items.length,
+        results: items.map((it) => ({ teamNo: it.teamNo, success: false, message: err?.message || "Network error" })),
+        transferLinks: items.map((it) => ({ teamNo: it.teamNo })),
+      });
+      setPhase("done");
+      toast.error("Transfer failed — check your connection and try again");
     }
+  }
+
+  // Mark successfully transferred teams in localStorage so they show "Sent" badge
+  function markTeamsTransferred() {
+    try {
+      const all = JSON.parse(localStorage.getItem("fantasypro-local-teams") || "{}");
+      const key = String(matchNumericId);
+      const list = all[key] || [];
+      for (const t of list) {
+        t.transferred = true;
+        t.transferStatus = "transferred";
+      }
+      all[key] = list;
+      localStorage.setItem("fantasypro-local-teams", JSON.stringify(all));
+    } catch {}
   }
 
   // App selector for linked mode
@@ -541,13 +568,18 @@ export function BulkTransferModal({
                     )}
                   </motion.div>
                   <p className="text-lg font-bold text-foreground">
-                    {result.successCount}/{result.totalAttempted} teams transferred
+                    {result.successCount > 0
+                      ? `${result.successCount}/${result.totalAttempted} teams transferred 🎉`
+                      : `${result.totalAttempted} teams failed`}
                   </p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {result.failCount > 0 && `${result.failCount} failed · `}
-                    {mode === "direct"
-                      ? "Tap links below to open in Dream11"
-                      : `Sent to ${APP_LABELS[selectedApp]?.label || selectedApp}`}
+                    {result.successCount > 0 && result.failCount === 0
+                      ? (mode === "direct"
+                          ? "Tap links below to open in Dream11"
+                          : `Successfully sent to your ${APP_LABELS[selectedApp]?.label || selectedApp} account`)
+                      : result.successCount > 0
+                        ? `${result.failCount} failed — see below`
+                        : "Your linked account session is invalid or expired"}
                   </p>
                 </div>
 
@@ -590,31 +622,42 @@ export function BulkTransferModal({
                     <p className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">
                       Failed teams ({result.failCount}):
                     </p>
-                    <div className="max-h-32 overflow-y-auto scrollbar-thin space-y-1">
+                    <div className="max-h-24 overflow-y-auto scrollbar-thin space-y-1">
                       {result.results
                         .filter((r) => !r.success)
-                        .slice(0, 10)
+                        .slice(0, 5)
                         .map((r) => (
                           <p key={r.teamNo} className="text-[11px] text-red-600 dark:text-red-400">
-                            Team #{r.teamNo}: {r.message || "Unknown error"}
+                            Team #{r.teamNo}: {r.message || "Backend rejected"}
                           </p>
                         ))}
                     </div>
-                    {result.failCount > 10 && (
+                    {result.failCount > 5 && (
                       <p className="text-[10px] text-muted-foreground mt-1">
-                        ...and {result.failCount - 10} more
+                        ...and {result.failCount - 5} more
                       </p>
                     )}
                     {result.failCount === result.totalAttempted && (
-                      <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-2 pt-2 border-t border-red-200 dark:border-red-800">
-                        💡 All teams failed. This usually means:
-                        <br />
-                        • The match doesn't support {mode === "direct" ? "Dream11 direct transfer" : APP_LABELS[selectedApp]?.label} — try another app
-                        <br />
-                        • Your linked account session expired — relink via OTP
-                        <br />
-                        • Backend rate-limited the request — wait and retry
-                      </p>
+                      <div className="mt-3 pt-3 border-t border-red-200 dark:border-red-800">
+                        <p className="text-[11px] font-bold text-red-700 dark:text-red-300 mb-2">
+                          ⚠️ Relink your account to fix this
+                        </p>
+                        <p className="text-[10px] text-muted-foreground mb-2.5">
+                          The backend rejected the transfer because your {APP_LABELS[selectedApp]?.label} session is invalid or expired.
+                          Complete OTP login with your real mobile number to get a fresh auth token.
+                        </p>
+                        <Button
+                          size="sm"
+                          className="w-full h-8 brand-gradient text-white text-xs"
+                          onClick={() => {
+                            onClose();
+                            onOpenOtpLogin();
+                          }}
+                        >
+                          <Zap className="w-3 h-3 mr-1" />
+                          Relink {APP_LABELS[selectedApp]?.label} via OTP
+                        </Button>
+                      </div>
                     )}
                   </div>
                 )}

@@ -480,7 +480,10 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
       {/* Bulk Transfer modal (direct link OR linked account) */}
       <BulkTransferModal
         open={showBulkTransfer}
-        onClose={() => setShowBulkTransfer(false)}
+        onClose={() => {
+          setShowBulkTransfer(false);
+          setRefreshKey((k) => k + 1);
+        }}
         match={match}
         teams={existingTeams}
         onOpenOtpLogin={() => {
