@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
 import { useApp } from "@/lib/store";
 import { getMatches, type MatchInfo } from "@/lib/api";
 import { SportTabs, MatchTabs } from "./sport-tabs";
@@ -47,6 +48,24 @@ export function HomeScreen() {
 
   return (
     <div className="px-4 py-4 space-y-4 pb-24">
+      {/* Featured banner — top of home screen */}
+      <motion.a
+        href="#"
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="block w-full rounded-2xl overflow-hidden shadow-lg relative"
+      >
+        <img
+          src="/promo-banner.jpg"
+          alt="Village Eyecare — See Better Than Yesterday"
+          className="w-full h-auto object-cover"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      </motion.a>
+
       <SportTabs />
 
       <PromoBanners />
