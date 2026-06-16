@@ -356,6 +356,19 @@ export function BulkTransferModal({
                   )}
                 </div>
 
+                {/* Warning: Dream11 not supported for this match */}
+                {selectedApp === "dream11" && !supportedApps.includes("dream11") && supportedApps.length > 0 && (
+                  <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 p-3 text-xs">
+                    <p className="font-bold text-amber-700 dark:text-amber-300 mb-0.5">
+                      ⚠️ Dream11 Not Available for This Match
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      This match only supports {supportedApps.map(a => APP_LABELS[a]?.label || a).join(", ")}. Dream11 transfer may fail.
+                      Use the ⭕ My11Circle button instead.
+                    </p>
+                  </div>
+                )}
+
                 {/* Mode selection */}
                 <div className="space-y-2">
                   <button
@@ -589,7 +602,9 @@ export function BulkTransferModal({
                           : `Successfully sent to your ${APP_LABELS[selectedApp]?.label || selectedApp} account`)
                       : result.successCount > 0
                         ? `${result.failCount} failed — see below`
-                        : "Your linked account session is invalid or expired"}
+                        : mode === "direct"
+                          ? "Dream11 direct transfer not available for this match"
+                          : "Your linked account session is invalid or expired"}
                   </p>
                 </div>
 
