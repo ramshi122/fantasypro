@@ -1,0 +1,867 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Activity,
+  AlertTriangle,
+  Ban,
+  Bell,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  Copy,
+  Delete,
+  DeviceMobile,
+  Eye,
+  EyeOff,
+  Key,
+  Loader2,
+  Lock,
+  LogOut,
+  Power,
+  Send,
+  Settings,
+  Shield,
+  ShieldCheck,
+  Smartphone,
+  Trash2,
+  Unlock,
+  User,
+  Users,
+  X,
+  Zap,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
+import { useAdmin, type KeyType, type KeyStatus } from "@/lib/admin-store";
+import { cn } from "@/lib/utils";
+
+type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "users" | "announcements" | "logs" | "settings";
+
+interface AdminPanelProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+export function AdminPanel({ open, onClose }: AdminPanelProps) {
+  const admin = useAdmin();
+  const [tab, setTab] = useState<Tab>("dashboard");
+
+  // Login gate
+  if (!admin.isAdminAuthenticated) {
+    return <AdminLoginModal open={open} onClose={onClose} />;
+  }
+
+  if (!open) return null;
+
+  const tabs: Array<{ id: Tab; label: string; icon: typeof Key }> = [
+    { id: "dashboard", label: "Dashboard", icon: Activity },
+    { id: "licenses", label: "Licenses", icon: Key },
+    { id: "devices", label: "Devices", icon: Smartphone },
+    { id: "team-control", label: "Generator", icon: Zap },
+    { id: "users", label: "Users", icon: Users },
+    { id: "announcements", label: "Announce", icon: Bell },
+    { id: "logs", label: "Logs", icon: Activity },
+    { id: "settings", label: "Settings", icon: Settings },
+  ];
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[90] bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            className="bg-slate-900 dark:bg-slate-950 w-full max-w-5xl h-[92vh] rounded-2xl border border-violet-800/40 shadow-2xl flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="bg-gradient-to-r from-violet-900 via-purple-900 to-fuchsia-900 text-white p-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur-md flex items-center justify-center">
+                  <Shield className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="font-black text-base flex items-center gap-2">
+                    FANTASYPRO ADMIN
+                    <span className="text-[9px] bg-emerald-500 px-1.5 py-0.5 rounded-full font-bold">LIVE</span>
+                  </h2>
+                  <p className="text-[10px] text-white/70">Hidden admin mode · {admin.adminUsername}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-white hover:bg-white/20 h-8 text-xs"
+                  onClick={() => {
+                    admin.logout();
+                    onClose();
+                    toast.success("Admin logged out");
+                  }}
+                >
+                  <LogOut className="w-3.5 h-3.5 mr-1" />
+                  Logout
+                </Button>
+                <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Tab bar */}
+            <div className="bg-slate-800/80 border-b border-slate-700 px-2 flex gap-1 overflow-x-auto no-scrollbar">
+              {tabs.map((t) => {
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setTab(t.id)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-2.5 text-xs font-bold whitespace-nowrap border-b-2 transition-colors",
+                      tab === t.id
+                        ? "border-violet-500 text-white bg-slate-800"
+                        : "border-transparent text-slate-400 hover:text-white hover:bg-slate-800/50"
+                    )}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto scrollbar-thin p-4 bg-slate-900">
+              {tab === "dashboard" && <DashboardTab />}
+              {tab === "licenses" && <LicensesTab />}
+              {tab === "devices" && <DevicesTab />}
+              {tab === "team-control" && <TeamControlTab />}
+              {tab === "users" && <UsersTab />}
+              {tab === "announcements" && <AnnouncementsTab />}
+              {tab === "logs" && <LogsTab />}
+              {tab === "settings" && <SettingsTab />}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/* ---------- Login Modal ---------- */
+
+function AdminLoginModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const admin = useAdmin();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [show, setShow] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  if (!open) return null;
+
+  function handleLogin() {
+    if (!username.trim() || !password.trim()) {
+      toast.error("Enter username and password");
+      return;
+    }
+    setLoading(true);
+    setTimeout(() => {
+      const ok = admin.login(username.trim(), password);
+      setLoading(false);
+      if (ok) {
+        toast.success("Admin login successful");
+      } else {
+        toast.error("Invalid credentials");
+      }
+    }, 400);
+  }
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[90] bg-black/80 backdrop-blur-md flex items-center justify-center p-4"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            className="bg-slate-900 w-full max-w-sm rounded-2xl border border-violet-800/40 shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="bg-gradient-to-br from-violet-900 via-purple-900 to-fuchsia-900 text-white p-5 text-center relative overflow-hidden">
+              <div className="absolute -top-8 -right-8 w-32 h-32 bg-white/10 rounded-full" />
+              <div className="absolute -bottom-8 -left-8 w-32 h-32 bg-white/5 rounded-full" />
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ type: "spring", stiffness: 200 }}
+                className="w-14 h-14 mx-auto rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center mb-2"
+              >
+                <Shield className="w-7 h-7" />
+              </motion.div>
+              <h2 className="font-black text-lg">FANTASYPRO ADMIN</h2>
+              <p className="text-[11px] text-white/70 mt-0.5">Restricted access · JWT protected</p>
+            </div>
+
+            {/* Form */}
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="text-[11px] font-bold text-slate-300 mb-1 block">USERNAME</label>
+                <Input
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="admin"
+                  className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 h-10"
+                  autoComplete="off"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-bold text-slate-300 mb-1 block">PASSWORD</label>
+                <div className="relative">
+                  <Input
+                    type={show ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 h-10 pr-10"
+                    onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                  />
+                  <button
+                    onClick={() => setShow((s) => !s)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400"
+                  >
+                    {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              <Button
+                onClick={handleLogin}
+                disabled={loading}
+                className="w-full h-10 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white font-bold"
+              >
+                {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Lock className="w-4 h-4 mr-2" />}
+                {loading ? "Authenticating..." : "Login"}
+              </Button>
+              <div className="text-[10px] text-slate-500 text-center pt-1 border-t border-slate-800">
+                Demo: <span className="font-mono text-slate-400">admin</span> / <span className="font-mono text-slate-400">admin123</span>
+              </div>
+              <Button variant="ghost" size="sm" className="w-full text-slate-400" onClick={onClose}>
+                Close
+              </Button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/* ---------- Dashboard Tab ---------- */
+
+function DashboardTab() {
+  // Select raw data and compute stats in useMemo to avoid infinite loop
+  const keys = useAdmin((s) => s.keys);
+  const devices = useAdmin((s) => s.devices);
+  const users = useAdmin((s) => s.users);
+  const logs = useAdmin((s) => s.logs);
+
+  const stats = (() => {
+    const now = Date.now();
+    const todayStart = new Date().setHours(0, 0, 0, 0);
+    return {
+      totalKeys: keys.length,
+      activeKeys: keys.filter((k) => k.status === "active" && (!k.expiresAt || k.expiresAt > now)).length,
+      usedKeys: keys.filter((k) => k.status === "used").length,
+      expiredKeys: keys.filter((k) => k.status === "expired" || (k.expiresAt && k.expiresAt < now)).length,
+      activeDevices: devices.filter((d) => d.status === "allowed").length,
+      todayVerifications: logs.filter((l) => l.type === "key_verification" && l.timestamp >= todayStart).length,
+      totalUsers: users.length,
+      teamsGeneratedToday: logs.filter((l) => l.type === "team_generation" && l.timestamp >= todayStart).length,
+    };
+  })();
+
+  const cards = [
+    { label: "Total Keys", value: stats.totalKeys, icon: Key, color: "from-violet-500 to-purple-600" },
+    { label: "Active Keys", value: stats.activeKeys, icon: ShieldCheck, color: "from-emerald-500 to-green-600" },
+    { label: "Used Keys", value: stats.usedKeys, icon: Check, color: "from-sky-500 to-blue-600" },
+    { label: "Expired Keys", value: stats.expiredKeys, icon: AlertTriangle, color: "from-amber-500 to-orange-600" },
+    { label: "Active Devices", value: stats.activeDevices, icon: Smartphone, color: "from-pink-500 to-rose-600" },
+    { label: "Today Verifications", value: stats.todayVerifications, icon: Activity, color: "from-cyan-500 to-teal-600" },
+    { label: "Total Users", value: stats.totalUsers, icon: Users, color: "from-indigo-500 to-violet-600" },
+    { label: "Teams Today", value: stats.teamsGeneratedToday, icon: Zap, color: "from-fuchsia-500 to-pink-600" },
+  ];
+  return (
+    <div className="space-y-4">
+      <h3 className="text-sm font-bold text-white">Dashboard Overview</h3>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {cards.map((c) => {
+          const Icon = c.icon;
+          return (
+            <div key={c.label} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+              <div className={cn("w-8 h-8 rounded-lg bg-gradient-to-br flex items-center justify-center mb-2", c.color)}>
+                <Icon className="w-4 h-4 text-white" />
+              </div>
+              <p className="text-2xl font-black text-white">{c.value}</p>
+              <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">{c.label}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Licenses Tab ---------- */
+
+function LicensesTab() {
+  const admin = useAdmin();
+  const [search, setSearch] = useState("");
+  const [bulkCount, setBulkCount] = useState(10);
+  const [bulkType, setBulkType] = useState<KeyType>("weekly");
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
+  const filtered = admin.keys.filter(
+    (k) =>
+      k.key.toLowerCase().includes(search.toLowerCase()) ||
+      k.userName?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const keyTypes: KeyType[] = ["trial", "weekly", "monthly", "lifetime"];
+  const statusColors: Record<KeyStatus, string> = {
+    active: "bg-emerald-500",
+    used: "bg-sky-500",
+    expired: "bg-amber-500",
+    suspended: "bg-red-500",
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h3 className="text-sm font-bold text-white">License Management</h3>
+        <div className="flex gap-2 flex-wrap">
+          <select
+            value={bulkType}
+            onChange={(e) => setBulkType(e.target.value as KeyType)}
+            className="bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2 h-8"
+          >
+            {keyTypes.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+          <select
+            value={bulkCount}
+            onChange={(e) => setBulkCount(Number(e.target.value))}
+            className="bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2 h-8"
+          >
+            <option value={1}>Single</option>
+            <option value={10}>10 Keys</option>
+            <option value={50}>50 Keys</option>
+            <option value={100}>100 Keys</option>
+            <option value={500}>500 Keys</option>
+          </select>
+          <Button
+            size="sm"
+            className="bg-violet-600 hover:bg-violet-700 text-white h-8 text-xs"
+            onClick={() => {
+              if (bulkCount === 1) {
+                const k = admin.generateKey(bulkType);
+                toast.success(`Generated: ${k}`);
+              } else {
+                const keys = admin.generateBulkKeys(bulkCount, bulkType);
+                toast.success(`Generated ${keys.length} keys`);
+              }
+            }}
+          >
+            <Key className="w-3 h-3 mr-1" />
+            Generate
+          </Button>
+        </div>
+      </div>
+
+      {/* Search */}
+      <Input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search by key or user..."
+        className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 h-9 text-sm"
+      />
+
+      {/* Keys list */}
+      <div className="space-y-2 max-h-[60vh] overflow-y-auto scrollbar-thin">
+        {filtered.length === 0 ? (
+          <p className="text-center text-slate-500 py-8 text-sm">No keys found</p>
+        ) : (
+          filtered.map((k) => (
+            <div key={k.key} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <code className="text-xs font-mono text-violet-300 font-bold">{k.key}</code>
+                    <span className={cn("text-[8px] font-bold text-white px-1.5 py-0.5 rounded-full uppercase", statusColors[k.status])}>
+                      {k.status}
+                    </span>
+                    <span className="text-[8px] font-bold text-slate-400 bg-slate-700 px-1.5 py-0.5 rounded-full uppercase">
+                      {k.type}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    {k.userName ? `User: ${k.userName} · ` : ""}
+                    Devices: {k.deviceIds.length} · Verifications: {k.verifications}
+                    {k.expiresAt && ` · Expires: ${new Date(k.expiresAt).toLocaleDateString()}`}
+                  </p>
+                </div>
+                <div className="flex gap-1">
+                  <ActionBtn label="Copy" icon={Copy} onClick={() => { navigator.clipboard.writeText(k.key); toast.success("Key copied"); }} />
+                  {k.status === "suspended" ? (
+                    <ActionBtn label="Activate" icon={Unlock} onClick={() => admin.activateKey(k.key)} color="emerald" />
+                  ) : (
+                    <ActionBtn label="Suspend" icon={Ban} onClick={() => admin.suspendKey(k.key)} color="amber" />
+                  )}
+                  <ActionBtn label="Extend" icon={Power} onClick={() => { admin.extendExpiry(k.key, 7); toast.success("Extended 7 days"); }} color="sky" />
+                  <ActionBtn label="Reset" icon={Smartphone} onClick={() => admin.resetDevice(k.key)} color="violet" />
+                  <ActionBtn label="Delete" icon={Trash2} onClick={() => admin.deleteKey(k.key)} color="red" />
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ActionBtn({
+  label,
+  icon: Icon,
+  onClick,
+  color = "slate",
+}: {
+  label: string;
+  icon: typeof Key;
+  onClick: () => void;
+  color?: "slate" | "emerald" | "amber" | "sky" | "violet" | "red";
+}) {
+  const colors = {
+    slate: "bg-slate-700 hover:bg-slate-600 text-slate-200",
+    emerald: "bg-emerald-600 hover:bg-emerald-700 text-white",
+    amber: "bg-amber-600 hover:bg-amber-700 text-white",
+    sky: "bg-sky-600 hover:bg-sky-700 text-white",
+    violet: "bg-violet-600 hover:bg-violet-700 text-white",
+    red: "bg-red-600 hover:bg-red-700 text-white",
+  };
+  return (
+    <button
+      onClick={onClick}
+      className={cn("px-2 h-7 rounded-md text-[10px] font-bold flex items-center gap-1 transition-colors", colors[color])}
+      title={label}
+    >
+      <Icon className="w-2.5 h-2.5" />
+      {label}
+    </button>
+  );
+}
+
+/* ---------- Devices Tab ---------- */
+
+function DevicesTab() {
+  const admin = useAdmin();
+  const [search, setSearch] = useState("");
+  const filtered = admin.devices.filter(
+    (d) =>
+      d.deviceId.toLowerCase().includes(search.toLowerCase()) ||
+      d.userName?.toLowerCase().includes(search.toLowerCase()) ||
+      d.licenseKey?.toLowerCase().includes(search.toLowerCase())
+  );
+  return (
+    <div className="space-y-4">
+      <h3 className="text-sm font-bold text-white">Device Binding Manager</h3>
+      <Input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search by device ID, user, or license..."
+        className="bg-slate-800 border-slate-700 text-white h-9 text-sm"
+      />
+      <div className="space-y-2 max-h-[60vh] overflow-y-auto scrollbar-thin">
+        {filtered.map((d) => (
+          <div key={d.deviceId} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <code className="text-xs font-mono text-violet-300">{d.deviceId}</code>
+                  <span className={cn("text-[8px] font-bold text-white px-1.5 py-0.5 rounded-full uppercase", d.status === "banned" ? "bg-red-500" : "bg-emerald-500")}>
+                    {d.status}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  {d.userName ? `User: ${d.userName} · ` : ""}
+                  {d.licenseKey ? `License: ${d.licenseKey} · ` : ""}
+                  Last: {d.lastLogin ? new Date(d.lastLogin).toLocaleString() : "Never"}
+                </p>
+              </div>
+              <div className="flex gap-1">
+                <ActionBtn label="Unbind" icon={Delete} onClick={() => admin.unbindDevice(d.deviceId)} color="amber" />
+                <ActionBtn label="Logout" icon={LogOut} onClick={() => admin.forceLogout(d.deviceId)} color="sky" />
+                {d.status === "banned" ? (
+                  <ActionBtn label="Allow" icon={Unlock} onClick={() => admin.allowDevice(d.deviceId)} color="emerald" />
+                ) : (
+                  <ActionBtn label="Ban" icon={Ban} onClick={() => admin.banDevice(d.deviceId)} color="red" />
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Team Control Tab ---------- */
+
+function TeamControlTab() {
+  const admin = useAdmin();
+  const features: Array<{ key: keyof typeof admin.settings.teamGenerator; label: string }> = [
+    { key: "enabled", label: "Team Generator" },
+    { key: "autoTeamGenerator", label: "Auto Team Generator" },
+    { key: "glGenerator", label: "GL Generator" },
+    { key: "groupCombination", label: "Group Combination" },
+    { key: "cheatSheet", label: "Cheat Sheet" },
+    { key: "dtAnalysis", label: "DT Analysis" },
+    { key: "transferTeam", label: "Transfer Team" },
+    { key: "autoPick", label: "Auto Pick" },
+  ];
+  return (
+    <div className="space-y-4">
+      <h3 className="text-sm font-bold text-white">Team Generator Control</h3>
+
+      {/* Emergency disable */}
+      <div className="bg-red-950/40 border border-red-800 rounded-xl p-3">
+        <p className="text-xs font-bold text-red-300 mb-2">Emergency Control</p>
+        <Button
+          size="sm"
+          className="bg-red-600 hover:bg-red-700 text-white h-8 text-xs"
+          onClick={() => {
+            const features = admin.settings.teamGenerator;
+            const allOn = Object.values(features).every(Boolean);
+            if (allOn) {
+              (Object.keys(features) as Array<keyof typeof features>).forEach((k) => {
+                if (!features[k]) admin.toggleFeature(k);
+                else admin.toggleFeature(k);
+              });
+              toast.success("All features disabled");
+            } else {
+              (Object.keys(features) as Array<keyof typeof features>).forEach((k) => {
+                if (!features[k]) admin.toggleFeature(k);
+              });
+              toast.success("All features enabled");
+            }
+          }}
+        >
+          <Power className="w-3 h-3 mr-1" />
+          Disable Entire Team Generator
+        </Button>
+      </div>
+
+      {/* Master switches */}
+      <div className="space-y-2">
+        {features.map((f) => {
+          const enabled = admin.settings.teamGenerator[f.key];
+          return (
+            <label key={f.key} className="flex items-center justify-between bg-slate-800 rounded-xl p-3 border border-slate-700 cursor-pointer">
+              <div className="flex items-center gap-2">
+                <Zap className={cn("w-4 h-4", enabled ? "text-emerald-400" : "text-slate-500")} />
+                <span className="text-xs font-semibold text-white">Enable {f.label}</span>
+              </div>
+              <button
+                onClick={() => admin.toggleFeature(f.key)}
+                className={cn(
+                  "w-10 h-5 rounded-full transition-colors relative",
+                  enabled ? "bg-emerald-500" : "bg-slate-600"
+                )}
+              >
+                <div className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform", enabled ? "translate-x-5" : "translate-x-0.5")} />
+              </button>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Users Tab ---------- */
+
+function UsersTab() {
+  const admin = useAdmin();
+  return (
+    <div className="space-y-4">
+      <h3 className="text-sm font-bold text-white">User Management</h3>
+      <div className="space-y-2 max-h-[65vh] overflow-y-auto scrollbar-thin">
+        {admin.users.map((u) => (
+          <div key={u.id} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-white">{u.name}</span>
+                  {u.banned && (
+                    <span className="text-[8px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full">BANNED</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  Device: {u.device || "—"} · License: {u.license || "—"} · Last: {new Date(u.lastActive).toLocaleDateString()}
+                </p>
+              </div>
+              <div className="flex gap-1">
+                {u.banned ? (
+                  <ActionBtn label="Unban" icon={Unlock} onClick={() => admin.unbanUser(u.id)} color="emerald" />
+                ) : (
+                  <ActionBtn label="Ban" icon={Ban} onClick={() => admin.banUser(u.id)} color="red" />
+                )}
+                <ActionBtn label="Reset" icon={Key} onClick={() => admin.resetUserLicense(u.id)} color="amber" />
+                <ActionBtn label="Delete" icon={Trash2} onClick={() => admin.deleteUser(u.id)} color="red" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Announcements Tab ---------- */
+
+function AnnouncementsTab() {
+  const admin = useAdmin();
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+  const [target, setTarget] = useState<"all" | "premium" | "selected">("all");
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-sm font-bold text-white">Announcement Panel</h3>
+      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-3">
+        <Input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Announcement title (e.g. Server Maintenance)"
+          className="bg-slate-900 border-slate-700 text-white h-9 text-sm"
+        />
+        <textarea
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          placeholder="Message..."
+          className="w-full min-h-[80px] bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
+        />
+        <div className="flex gap-2">
+          {(["all", "premium", "selected"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTarget(t)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-bold capitalize",
+                target === t ? "bg-violet-600 text-white" : "bg-slate-700 text-slate-300"
+              )}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <Button
+          className="w-full bg-violet-600 hover:bg-violet-700 text-white h-10"
+          onClick={() => {
+            if (!title.trim() || !message.trim()) {
+              toast.error("Enter title and message");
+              return;
+            }
+            admin.sendAnnouncement(title, message, target);
+            toast.success(`Announcement sent to ${target} users`);
+            setTitle("");
+            setMessage("");
+          }}
+        >
+          <Send className="w-4 h-4 mr-2" />
+          Send Announcement
+        </Button>
+      </div>
+
+      {/* History */}
+      <div className="space-y-2">
+        <p className="text-xs font-bold text-slate-400">Sent Announcements</p>
+        {admin.announcements.length === 0 ? (
+          <p className="text-center text-slate-500 py-4 text-sm">No announcements sent</p>
+        ) : (
+          admin.announcements.map((a) => (
+            <div key={a.id} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+              <div className="flex items-center gap-2 mb-1">
+                <Bell className="w-3.5 h-3.5 text-violet-400" />
+                <p className="text-xs font-bold text-white">{a.title}</p>
+                <span className="text-[8px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded-full uppercase">{a.target}</span>
+              </div>
+              <p className="text-[11px] text-slate-400">{a.message}</p>
+              <p className="text-[9px] text-slate-600 mt-1">{new Date(a.createdAt).toLocaleString()}</p>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Logs Tab ---------- */
+
+function LogsTab() {
+  const admin = useAdmin();
+  const [filter, setFilter] = useState<"today" | "7days" | "30days">("today");
+  const now = Date.now();
+  const cutoff = filter === "today" ? new Date().setHours(0, 0, 0, 0) : now - (filter === "7days" ? 7 : 30) * 86400000;
+  const logs = admin.logs.filter((l) => l.timestamp >= cutoff);
+
+  const typeColors: Record<string, string> = {
+    key_verification: "bg-emerald-500",
+    login_attempt: "bg-sky-500",
+    team_generation: "bg-violet-500",
+    device_binding: "bg-amber-500",
+    admin_action: "bg-fuchsia-500",
+    error: "bg-red-500",
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-white">Live Activity Logs</h3>
+        <div className="flex gap-1">
+          {(["today", "7days", "30days"] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={cn("px-2 py-1 rounded-md text-[10px] font-bold", filter === f ? "bg-violet-600 text-white" : "bg-slate-800 text-slate-400")}
+            >
+              {f === "today" ? "Today" : f === "7days" ? "7 Days" : "30 Days"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-1.5 max-h-[65vh] overflow-y-auto scrollbar-thin">
+        {logs.length === 0 ? (
+          <p className="text-center text-slate-500 py-8 text-sm">No logs in this period</p>
+        ) : (
+          logs.map((l) => (
+            <div key={l.id} className="bg-slate-800 rounded-lg p-2.5 border border-slate-700 flex items-start gap-2">
+              <span className={cn("w-2 h-2 rounded-full mt-1.5 flex-shrink-0", typeColors[l.type] || "bg-slate-500")} />
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] text-white">{l.message}</p>
+                <p className="text-[9px] text-slate-500 mt-0.5">
+                  {new Date(l.timestamp).toLocaleString()} · {l.type.replace(/_/g, " ")}
+                </p>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+      <Button variant="outline" size="sm" className="text-slate-400" onClick={() => { admin.clearLogs(); toast.success("Logs cleared"); }}>
+        <Trash2 className="w-3 h-3 mr-1" />
+        Clear All Logs
+      </Button>
+    </div>
+  );
+}
+
+/* ---------- Settings Tab ---------- */
+
+function SettingsTab() {
+  const admin = useAdmin();
+  const [newPassword, setNewPassword] = useState("");
+  const [apiUrl, setApiUrl] = useState(admin.settings.apiUrl);
+  const [firebase, setFirebase] = useState(admin.settings.firebaseConfig);
+  const [prefix, setPrefix] = useState(admin.settings.licensePrefix);
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-sm font-bold text-white">Admin Settings</h3>
+
+      {/* Change password */}
+      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-2">
+        <p className="text-xs font-bold text-white">Change Admin Password</p>
+        <Input
+          type="password"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+          placeholder="New password"
+          className="bg-slate-900 border-slate-700 text-white h-9 text-sm"
+        />
+        <Button
+          size="sm"
+          className="bg-violet-600 hover:bg-violet-700 text-white h-8 text-xs"
+          onClick={() => {
+            if (!newPassword.trim()) { toast.error("Enter new password"); return; }
+            admin.changePassword(newPassword);
+            setNewPassword("");
+            toast.success("Password changed");
+          }}
+        >
+          <Lock className="w-3 h-3 mr-1" />
+          Update Password
+        </Button>
+      </div>
+
+      {/* API URL */}
+      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-2">
+        <p className="text-xs font-bold text-white">API URL</p>
+        <Input
+          value={apiUrl}
+          onChange={(e) => setApiUrl(e.target.value)}
+          className="bg-slate-900 border-slate-700 text-white h-9 text-sm font-mono"
+        />
+      </div>
+
+      {/* Firebase */}
+      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-2">
+        <p className="text-xs font-bold text-white">Firebase Config</p>
+        <textarea
+          value={firebase}
+          onChange={(e) => setFirebase(e.target.value)}
+          placeholder="Paste Firebase config JSON..."
+          className="w-full min-h-[60px] bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-xs font-mono resize-none focus:outline-none"
+        />
+      </div>
+
+      {/* License prefix */}
+      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-2">
+        <p className="text-xs font-bold text-white">License Prefix</p>
+        <Input
+          value={prefix}
+          onChange={(e) => setPrefix(e.target.value.toUpperCase())}
+          placeholder="CRICB"
+          className="bg-slate-900 border-slate-700 text-white h-9 text-sm font-mono uppercase"
+        />
+        <p className="text-[10px] text-slate-500">Current prefix: <span className="font-mono text-violet-300">{admin.settings.licensePrefix}</span></p>
+      </div>
+
+      <Button
+        className="w-full bg-violet-600 hover:bg-violet-700 text-white h-10"
+        onClick={() => {
+          admin.updateSettings({ apiUrl, firebaseConfig: firebase, licensePrefix: prefix || "CRICB" });
+          toast.success("Settings saved");
+        }}
+      >
+        <Check className="w-4 h-4 mr-2" />
+        Save All Settings
+      </Button>
+    </div>
+  );
+}

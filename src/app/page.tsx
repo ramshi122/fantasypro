@@ -13,6 +13,8 @@ import { ProfileScreen } from "@/components/pages/profile-screen";
 import { PromotionsScreen } from "@/components/pages/promotions-screen";
 import { TeamListScreen } from "@/components/pages/team-list-screen";
 import { SplashScreen } from "@/components/splash-screen";
+import { AdminPanel } from "@/components/admin/admin-panel";
+import { LicenseLockOverlay } from "@/components/admin/license-lock";
 import { AnimatePresence, motion } from "framer-motion";
 
 const SPLASH_KEY = "fantasypro-splash-shown";
@@ -23,6 +25,7 @@ export default function Home() {
   const setGuest = useAuth((s) => s.setGuest);
   const view = useApp((s) => s.view);
   const [showSplash, setShowSplash] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
 
   // Show splash on first load of each session (not on every navigation)
   useEffect(() => {
@@ -69,7 +72,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <TopHeader />
+      <TopHeader onAdminTrigger={() => setShowAdmin(true)} />
 
       <main className="flex-1 max-w-3xl mx-auto w-full">
         <AnimatePresence mode="wait">
@@ -84,7 +87,7 @@ export default function Home() {
             {view === "match-detail" && <MatchDetailScreen />}
             {view === "my-matches" && <MyMatchesScreen />}
             {view === "research" && <ResearchScreen />}
-            {view === "profile" && <ProfileScreen />}
+            {view === "profile" && <ProfileScreen onAdminTrigger={() => setShowAdmin(true)} />}
             {view === "promotions" && <PromotionsScreen />}
             {view === "expert-teams" && <TeamListScreen variant="expert" />}
             {view === "prime-teams" && <TeamListScreen variant="prime" />}
@@ -93,6 +96,12 @@ export default function Home() {
       </main>
 
       <BottomNav />
+
+      {/* Hidden Admin Panel — triggered by 5 taps on logo or version text */}
+      <AdminPanel open={showAdmin} onClose={() => setShowAdmin(false)} />
+
+      {/* License Lock Overlay — blocks team generator features until verified */}
+      <LicenseLockOverlay />
     </div>
   );
 }

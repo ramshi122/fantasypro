@@ -6,6 +6,7 @@ import { BrandLogo } from "@/components/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useApp } from "@/lib/store";
+import { useHiddenTrigger } from "@/lib/use-hidden-trigger";
 
 const MENU_ITEMS = [
   { label: "How to generate?", href: "#" },
@@ -20,9 +21,10 @@ const MENU_ITEMS = [
   { label: "About us", href: "#" },
 ] as const;
 
-export function TopHeader() {
+export function TopHeader({ onAdminTrigger }: { onAdminTrigger?: () => void }) {
   const [open, setOpen] = useState(false);
   const setView = useApp((s) => s.setView);
+  const trigger = useHiddenTrigger(() => onAdminTrigger?.());
 
   function handleMenuClick(item: (typeof MENU_ITEMS)[number]) {
     setOpen(false);
@@ -86,7 +88,18 @@ export function TopHeader() {
             </SheetContent>
           </Sheet>
 
-          <BrandLogo size={32} withText textClassName="text-base" />
+          {/* Hidden admin trigger — 5 taps on logo within 3 seconds */}
+          <div
+            onClick={() => trigger.registerTap()}
+            onTouchStart={trigger.startLongPress}
+            onTouchEnd={trigger.cancelLongPress}
+            onMouseDown={trigger.startLongPress}
+            onMouseUp={trigger.cancelLongPress}
+            onMouseLeave={trigger.cancelLongPress}
+            className="select-none"
+          >
+            <BrandLogo size={32} withText textClassName="text-base" />
+          </div>
         </div>
 
         <button

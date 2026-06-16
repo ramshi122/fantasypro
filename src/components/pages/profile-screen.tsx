@@ -29,6 +29,7 @@ import {
 } from "@/lib/api";
 import { OtpLoginModal } from "@/components/auth/otp-login-modal";
 import { motion, AnimatePresence } from "framer-motion";
+import { useHiddenTrigger } from "@/lib/use-hidden-trigger";
 import { cn } from "@/lib/utils";
 
 const APP_META: Record<FantasyApp, { label: string; emoji: string; color: string }> = {
@@ -38,7 +39,7 @@ const APP_META: Record<FantasyApp, { label: string; emoji: string; color: string
   vision11: { label: "Vision11", emoji: "👁️", color: "from-violet-500 to-purple-600" },
 };
 
-export function ProfileScreen() {
+export function ProfileScreen({ onAdminTrigger }: { onAdminTrigger?: () => void }) {
   const user = useAuth((s) => s.user);
   const logout = useAuth((s) => s.logout);
   const savedMatches = useApp((s) => s.savedMatches);
@@ -46,6 +47,7 @@ export function ProfileScreen() {
   const [linkedAccounts, setLinkedAccounts] = useState<LinkedFantasyAccount[]>([]);
   const [showOtpLogin, setShowOtpLogin] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const versionTrigger = useHiddenTrigger(() => onAdminTrigger?.());
 
   // Refresh linked accounts list on mount + when refreshKey changes
   useEffect(() => {
@@ -242,7 +244,10 @@ export function ProfileScreen() {
         <div className="flex justify-center mb-3">
           <BrandLogo size={36} />
         </div>
-        <p className="text-[10px] text-muted-foreground mb-3">
+        <p
+          className="text-[10px] text-muted-foreground mb-3 cursor-pointer select-none"
+          onClick={() => versionTrigger.registerTap()}
+        >
           FantasyPro v1.0.0 · © 2026
         </p>
         <Button
