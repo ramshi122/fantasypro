@@ -4,32 +4,54 @@ import { useEffect, useState } from "react";
 import { getPromotions, type PromotionItem } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { motion } from "framer-motion";
-import { ExternalLink, Flame, Gift, Send, Sparkles, Tag, Trophy, Users } from "lucide-react";
+import { ExternalLink, Flame, Gift, Send, Sparkles, Tag, Trophy, Users, Youtube } from "lucide-react";
 
-// Rebrand mapping — replace old "Team Generation" labels with FantasyPro equivalents
+// Rebrand mapping — replace ALL old "Team Generation" / "TG" / "Believer01" labels
+// with FantasyPro equivalents. Old API labels are never shown to the user.
 function rebrand(label?: string): string {
-  if (!label) return "";
+  if (!label) return "FantasyPro";
   const l = label.toLowerCase();
-  if (l.includes("tg group")) return "FantasyPro Group";
+  if (l.includes("tg group")) return "FantasyPro Community";
   if (l.includes("tg believer") || l.includes("believer01")) return "FantasyPro Community";
   if (l.includes("team generation")) return "FantasyPro";
+  if (l.includes("transfer") && l.includes("dream11")) return "Transfer to Dream11";
+  if (l.includes("subscribe") && l.includes("channel")) return "Subscribe to FantasyPro";
+  if (l.includes("subscribe")) return "Subscribe to FantasyPro";
+  if (l.includes("myfab11")) return "Play on MyFab11";
+  if (l.includes("d11") || l.includes("rules")) return "Dream11 New Rules 2026";
+  // Already rebranded
   return label;
+}
+
+// Rebuild the description — never reuse the API's old copy
+function rebuildDescription(label?: string): string {
+  if (!label) return "Tap to explore exclusive FantasyPro benefits.";
+  const l = label.toLowerCase();
+  if (l.includes("tg group") || l.includes("believer")) return "Join 50,000+ FantasyPro players. Get instant match alerts, prime teams & expert tips.";
+  if (l.includes("transfer") && l.includes("dream11")) return "One-tap direct team transfer to your Dream11 account. No manual selection needed.";
+  if (l.includes("subscribe") && l.includes("telegram")) return "Free prime teams, expert predictions & GL teams delivered daily to your Telegram.";
+  if (l.includes("subscribe") && l.includes("channel")) return "Subscribe to FantasyPro YouTube for team breakdowns, match analysis & winning strategies.";
+  if (l.includes("d11") || l.includes("rules")) return "Updated Dream11 rules for 2026 season — new scoring, new credits, new captain rules.";
+  if (l.includes("myfab11")) return "Play fantasy cricket on MyFab11 with exclusive FantasyPro referral bonus.";
+  return "Tap to explore exclusive FantasyPro benefits.";
 }
 
 // Pick an icon based on the promo content
 function pickIcon(label?: string, type?: string) {
   const l = (label || "").toLowerCase();
-  if (l.includes("group") || l.includes("community")) return Users;
+  if (l.includes("group") || l.includes("believer") || l.includes("community")) return Users;
   if (l.includes("transfer") || l.includes("dream11")) return Send;
-  if (l.includes("telegram") || l.includes("subscribe") || l.includes("channel")) return Sparkles;
+  if (l.includes("telegram")) return Sparkles;
+  if (l.includes("youtube") || l.includes("yt")) return Youtube;
   if (l.includes("rule")) return Flame;
   if (l.includes("win") || l.includes("league")) return Trophy;
+  if (l.includes("myfab11")) return Trophy;
   if (type === "referral") return Sparkles;
   if (type === "discount") return Tag;
   return Gift;
 }
 
-// Sexy gradient palette (new FantasyPro brand colors)
+// Sexy gradient palette — FantasyPro brand colors (violet → pink → amber family)
 const GRADIENTS = [
   "from-violet-600 via-purple-600 to-fuchsia-600",
   "from-pink-600 via-rose-600 to-red-600",
@@ -47,6 +69,18 @@ const GLOWS = [
   "shadow-amber-500/40",
   "shadow-fuchsia-500/40",
 ];
+
+// Action labels per promo type
+function ctaLabel(label?: string): string {
+  const l = (label || "").toLowerCase();
+  if (l.includes("group") || l.includes("believer") || l.includes("community")) return "Join group";
+  if (l.includes("transfer") || l.includes("dream11")) return "Transfer now";
+  if (l.includes("telegram")) return "Open Telegram";
+  if (l.includes("youtube") || l.includes("yt")) return "Subscribe";
+  if (l.includes("rule")) return "Read rules";
+  if (l.includes("myfab11")) return "Play now";
+  return "Claim now";
+}
 
 export function PromotionsScreen() {
   const [items, setItems] = useState<PromotionItem[]>([]);
@@ -118,88 +152,58 @@ export function PromotionsScreen() {
       ) : (
         <div className="space-y-3">
           {items.map((p, i) => {
+            // IMPORTANT: We completely ignore p.image (old TG banner URLs) and
+            // render ONLY new FantasyPro-branded gradient banners. No old
+            // images are ever shown to the user.
             const gradient = GRADIENTS[i % GRADIENTS.length];
             const glow = GLOWS[i % GLOWS.length];
             const Icon = pickIcon(p.title || p.label, p.type);
-            const hasImage = !!p.image;
-            const displayTitle = rebrand(p.title || p.label);
+            const title = rebrand(p.title || p.label);
+            const description = rebuildDescription(p.title || p.label);
+            const cta = ctaLabel(p.title || p.label);
+            const url = p.url || p.link || p.notificationUrl;
+            const clickable = url && url !== "#" && url !== "/";
+
             return (
               <motion.div
                 key={(p._id ?? i) as string}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.06 }}
-                whileHover={{ scale: 1.02, y: -2 }}
-                className={`rounded-2xl ${hasImage ? "overflow-hidden" : `bg-gradient-to-br ${gradient} p-4 text-white`} shadow-xl ${glow} relative cursor-pointer overflow-hidden`}
+                whileHover={clickable ? { scale: 1.02, y: -2 } : {}}
+                className={`rounded-2xl bg-gradient-to-br ${gradient} p-4 text-white shadow-xl ${glow} relative overflow-hidden ${clickable ? "cursor-pointer" : ""}`}
                 onClick={() => {
-                  if (p.url || p.link) {
-                    window.open(p.url || p.link, "_blank", "noopener,noreferrer");
+                  if (clickable) {
+                    window.open(url, "_blank", "noopener,noreferrer");
                   }
                 }}
               >
-                {hasImage ? (
-                  <>
-                    <img
-                      src={p.image!}
-                      alt={displayTitle || "Promotion"}
-                      className="w-full h-36 object-cover"
-                    />
-                    {/* Sexy gradient overlay with brand colors */}
-                    <div className="absolute inset-0 bg-gradient-to-tr from-violet-900/80 via-black/40 to-pink-900/40" />
-                    {/* Decorative shapes */}
-                    <div className="absolute -top-6 -right-6 w-24 h-24 bg-white/10 rounded-full blur-sm" />
-                    <div className="absolute top-3 right-3 w-16 h-16 border-2 border-white/20 rounded-full" />
+                {/* Decorative shapes */}
+                <div className="absolute -right-6 -top-6 w-24 h-24 bg-white/15 rounded-full blur-sm" />
+                <div className="absolute -right-12 -bottom-12 w-32 h-32 bg-white/10 rounded-full" />
+                <div className="absolute top-2 right-2 w-16 h-16 border-2 border-white/20 rounded-full" />
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-40 bg-white/5 rounded-full blur-2xl" />
 
-                    <div className="absolute inset-0 flex items-end p-4">
-                      <div className="flex items-end gap-3 w-full">
-                        <div className="w-11 h-11 rounded-xl bg-white/25 backdrop-blur-md flex items-center justify-center flex-shrink-0 ring-1 ring-white/30 shadow-lg">
-                          <Icon className="w-5 h-5 text-white drop-shadow" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-base font-extrabold text-white leading-tight drop-shadow-sm">
-                            {displayTitle}
-                          </p>
-                          {p.description && (
-                            <p className="text-xs text-white/85 mt-0.5 line-clamp-2">{p.description}</p>
-                          )}
-                          <span className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-bold bg-white/25 hover:bg-white/40 backdrop-blur-md px-2.5 py-1 rounded-full ring-1 ring-white/30">
-                            Claim now
-                            <ExternalLink className="w-3 h-3" />
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="relative flex items-start gap-3">
-                    {/* Decorative shapes */}
-                    <div className="absolute -right-6 -top-6 w-24 h-24 bg-white/15 rounded-full blur-sm" />
-                    <div className="absolute -right-12 -bottom-12 w-32 h-32 bg-white/10 rounded-full" />
-                    <div className="absolute top-2 right-2 w-16 h-16 border-2 border-white/20 rounded-full" />
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-40 bg-white/5 rounded-full blur-2xl" />
-
-                    <div className="relative w-12 h-12 rounded-2xl bg-white/25 backdrop-blur-md flex items-center justify-center flex-shrink-0 shadow-lg ring-1 ring-white/30">
-                      <Icon className="w-6 h-6 text-white drop-shadow" />
-                    </div>
-                    <div className="relative flex-1 min-w-0">
-                      <p className="text-[10px] text-white/80 font-semibold uppercase tracking-wider">
-                        FantasyPro Offer
-                      </p>
-                      <p className="text-base font-extrabold leading-tight mt-0.5 drop-shadow-sm">
-                        {displayTitle}
-                      </p>
-                      {p.description && (
-                        <p className="text-xs text-white/85 mt-1 leading-relaxed">
-                          {p.description}
-                        </p>
-                      )}
-                      <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold bg-white/25 hover:bg-white/40 backdrop-blur-md px-3 py-1 rounded-full ring-1 ring-white/30">
-                        Claim now
-                        <ExternalLink className="w-3 h-3" />
-                      </span>
-                    </div>
+                <div className="relative flex items-start gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-white/25 backdrop-blur-md flex items-center justify-center flex-shrink-0 shadow-lg ring-1 ring-white/30">
+                    <Icon className="w-6 h-6 text-white drop-shadow" />
                   </div>
-                )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] text-white/80 font-semibold uppercase tracking-wider">
+                      FantasyPro Offer
+                    </p>
+                    <p className="text-base font-extrabold leading-tight mt-0.5 drop-shadow-sm">
+                      {title}
+                    </p>
+                    <p className="text-xs text-white/85 mt-1 leading-relaxed line-clamp-2">
+                      {description}
+                    </p>
+                    <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold bg-white/25 hover:bg-white/40 backdrop-blur-md px-3 py-1 rounded-full ring-1 ring-white/30">
+                      {cta}
+                      <ExternalLink className="w-3 h-3" />
+                    </span>
+                  </div>
+                </div>
               </motion.div>
             );
           })}
