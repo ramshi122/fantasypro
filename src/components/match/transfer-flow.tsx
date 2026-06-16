@@ -41,6 +41,8 @@ import {
 } from "@/lib/api";
 import { TeamDisplay } from "./team-display";
 import { AutoGenerator } from "./auto-generator";
+import { BulkTransferModal } from "./bulk-transfer-modal";
+import { OtpLoginModal } from "@/components/auth/otp-login-modal";
 import { cn } from "@/lib/utils";
 import { roleFromPlayerType, shortName, teamColor } from "@/lib/format";
 
@@ -57,6 +59,8 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   const [editingTeam, setEditingTeam] = useState<TeamRow | null>(null);
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [showSweepGenerator, setShowSweepGenerator] = useState(false);
+  const [showBulkTransfer, setShowBulkTransfer] = useState(false);
+  const [showOtpLogin, setShowOtpLogin] = useState(false);
   const [linkedApp, setLinkedApp] = useState<FantasyApp | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -247,10 +251,10 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
           </span>
           {!linkedApp && (
             <button
-              onClick={() => setShowLinkModal(true)}
+              onClick={() => setShowOtpLogin(true)}
               className="text-violet-600 dark:text-violet-300 font-semibold underline"
             >
-              Link now →
+              Link via OTP →
             </button>
           )}
         </div>
@@ -301,7 +305,16 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
             <p className="text-xs font-semibold text-muted-foreground">
               {existingTeams.length} team{existingTeams.length !== 1 ? "s" : ""} saved
             </p>
-            <div className="flex gap-1.5">
+            <div className="flex gap-1.5 flex-wrap">
+              <Button
+                size="sm"
+                onClick={() => setShowBulkTransfer(true)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                disabled={existingTeams.length === 0}
+              >
+                <Send className="w-3.5 h-3.5 mr-1" />
+                Bulk Transfer
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
@@ -380,7 +393,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 match={match}
                 linked={linkedApp === "dream11"}
                 onTransfer={(app) => handleTransfer(t, app)}
-                onLinkClick={() => setShowLinkModal(true)}
+                onLinkClick={() => setShowOtpLogin(true)}
               />
             </motion.div>
           ))}
@@ -419,7 +432,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         )}
       </AnimatePresence>
 
-      {/* Link Dream11 modal */}
+      {/* Link Dream11 modal (legacy — kept for backward compat) */}
       <AnimatePresence>
         {showLinkModal && (
           <LinkFantasyAppModal
@@ -428,6 +441,29 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
           />
         )}
       </AnimatePresence>
+
+      {/* OTP Login modal (mobile + OTP → links fantasy account) */}
+      <OtpLoginModal
+        open={showOtpLogin}
+        onClose={() => setShowOtpLogin(false)}
+        onLinked={(app, mobile, authToken) => {
+          setLinkedApp(app);
+          setShowOtpLogin(false);
+          toast.success(`${app} linked via OTP (${mobile})`);
+        }}
+      />
+
+      {/* Bulk Transfer modal (direct link OR linked account) */}
+      <BulkTransferModal
+        open={showBulkTransfer}
+        onClose={() => setShowBulkTransfer(false)}
+        match={match}
+        teams={existingTeams}
+        onOpenOtpLogin={() => {
+          setShowBulkTransfer(false);
+          setShowOtpLogin(true);
+        }}
+      />
 
       {/* Auto Team Generator (Sweep) modal */}
       <AnimatePresence>
