@@ -95,27 +95,28 @@ export function BulkTransferModal({
       const versions: string[] = (d.fantasy_version || []).map((v: any) => v.name);
       const supported = versions.length > 0 ? versions : ["my11circle"]; // fallback
       setSupportedApps(supported);
-      // Use defaultApp if provided and supported, else first linked+supported, else first supported
-      const firstLinked = supported.find((s) => apps.includes(s as FantasyApp));
-      const firstSupported = supported[0] as FantasyApp;
-      if (defaultApp && supported.includes(defaultApp)) {
+
+      // ALWAYS use defaultApp if provided — user explicitly chose Dream11 or My11Circle
+      if (defaultApp) {
         setSelectedApp(defaultApp);
       } else {
+        const firstLinked = supported.find((s) => apps.includes(s as FantasyApp));
+        const firstSupported = supported[0] as FantasyApp;
         setSelectedApp((firstLinked as FantasyApp) || firstSupported || "dream11");
       }
 
-      // Auto-select the best mode:
-      // - If user has a linked+supported account → use "linked" (no login prompt)
-      // - Else if match supports dream11 direct → use "direct"
-      // - Else default to "linked" (will prompt for OTP)
-      const hasLinkedSupported = apps.some((a) => supported.includes(a));
-      const supportsDirect = supported.includes("dream11");
-      if (hasLinkedSupported) {
+      // Auto-select the best mode based on the chosen app:
+      // - Dream11 → prefer "direct" (link generation, no login needed)
+      // - My11Circle/other → prefer "linked" (requires OTP)
+      // - Override: if user has the app linked, use "linked"
+      const chosenApp = defaultApp || (apps.find((a) => supported.includes(a)) as FantasyApp) || "dream11";
+      const isChosenLinked = apps.includes(chosenApp);
+      if (isChosenLinked) {
         setMode("linked");
-      } else if (supportsDirect) {
+      } else if (chosenApp === "dream11") {
         setMode("direct");
       } else {
-        setMode("linked"); // will prompt for OTP
+        setMode("linked");
       }
 
       // Build player ID map for ALL supported apps
@@ -308,9 +309,11 @@ export function BulkTransferModal({
             <div className="flex items-center gap-2">
               <Send className="w-5 h-5" />
               <div>
-                <h3 className="font-bold text-sm">Bulk Team Transfer</h3>
+                <h3 className="font-bold text-sm">
+                  Transfer to {APP_LABELS[selectedApp]?.label || selectedApp}
+                </h3>
                 <p className="text-[10px] text-white/80">
-                  {validTeams.length} teams ready · Match supports: {supportedApps.map(a => APP_LABELS[a]?.label || a).join(", ")}
+                  {validTeams.length} teams ready · {APP_LABELS[selectedApp]?.emoji || ""} {APP_LABELS[selectedApp]?.label || selectedApp}
                 </p>
               </div>
             </div>
