@@ -241,7 +241,7 @@ export function OtpLoginModal({
                   <p className="flex items-start gap-1.5">
                     <Shield className="w-3.5 h-3.5 text-violet-500 mt-0.5 flex-shrink-0" />
                     <span>
-                      OTP is sent directly by {`${APPS.map(a=>a.label).join("/")}`} via TeamGeneration&apos;s secure proxy.
+                      OTP is sent directly by {`${APPS.map(a=>a.label).join("/")}`} via FantasyPro&apos;s secure proxy.
                       Your credentials are stored locally on this device only.
                     </span>
                   </p>

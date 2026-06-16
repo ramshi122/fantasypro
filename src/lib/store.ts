@@ -28,7 +28,7 @@ export const useAuth = create<AuthState>()(
       token: null,
       user: null,
       isAuthenticated: false,
-      // Auto-login as guest on first load — bypasses TeamGeneration login
+      // Auto-login as guest on first load — bypasses FantasyPro login
       // entirely so all features work without any external tokens.
       isGuest: true,
       setAuth: (token, user) =>

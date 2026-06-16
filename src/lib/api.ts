@@ -1,9 +1,9 @@
 import { encrypt, decrypt } from "./crypto";
 
 /**
- * FantasyPro API client — patched to match the actual TeamGeneration backend.
+ * FantasyPro API client — patched to match the actual FantasyPro backend.
  *
- * Architecture (verified by inspecting teamgeneration.in/main.js + live API):
+ * Architecture (verified by inspecting teamgeneration.in (reference) + live API):
  *
  * 1. Public endpoints (NO auth, AES-encrypted response data):
  *    - GET  /api/fantasy/matches/{sport}       → list of matches
@@ -20,7 +20,7 @@ import { encrypt, decrypt } from "./crypto";
  *    - POST /api/dream11/contest/join-contest  body: {authToken, matchId, contestId, teamIds}
  *                                                resp: {status, joinResults, summary}
  *
- * 3. TeamGeneration user auth (Bearer JWT in header — obtained via Google OAuth):
+ * 3. FantasyPro user auth (Bearer JWT in header — obtained via Google OAuth):
  *    Used only for admin / premium features. We BYPASS this in guest mode.
  *
  * 4. Local fallback (guest mode):
@@ -510,7 +510,7 @@ export async function addTeam(
 ): Promise<TeamRow | { success: boolean; offline: boolean }> {
   // Always persist to localStorage so guest mode works seamlessly.
   // If a real backend token is available, we'd also POST to /api/fantasy/add-team,
-  // but the actual TeamGeneration backend uses /api/dream11/teams/{matchId} for
+  // but the actual FantasyPro backend uses /api/dream11/teams/{matchId} for
   // real team creation — which requires a real Dream11 auth token. In guest mode
   // we mock the success response.
   const all = readLocalTeams();
@@ -656,7 +656,7 @@ export async function joinContest(params: {
 }): Promise<JoinContestResult> {
   // Guest bypass: simulate success without hitting the backend.
   // The real backend requires BOTH:
-  //   1. A TeamGeneration JWT in the Authorization: Bearer header (user_token)
+  //   1. A FantasyPro JWT in the Authorization: Bearer header (user_token)
   //   2. A Dream11/My11Circle auth token in the body (authToken)
   // In guest mode we only have (2), so we mock the transfer locally.
   if (!params.authToken || params.authToken.startsWith("guest_") || params.authToken.startsWith("test_")) {
@@ -678,15 +678,15 @@ export async function joinContest(params: {
       contestId: params.contestId,
       success: true,
       teamIds: params.teamIds,
-      message: "Team transferred (simulated — link a real TeamGeneration account for live transfer)",
+      message: "Team transferred (simulated — link a real FantasyPro account for live transfer)",
     };
   }
 
-  // Real call — requires a TeamGeneration JWT in Authorization header.
-  // The user_token is stored in localStorage after a successful TeamGeneration login.
+  // Real call — requires a FantasyPro JWT in Authorization header.
+  // The user_token is stored in localStorage after a successful FantasyPro login.
   const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
   if (!userToken) {
-    // No TeamGeneration login — fall back to local simulation
+    // No FantasyPro login — fall back to local simulation
     return joinContest({ ...params, authToken: "guest_" + params.authToken });
   }
 
@@ -740,7 +740,7 @@ export interface SendOtpResult {
 /**
  * Send OTP to a fantasy platform mobile number.
  * The backend proxies the OTP request to dream11/my11circle/myteam11/vision11.
- * NO TeamGeneration JWT required — this is a public endpoint.
+ * NO FantasyPro JWT required — this is a public endpoint.
  */
 export async function sendFantasyOtp(params: {
   fantasyApp: FantasyApp;
