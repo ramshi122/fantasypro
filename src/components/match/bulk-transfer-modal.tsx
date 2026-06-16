@@ -38,6 +38,7 @@ interface BulkTransferModalProps {
   match: MatchInfo;
   teams: TeamRow[];
   onOpenOtpLogin: () => void;
+  defaultApp?: FantasyApp;
 }
 
 type Mode = "direct" | "linked";
@@ -57,6 +58,7 @@ export function BulkTransferModal({
   match,
   teams,
   onOpenOtpLogin,
+  defaultApp,
 }: BulkTransferModalProps) {
   const isGuest = useAuth((s) => s.isGuest);
   const [phase, setPhase] = useState<Phase>("select");
@@ -93,10 +95,14 @@ export function BulkTransferModal({
       const versions: string[] = (d.fantasy_version || []).map((v: any) => v.name);
       const supported = versions.length > 0 ? versions : ["my11circle"]; // fallback
       setSupportedApps(supported);
-      // Default to first supported app that's also linked, else first supported
+      // Use defaultApp if provided and supported, else first linked+supported, else first supported
       const firstLinked = supported.find((s) => apps.includes(s as FantasyApp));
       const firstSupported = supported[0] as FantasyApp;
-      setSelectedApp((firstLinked as FantasyApp) || firstSupported || "dream11");
+      if (defaultApp && supported.includes(defaultApp)) {
+        setSelectedApp(defaultApp);
+      } else {
+        setSelectedApp((firstLinked as FantasyApp) || firstSupported || "dream11");
+      }
 
       // Auto-select the best mode:
       // - If user has a linked+supported account → use "linked" (no login prompt)

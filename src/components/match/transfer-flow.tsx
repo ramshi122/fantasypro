@@ -72,6 +72,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [showSweepGenerator, setShowSweepGenerator] = useState(false);
   const [showBulkTransfer, setShowBulkTransfer] = useState(false);
+  const [selectedTransferApp, setSelectedTransferApp] = useState<FantasyApp>("dream11");
   const [showFreeContests, setShowFreeContests] = useState(false);
   const [showOtpLogin, setShowOtpLogin] = useState(false);
   const [linkedApp, setLinkedApp] = useState<FantasyApp | null>(null);
@@ -426,17 +427,39 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               {existingTeams.length} team{existingTeams.length !== 1 ? "s" : ""} saved
             </p>
             <div className="flex gap-1.5 flex-wrap">
+              {/* Transfer to Dream11 */}
               <Button
                 size="sm"
-                onClick={() => license.requireLicense() && setShowBulkTransfer(true)}
+                onClick={() => {
+                  if (!license.requireLicense()) return;
+                  setSelectedTransferApp("dream11");
+                  setShowBulkTransfer(true);
+                }}
                 className={cn(
-                  license.isLicensed ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700",
+                  license.isLicensed ? "bg-red-600 hover:bg-red-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700",
                   !license.isLicensed && "cursor-pointer"
                 )}
                 disabled={existingTeams.length === 0}
               >
                 {license.isLicensed ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
-                {license.isLicensed ? "Bulk Transfer" : "Transfer 🔒"}
+                {license.isLicensed ? "🏏 Dream11" : "Dream11 🔒"}
+              </Button>
+              {/* Transfer to My11Circle */}
+              <Button
+                size="sm"
+                onClick={() => {
+                  if (!license.requireLicense()) return;
+                  setSelectedTransferApp("my11circle");
+                  setShowBulkTransfer(true);
+                }}
+                className={cn(
+                  license.isLicensed ? "bg-sky-600 hover:bg-sky-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700",
+                  !license.isLicensed && "cursor-pointer"
+                )}
+                disabled={existingTeams.length === 0}
+              >
+                {license.isLicensed ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                {license.isLicensed ? "⭕ My11Circle" : "My11 🔒"}
               </Button>
               <Button
                 size="sm"
@@ -614,6 +637,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
       {/* Bulk Transfer modal (direct link OR linked account) */}
       <BulkTransferModal
         open={showBulkTransfer}
+        defaultApp={selectedTransferApp}
         onClose={() => {
           setShowBulkTransfer(false);
           setRefreshKey((k) => k + 1);
