@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAuth, useApp } from "@/lib/store";
 import { LoginScreen } from "@/components/auth/login-screen";
 import { TopHeader } from "@/components/nav/top-header";
@@ -12,24 +12,43 @@ import { ResearchScreen } from "@/components/pages/research-screen";
 import { ProfileScreen } from "@/components/pages/profile-screen";
 import { PromotionsScreen } from "@/components/pages/promotions-screen";
 import { TeamListScreen } from "@/components/pages/team-list-screen";
+import { SplashScreen } from "@/components/splash-screen";
 import { AnimatePresence, motion } from "framer-motion";
+
+const SPLASH_KEY = "fantasypro-splash-shown";
 
 export default function Home() {
   const isAuthenticated = useAuth((s) => s.isAuthenticated);
   const isGuest = useAuth((s) => s.isGuest);
   const setGuest = useAuth((s) => s.setGuest);
   const view = useApp((s) => s.view);
+  const [showSplash, setShowSplash] = useState(false);
+
+  // Show splash on first load of each session (not on every navigation)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const shownThisSession = sessionStorage.getItem(SPLASH_KEY);
+    if (!shownThisSession) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setShowSplash(true);
+      sessionStorage.setItem(SPLASH_KEY, "1");
+    }
+  }, []);
 
   // AUTO-BYPASS: On first load, instantly log in as guest so the user lands
-  // straight on the home screen with all features unlocked. No login screen
-  // ever appears unless the user explicitly chooses "Sign In" with a real token.
+  // straight on the home screen with all features unlocked.
   useEffect(() => {
     if (!isAuthenticated) {
       setGuest();
     }
   }, [isAuthenticated, setGuest]);
 
-  // While the auto-guest effect is running, show a splash
+  // Splash screen takes priority — it has its own animated exit
+  if (showSplash) {
+    return <SplashScreen onFinish={() => setShowSplash(false)} duration={2200} />;
+  }
+
+  // While the auto-guest effect is running, show a tiny splash
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen brand-gradient flex items-center justify-center">
@@ -43,8 +62,7 @@ export default function Home() {
     );
   }
 
-  // Show login screen only when explicitly requested (e.g. user clicked "Use Real Token")
-  // We never reach here in normal flow because isGuest=true means isAuthenticated=true.
+  // Show login screen only when explicitly requested
   if (!isGuest && !isAuthenticated) {
     return <LoginScreen />;
   }
