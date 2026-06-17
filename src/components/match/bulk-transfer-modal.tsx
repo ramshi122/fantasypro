@@ -189,24 +189,18 @@ export function BulkTransferModal({
       let res: BulkTransferResult;
       if (mode === "direct") {
         // Direct link generation for Dream11
-        // When replaceExisting is on, generate edit-team links (with teamId param)
-        // When off, generate new-team creation links
-        let existingTeamIds: string[] | undefined;
-        if (replaceExisting) {
-          // For Dream11 direct mode, we can't fetch existing teams without auth.
-          // Instead, we'll generate links that open the team editor on Dream11.
-          // The user manually picks which team to replace on the Dream11 site.
-          toast.info("Replace mode: Links will open Dream11 team editor. Select the team to replace manually.");
-        }
         res = await bulkDirectTransfer(items, matchNumericId, matchDbId, (done, total) =>
           setProgress({ done, total })
         );
 
-        // If replace mode, modify the links to include edit mode
+        // If replace mode, modify the links to use Dream11's edit-team URL
+        // Dream11 edit URL: https://dream11.com/team/edit?matchId=XXX&teamNo=N&players=...&captain=...&vicecaptain=...
         if (replaceExisting) {
-          res.transferLinks = res.transferLinks.map((l) => ({
+          res.transferLinks = res.transferLinks.map((l, i) => ({
             ...l,
-            link: l.link ? l.link.replace("/team/create?", "/team/edit?") : l.link,
+            link: l.link
+              ? l.link.replace("/team/create?", `/team/edit?teamNo=${i + 1}&`)
+              : l.link,
           }));
         }
       } else {
@@ -458,46 +452,45 @@ export function BulkTransferModal({
 
                 {/* App selector for linked mode */}
                 {mode === "linked" && canUseLinked && (
-                  <>
-                    <div>
-                      <label className="text-xs font-semibold text-foreground mb-1.5 block">
-                        Transfer to:
-                      </label>
-                      <div className="flex gap-2 flex-wrap">
-                        {linkedAndSupported.map((app) => (
-                          <button
-                            key={app}
-                            onClick={() => setSelectedApp(app)}
-                            className={cn(
-                              "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                              selectedApp === app
-                                ? "brand-gradient text-white"
-                                : "bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
-                            )}
-                          >
-                            {APP_LABELS[app]?.emoji} {APP_LABELS[app]?.label || app}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Replace existing teams toggle */}
-                    <label className="flex items-center gap-2.5 p-3 rounded-xl border border-violet-100 dark:border-violet-900/30 bg-violet-50/30 dark:bg-violet-950/20 cursor-pointer hover:bg-violet-50/50 dark:hover:bg-violet-900/30 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={replaceExisting}
-                        onChange={(e) => setReplaceExisting(e.target.checked)}
-                        className="w-4 h-4 rounded accent-violet-600"
-                      />
-                      <div className="flex-1">
-                        <p className="text-xs font-bold text-foreground">Replace existing teams</p>
-                        <p className="text-[10px] text-muted-foreground mt-0.5">
-                          Overwrite teams already on your {APP_LABELS[selectedApp]?.label} account instead of creating new ones. Useful after lineup is out.
-                        </p>
-                      </div>
+                  <div>
+                    <label className="text-xs font-semibold text-foreground mb-1.5 block">
+                      Transfer to:
                     </label>
-                  </>
+                    <div className="flex gap-2 flex-wrap">
+                      {linkedAndSupported.map((app) => (
+                        <button
+                          key={app}
+                          onClick={() => setSelectedApp(app)}
+                          className={cn(
+                            "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                            selectedApp === app
+                              ? "brand-gradient text-white"
+                              : "bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
+                          )}
+                        >
+                          {APP_LABELS[app]?.emoji} {APP_LABELS[app]?.label || app}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )}
+                {/* Replace existing teams toggle — visible for BOTH direct and linked modes */}
+                <label className="flex items-center gap-2.5 p-3 rounded-xl border border-violet-100 dark:border-violet-900/30 bg-violet-50/30 dark:bg-violet-950/20 cursor-pointer hover:bg-violet-50/50 dark:hover:bg-violet-900/30 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={replaceExisting}
+                    onChange={(e) => setReplaceExisting(e.target.checked)}
+                    className="w-4 h-4 rounded accent-violet-600"
+                  />
+                  <div className="flex-1">
+                    <p className="text-xs font-bold text-foreground">Replace existing teams</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {mode === "direct"
+                        ? "Opens Dream11 team editor links so you can overwrite existing teams instead of creating new ones. Useful after lineup changes."
+                        : `Overwrite teams already on your ${APP_LABELS[selectedApp]?.label} account instead of creating new ones. Useful after lineup is out.`}
+                    </p>
+                  </div>
+                </label>
 
                 {/* Transfer details */}
                 <div className="rounded-xl bg-violet-50/50 dark:bg-violet-950/20 p-3 text-xs">
@@ -506,9 +499,7 @@ export function BulkTransferModal({
                     <li>• Match: {match.series || match.title || matchNumericId}</li>
                     <li>• Teams to transfer: {validTeams.length}</li>
                     <li>• Mode: {mode === "direct" ? "Direct link (no login)" : `Auto to ${APP_LABELS[selectedApp]?.label || selectedApp}`}</li>
-                    {mode === "linked" && (
-                      <li>• Action: {replaceExisting ? "Replace existing teams" : "Create new teams"}</li>
-                    )}
+                    <li>• Action: {replaceExisting ? "Replace existing teams" : "Create new teams"}</li>
                     <li>• Match ID: {mode === "direct" ? matchDbId : matchNumericId}</li>
                   </ul>
                 </div>
@@ -526,12 +517,16 @@ export function BulkTransferModal({
                     {mode === "direct" ? (
                       <>
                         <Link2 className="w-4 h-4 mr-2" />
-                        Generate {validTeams.length} Transfer Links
+                        {replaceExisting
+                          ? `Generate ${validTeams.length} Replace Links`
+                          : `Generate ${validTeams.length} Transfer Links`}
                       </>
                     ) : (
                       <>
                         <Send className="w-4 h-4 mr-2" />
-                        Transfer {validTeams.length} Teams to {APP_LABELS[selectedApp]?.label || selectedApp}
+                        {replaceExisting
+                          ? `Replace ${validTeams.length} Teams on ${APP_LABELS[selectedApp]?.label || selectedApp}`
+                          : `Transfer ${validTeams.length} Teams to ${APP_LABELS[selectedApp]?.label || selectedApp}`}
                       </>
                     )}
                   </Button>
@@ -643,10 +638,10 @@ export function BulkTransferModal({
                             className="flex items-center justify-between p-2.5 rounded-lg border border-violet-100 dark:border-violet-900/30 bg-white dark:bg-card hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors"
                           >
                             <span className="text-xs font-bold text-foreground">
-                              Team #{l.teamNo}
+                              Team #{l.teamNo} {replaceExisting && "(Replace)"}
                             </span>
                             <span className="flex items-center gap-1 text-[11px] font-semibold text-violet-600 dark:text-violet-300">
-                              Open Dream11
+                              {replaceExisting ? "Replace on Dream11" : "Open Dream11"}
                               <ExternalLink className="w-3 h-3" />
                             </span>
                           </a>
