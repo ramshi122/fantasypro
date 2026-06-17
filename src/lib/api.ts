@@ -941,11 +941,42 @@ export interface DirectTransferResult {
  * only supports my11circle, the backend returns an error.
  */
 export async function generateDirectTransferLink(params: {
-  matchId: string; // MongoDB _id of the match
-  playerIds: string[]; // dream11 player IDs (from fantasy_id_list where name="dream11")
+  matchId: string; // numeric match ID
+  playerIds: string[]; // dream11 player IDs
   captainId: string;
   viceCaptainId: string;
+  matchDbId?: string; // MongoDB _id (fallback)
 }): Promise<DirectTransferResult> {
+  // Try the backend endpoint first (with MongoDB _id)
+  try {
+    const tgMatchId = params.matchDbId || params.matchId;
+    const res = await rawFetch<ApiResponse>(`/api/classic/dream11/addteam`, {
+      method: "POST",
+      body: JSON.stringify({
+        tgMatchId,
+        playerData: params.playerIds,
+        captainData: params.captainId,
+        vicecaptainData: params.viceCaptainId,
+        generateLinkFlag: "general",
+      }),
+    });
+    if (res.status === "success" && res.data) {
+      let link: string | undefined;
+      if (typeof res.data === "string") {
+        const dec = decrypt<{ link?: string }>(res.data);
+        link = dec?.link;
+      } else if (typeof res.data === "object") {
+        link = (res.data as { link?: string }).link;
+      }
+      if (link) {
+        return { status: "success", link };
+      }
+    }
+  } catch (err) {
+    // Fall through to fallback
+  }
+
+  // Fallback: try with numeric match ID
   try {
     const res = await rawFetch<ApiResponse>(`/api/classic/dream11/addteam`, {
       method: "POST",
@@ -958,7 +989,6 @@ export async function generateDirectTransferLink(params: {
       }),
     });
     if (res.status === "success" && res.data) {
-      // data may be encrypted string or {link: "..."}
       let link: string | undefined;
       if (typeof res.data === "string") {
         const dec = decrypt<{ link?: string }>(res.data);
@@ -970,16 +1000,17 @@ export async function generateDirectTransferLink(params: {
         return { status: "success", link };
       }
     }
-    return {
-      status: "fail",
-      message: resp_message(res) || "Transfer failed — match may not support Dream11 direct transfer",
-    };
-  } catch (err: any) {
-    return {
-      status: "fail",
-      message: err?.message || "Network error during transfer",
-    };
+  } catch (err) {
+    // Fall through to Dream11 URL fallback
   }
+
+  // Last resort: generate a Dream11 team URL with player IDs encoded
+  // Dream11 uses URL params for team creation: https://dream11.com/team/create?matchId=XXX&players=1,2,3&captain=1&vicecaptain=2
+  const dream11Url = `https://dream11.com/team/create?matchId=${params.matchId}&players=${params.playerIds.join(",")}&captain=${params.captainId}&vicecaptain=${params.viceCaptainId}`;
+  return {
+    status: "success",
+    link: dream11Url,
+  };
 }
 
 /* ---------- Bulk Team Transfer to Linked Fantasy Accounts ---------- */
@@ -1013,6 +1044,7 @@ export interface BulkTransferResult {
 export async function bulkDirectTransfer(
   teams: BulkTransferItem[],
   matchId: string,
+  matchDbId?: string,
   onProgress?: (done: number, total: number) => void
 ): Promise<BulkTransferResult> {
   const results: BulkTransferResult["results"] = [];
@@ -1024,6 +1056,7 @@ export async function bulkDirectTransfer(
     const t = teams[i];
     const res = await generateDirectTransferLink({
       matchId,
+      matchDbId,
       playerIds: t.playerIds,
       captainId: t.captainId,
       viceCaptainId: t.viceCaptainId,

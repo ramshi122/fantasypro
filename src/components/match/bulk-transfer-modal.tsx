@@ -189,7 +189,7 @@ export function BulkTransferModal({
       let res: BulkTransferResult;
       if (mode === "direct") {
         // Direct link generation — uses matchDbId (MongoDB _id)
-        res = await bulkDirectTransfer(items, matchDbId, (done, total) =>
+        res = await bulkDirectTransfer(items, matchNumericId, matchDbId, (done, total) =>
           setProgress({ done, total })
         );
       } else {
