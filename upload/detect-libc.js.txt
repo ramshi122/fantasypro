@@ -1,0 +1,33 @@
+const GLIBC = "glibc";
+const MUSL = "musl";
+
+function familySync() {
+  try {
+    if (process.platform !== "linux") return GLIBC;
+    // Try to detect musl by checking if ldd reports musl
+    const { execFileSync } = require("child_process");
+    try {
+      const output = execFileSync("ldd", ["--version"], { encoding: "utf8", timeout: 3000, stdio: ['pipe','pipe','pipe'] });
+      if (output.includes("musl")) return MUSL;
+    } catch (e) {
+      // ldd failed, try reading /etc/os-release
+      try {
+        const fs = require("fs");
+        const osRelease = fs.readFileSync("/etc/os-release", "utf8");
+        if (osRelease.includes("alpine") || osRelease.includes("Alpine")) return MUSL;
+      } catch (e2) {}
+    }
+    return GLIBC;
+  } catch (e) {
+    return GLIBC;
+  }
+}
+
+module.exports = {
+  familySync,
+  GLIBC,
+  MUSL,
+  family: familySync,
+  isNonGlibcLinux: () => familySync() !== GLIBC,
+  version: () => "2.31"
+};

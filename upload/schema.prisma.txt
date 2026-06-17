@@ -1,0 +1,86 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model LicenseKey {
+  id            String   @id @default(cuid())
+  key           String   @unique
+  label         String?
+  status        String   @default("active")  // active, suspended, expired
+  plan          String   @default("premium")  // premium, basic, trial
+  maxDevices    Int      @default(1)
+  deviceFingerprint String?
+  boundAt       DateTime?
+  expiresAt     DateTime?
+  usageCount    Int      @default(0)
+  lastUsedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Banner {
+  id        String   @id @default(cuid())
+  title     String
+  imageUrl  String
+  linkUrl   String?              // Optional click-through URL
+  position  Int      @default(0) // Display order
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AppSetting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+}
+
+model SavedTeam {
+  id           String   @id @default(cuid())
+  matchId      String
+  platform     String   @default("dream11")
+  teamIndex    Int
+  category     String   @default("SL")      // SL, GL, MGL
+  riskLevel    String   @default("Safe")     // Safe, Balanced, Aggressive
+  strategy     String   @default("Balanced")
+  players      String                      // JSON string of players array
+  totalCredits Float    @default(0)
+  team1Count   Int      @default(0)
+  team2Count   Int      @default(0)
+  totalPoints  Float    @default(0)         // Calculated from player points with C/VC multipliers
+  rank         Int      @default(0)         // Rank based on total points
+  licenseKey   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([matchId, platform])
+  @@index([licenseKey])
+}
+
+model PlayerPoints {
+  id        String   @id @default(cuid())
+  matchId   String
+  playerName String
+  team      String
+  points    Float    @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([matchId, playerName])
+  @@index([matchId])
+}

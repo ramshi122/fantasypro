@@ -244,8 +244,20 @@ export function ApnaTransferModal({
       );
       setResult(res);
       setPhase("done");
-      if (res.successCount > 0) toast.success(`${res.successCount}/${res.totalAttempted} transferred`);
-      else toast.error("Transfer failed — relink OTP");
+
+      // Handle pre-transfer auth-verify block
+      if (res.needsReauth) {
+        toast.error(res.blockReason || "Token expired — re-link via OTP");
+        // Auto-open OTP login modal so user can re-link
+        setTimeout(() => onOpenOtpLogin(), 800);
+        return;
+      }
+
+      if (res.successCount > 0) {
+        toast.success(`${res.successCount}/${res.totalAttempted} transferred`);
+      } else {
+        toast.error("Transfer failed — relink OTP");
+      }
     } catch (err: any) {
       setResult({ totalAttempted: teamsToSend, successCount: 0, failCount: teamsToSend,
         results: items.slice(0, teamsToSend).map((it) => ({ teamNo: it.teamNo, success: false, message: err?.message || "Error" })), transferLinks: [] });
@@ -426,13 +438,18 @@ export function ApnaTransferModal({
                 <div className={cn("rounded-xl p-4 text-center", result.successCount > 0 ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-red-50 dark:bg-red-950/30")}>
                   {result.successCount > 0 ? <CheckCircle2 className="w-12 h-12 mx-auto text-emerald-600 mb-2" /> : <AlertCircle className="w-12 h-12 mx-auto text-red-500 mb-2" />}
                   <p className="text-lg font-bold">{result.successCount > 0 ? `${result.successCount}/${result.totalAttempted} transferred 🎉` : `${result.failCount} failed`}</p>
+                  {result.needsReauth && (
+                    <p className="text-xs text-red-600 dark:text-red-400 mt-1 font-semibold">
+                      🔒 Your {APP_LABELS[selectedApp]?.label} session has expired. Re-link via OTP to continue.
+                    </p>
+                  )}
                 </div>
                 {result.failCount > 0 && (
                   <div className="rounded-xl bg-red-50 dark:bg-red-950/30 p-3">
                     <div className="max-h-24 overflow-y-auto space-y-1">
                       {result.results.filter(r => !r.success).slice(0, 5).map(r => <p key={r.teamNo} className="text-[11px] text-red-600">Team #{r.teamNo}: {r.message || "Failed"}</p>)}
                     </div>
-                    {result.failCount === result.totalAttempted && (
+                    {(result.failCount === result.totalAttempted || result.needsReauth) && (
                       <Button size="sm" className="w-full h-8 brand-gradient text-white text-xs mt-2" onClick={() => { onClose(); onOpenOtpLogin(); }}>
                         <Zap className="w-3 h-3 mr-1" /> Relink via OTP
                       </Button>

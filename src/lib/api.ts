@@ -134,7 +134,8 @@ export interface TeamRow {
 
 export interface AuthVerifyResponse {
   status?: string;
-  validToken?: boolean;
+  /** true = token OK; false = token expired; null/undefined = unknown (network error) */
+  validToken?: boolean | null;
   isValid?: boolean;
   valid?: boolean;
   updateUiToken?: boolean;
@@ -442,9 +443,20 @@ export async function getPrimeTeams(): Promise<TeamRow[]> {
 /* ---------- Fantasy platform endpoints (plain JSON, no AES) ---------- */
 
 /**
- * Verify a Dream11/My11Circle auth token with the backend.
- * The backend proxies the call to the actual fantasy platform.
- * Fake/test tokens are rejected — user must complete real OTP login.
+ * Verify a Dream11/My11Circle auth token BEFORE transfer.
+ *
+ * Uses the server-side proxy at /api/auth/verify (mirrors the original
+ * teamgeneration.in APK flow). The proxy:
+ *   - Calls https://tgsoftware-api.online/api/fantasy/auth/verify
+ *   - Returns { validToken: true|false|null }
+ *       true  → token OK, proceed with transfer
+ *       false → token expired, user must re-link via OTP
+ *       null  → network error, BUT transfer should still be attempted
+ *               (don't block on transient network issues)
+ *   - If updateUiToken=true and authToken is returned, the caller should
+ *     update the stored token (token was refreshed by the backend).
+ *
+ * my11circle requires additional fields: my11circleChallenge, my11circleUserId, my11circleMobile
  */
 export async function verifyFantasyAuth(params: {
   fantasyApp: FantasyApp;
@@ -478,11 +490,79 @@ export async function verifyFantasyAuth(params: {
     body.userId = params.userId;
   }
 
-  const resp = await rawFetch<ApiResponse>(`/api/fantasy/auth/verify`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-  return resp as AuthVerifyResponse;
+  // Use the server-side proxy instead of calling the backend directly.
+  // The proxy handles CORS, network errors, and HTTP 401/403 → token expired.
+  try {
+    const res = await fetch(`/api/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+    const data = await res.json();
+    return data as AuthVerifyResponse;
+  } catch (err: any) {
+    console.error("[verifyFantasyAuth] proxy call failed:", err?.message);
+    // Network error talking to our own proxy — return retryable null
+    // so the caller can decide to proceed anyway (don't block transfer)
+    return {
+      status: "fail",
+      validToken: null,
+      retryable: true,
+      message: "Could not verify token — network error",
+    };
+  }
+}
+
+/**
+ * Pre-transfer verification helper.
+ *
+ * Calls verifyFantasyAuth() and decides whether to proceed with the transfer.
+ * Returns:
+ *   { proceed: true }  → token is valid OR network errored (don't block)
+ *   { proceed: false, reason, needsReauth } → token is definitively expired
+ *
+ * Also: if the backend refreshed the token (updateUiToken=true + authToken),
+ * updates the stored token via saveFantasyToken() so subsequent transfers
+ * use the fresh token.
+ *
+ * IMPORTANT: This NEVER blocks transfers on network errors. It only blocks
+ * when the backend explicitly says validToken=false (HTTP 401/403).
+ */
+export async function verifyBeforeTransfer(params: {
+  fantasyApp: FantasyApp;
+  authToken: string;
+  matchId: string | number;
+  my11circleChallenge?: string;
+  my11circleUserId?: string;
+  my11circleMobile?: string;
+}): Promise<{ proceed: boolean; reason?: string; needsReauth?: boolean; refreshed?: boolean }> {
+  const result = await verifyFantasyAuth(params);
+  console.log("[verifyBeforeTransfer] result:", JSON.stringify(result));
+
+  // Token explicitly invalid — block transfer
+  if (result.validToken === false) {
+    return {
+      proceed: false,
+      reason: result.message || "Token expired or invalid — please re-link via OTP",
+      needsReauth: true,
+    };
+  }
+
+  // Token valid OR unknown (network error) — proceed with transfer
+  // If backend refreshed the token, save it
+  let refreshed = false;
+  if (result.updateUiToken && result.authToken && result.authToken !== params.authToken) {
+    saveFantasyToken(params.fantasyApp, result.authToken, {
+      mobile: params.my11circleMobile,
+      my11circleChallenge: params.my11circleChallenge,
+      my11circleUserId: params.my11circleUserId,
+    });
+    refreshed = true;
+    console.log("[verifyBeforeTransfer] Token refreshed via updateUiToken");
+  }
+
+  return { proceed: true, refreshed };
 }
 
 /**
@@ -1150,6 +1230,11 @@ export interface BulkTransferResult {
   failCount: number;
   results: Array<{ teamNo: number; success: boolean; message?: string }>;
   transferLinks: Array<{ teamNo: number; link?: string }>;
+  /** Set when transfer was blocked because the auth token is expired.
+   *  Caller should prompt the user to re-link via OTP. */
+  needsReauth?: boolean;
+  /** Reason the transfer was blocked (if needsReauth=true). */
+  blockReason?: string;
 }
 
 export async function bulkDirectTransfer(
@@ -1200,6 +1285,9 @@ export async function bulkTransferToLinkedAccount(
     mobileNumber?: string;
     replaceMode?: boolean;
     existingTeamIds?: string[];
+    /** Set to false to skip the pre-transfer auth verify call.
+     *  Default: true (matches original APK flow). */
+    skipVerify?: boolean;
   },
   onProgress?: (done: number, total: number) => void
 ): Promise<BulkTransferResult> {
@@ -1208,6 +1296,50 @@ export async function bulkTransferToLinkedAccount(
   let successCount = 0;
   let failCount = 0;
   const delay = params.fantasyApp === "dream11" ? 200 : 2000;
+
+  // ─── PRE-TRANSFER AUTH VERIFY (mirrors original APK flow) ────────────────
+  // The original teamgeneration.in calls /api/fantasy/auth/verify before
+  // starting a bulk transfer. We do the same via our /api/auth/verify proxy.
+  //
+  // IMPORTANT: This NEVER blocks on network errors. It only blocks when the
+  // backend explicitly returns validToken=false (HTTP 401/403).
+  if (!params.skipVerify && params.authToken) {
+    const verifyResult = await verifyBeforeTransfer({
+      fantasyApp: params.fantasyApp,
+      authToken: params.authToken,
+      matchId: params.matchId,
+      my11circleChallenge: params.my11circleChallenge,
+      my11circleUserId: params.my11circleUserId,
+      my11circleMobile: params.mobileNumber,
+    });
+
+    if (!verifyResult.proceed) {
+      // Token definitively expired — block transfer, signal re-auth required
+      console.warn("[bulkTransfer] Blocked by auth verify:", verifyResult.reason);
+      return {
+        totalAttempted: 0,
+        successCount: 0,
+        failCount: teams.length,
+        results: teams.map((t) => ({
+          teamNo: t.teamNo,
+          success: false,
+          message: verifyResult.reason || "Token expired — re-link via OTP",
+        })),
+        transferLinks: [],
+        needsReauth: true,
+        blockReason: verifyResult.reason,
+      };
+    }
+
+    // If the backend refreshed the token, use the new one for transfers
+    if (verifyResult.refreshed) {
+      const freshToken = getFantasyToken(params.fantasyApp);
+      if (freshToken) {
+        params = { ...params, authToken: freshToken };
+        console.log("[bulkTransfer] Using refreshed token from updateUiToken");
+      }
+    }
+  }
 
   for (let i = 0; i < teams.length; i++) {
     const t = teams[i];
