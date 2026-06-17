@@ -188,10 +188,27 @@ export function BulkTransferModal({
     try {
       let res: BulkTransferResult;
       if (mode === "direct") {
-        // Direct link generation — uses matchDbId (MongoDB _id)
+        // Direct link generation for Dream11
+        // When replaceExisting is on, generate edit-team links (with teamId param)
+        // When off, generate new-team creation links
+        let existingTeamIds: string[] | undefined;
+        if (replaceExisting) {
+          // For Dream11 direct mode, we can't fetch existing teams without auth.
+          // Instead, we'll generate links that open the team editor on Dream11.
+          // The user manually picks which team to replace on the Dream11 site.
+          toast.info("Replace mode: Links will open Dream11 team editor. Select the team to replace manually.");
+        }
         res = await bulkDirectTransfer(items, matchNumericId, matchDbId, (done, total) =>
           setProgress({ done, total })
         );
+
+        // If replace mode, modify the links to include edit mode
+        if (replaceExisting) {
+          res.transferLinks = res.transferLinks.map((l) => ({
+            ...l,
+            link: l.link ? l.link.replace("/team/create?", "/team/edit?") : l.link,
+          }));
+        }
       } else {
         // Linked account transfer — uses numeric matchId
         const account = getLinkedAccount(selectedApp);
