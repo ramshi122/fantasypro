@@ -370,8 +370,7 @@ export async function getPrimeTeams(): Promise<TeamRow[]> {
 /**
  * Verify a Dream11/My11Circle auth token with the backend.
  * The backend proxies the call to the actual fantasy platform.
- *
- * In guest mode we mock this: any non-empty token is "valid".
+ * Fake/test tokens are rejected — user must complete real OTP login.
  */
 export async function verifyFantasyAuth(params: {
   fantasyApp: FantasyApp;
@@ -382,13 +381,12 @@ export async function verifyFantasyAuth(params: {
   my11circleMobile?: string;
   userId?: string;
 }): Promise<AuthVerifyResponse> {
-  // Guest bypass: any non-empty token is considered valid.
-  if (!params.authToken || params.authToken.startsWith("guest_")) {
+  // Only skip the API call for empty tokens — always call the real API for non-empty tokens
+  if (!params.authToken) {
     return {
-      status: "success",
-      validToken: true,
-      updateUiToken: false,
-      authToken: params.authToken,
+      status: "fail",
+      validToken: false,
+      message: "No auth token — complete OTP login",
     };
   }
 
@@ -422,9 +420,9 @@ export async function listFantasyTeams(params: {
   authToken: string;
   matchId: string | number;
 }): Promise<TeamRow[]> {
-  // Guest bypass: read from localStorage
-  if (!params.authToken || params.authToken.startsWith("guest_")) {
-    return readLocalTeams(String(params.matchId));
+  // Only skip the API call for empty tokens — always try the real API
+  if (!params.authToken) {
+    return [];
   }
 
   const resp = await rawFetch<ApiResponse>(`/api/fantasy/list-of-teams`, {
@@ -444,7 +442,8 @@ export async function listFantasyTeams(params: {
       fantasyApp: params.fantasyApp,
     } as TeamRow));
   }
-  return readLocalTeams(String(params.matchId));
+  // Backend failed — return empty (don't mix with localStorage)
+  return [];
 }
 
 /* ---------- Local team store (guest mode) ---------- */
@@ -744,48 +743,29 @@ export async function joinContest(params: {
   contestId: string;
   teamIds: number[];
 }): Promise<JoinContestResult> {
-  // Guest bypass: simulate success without hitting the backend.
-  // The real backend requires BOTH:
-  //   1. A FantasyPro JWT in the Authorization: Bearer header (user_token)
-  //   2. A Dream11/My11Circle auth token in the body (authToken)
-  // In guest mode we only have (2), so we mock the transfer locally.
-  if (!params.authToken || params.authToken.startsWith("guest_") || params.authToken.startsWith("test_")) {
-    // Mark teams as transferred in localStorage
-    const all = readLocalTeams();
-    const key = String(params.matchId);
-    const list = all[key] || [];
-    for (const t of list) {
-      if (params.teamIds.includes(Number(t.teamNo))) {
-        t.transferred = true;
-        t.transferStatus = "transferred";
-      }
-    }
-    all[key] = list;
-    writeLocalTeams(all);
-    // Simulate network latency
-    await new Promise((r) => setTimeout(r, 500));
+  // No guest bypass — always call the real API
+  if (!params.authToken) {
     return {
       contestId: params.contestId,
-      success: true,
+      success: false,
       teamIds: params.teamIds,
-      message: "Team transferred (simulated — link a real FantasyPro account for live transfer)",
+      message: "No auth token",
     };
   }
 
-  // Real call — requires a FantasyPro JWT in Authorization header.
-  // The user_token is stored in localStorage after a successful FantasyPro login.
-  const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
-  if (!userToken) {
-    // No FantasyPro login — fall back to local simulation
-    return joinContest({ ...params, authToken: "guest_" + params.authToken });
-  }
-
   try {
-    const resp = await rawFetch<ApiResponse>(`/api/dream11/contest/join-contest`, {
+    const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (userToken) headers.Authorization = `Bearer ${userToken}`;
+
+    const endpoint =
+      params.authToken && params.fantasyApp === "dream11"
+        ? `/api/dream11/contest/join-contest`
+        : `/api/my11circle/contest/join-contest`;
+
+    const resp = await rawFetch<ApiResponse>(endpoint, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${userToken}`,
-      },
+      headers,
       body: JSON.stringify({
         authToken: params.authToken,
         matchId: params.matchId,
@@ -793,15 +773,11 @@ export async function joinContest(params: {
         teamIds: params.teamIds,
       }),
     });
-    const successCount = resp.summary?.successCount ?? 0;
-    const failedCount = resp.summary?.failedCount ?? 0;
     return {
       contestId: params.contestId,
-      success: resp.status === "success" && successCount > 0,
+      success: resp.status === "success",
       teamIds: params.teamIds,
-      message: successCount > 0
-        ? `Joined contest — ${successCount} team(s) joined, ${failedCount} failed`
-        : (resp.message || "Transfer failed"),
+      message: resp.message || (resp.status === "success" ? "Joined" : "Failed"),
     };
   } catch (err: any) {
     return {
@@ -812,348 +788,6 @@ export async function joinContest(params: {
     };
   }
 }
-
-/* ---------- Mobile OTP Login (fantasy platform linking) ---------- */
-
-export interface SendOtpResult {
-  status: "success" | "fail";
-  message?: string;
-  state?: string; // dream11
-  reasonCode?: number; // my11circle
-  challenge?: string; // my11circle
-  login_auth_token?: string; // myteam11
-  userId?: string; // vision11
-  retries_left?: number;
-  resends_left?: number;
-}
-
-/**
- * Send OTP to a fantasy platform mobile number.
- * The backend proxies the OTP request to dream11/my11circle/myteam11/vision11.
- * NO FantasyPro JWT required — this is a public endpoint.
- */
-export async function sendFantasyOtp(params: {
-  fantasyApp: FantasyApp;
-  mobileNumber: string;
-}): Promise<SendOtpResult> {
-  const res = await rawFetch<ApiResponse>(`/api/fantasy/send-otp`, {
-    method: "POST",
-    body: JSON.stringify({
-      fantasyApp: params.fantasyApp,
-      mobileNumber: params.mobileNumber,
-    }),
-  });
-  if (res.status === "success" && res.data && typeof res.data === "object") {
-    const d = res.data as Record<string, unknown>;
-    return {
-      status: "success",
-      message: resp_message(res),
-      state: d.state as string | undefined,
-      reasonCode: d.reasonCode as number | undefined,
-      challenge: d.challenge as string | undefined,
-      login_auth_token: d.login_auth_token as string | undefined,
-      userId: d.userId as string | undefined,
-      retries_left: d.retries_left as number | undefined,
-      resends_left: d.resends_left as number | undefined,
-    };
-  }
-  return { status: "fail", message: resp_message(res) };
-}
-
-function resp_message(r: ApiResponse): string {
-  return (r.message as string) || "";
-}
-
-export interface VerifyOtpResult {
-  status: "success" | "fail";
-  message?: string;
-  token?: string; // the fantasy platform auth token (used for /api/fantasy/add-team)
-  my11circleChallenge?: string;
-  my11circleUserId?: string;
-  mobileNumber?: string;
-}
-
-/**
- * Verify OTP and obtain the fantasy platform auth token.
- * Stores the token in localStorage so subsequent transfers work.
- */
-export async function verifyFantasyOtp(params: {
-  fantasyApp: FantasyApp;
-  mobileNumber: string;
-  verificationCode: string; // 6-digit OTP
-  state?: string; // dream11
-  reasonCode?: number; // my11circle
-  challenge?: string; // my11circle
-  login_auth_token?: string; // myteam11
-  userId?: string; // vision11
-}): Promise<VerifyOtpResult> {
-  const body: Record<string, unknown> = {
-    fantasyApp: params.fantasyApp,
-    mobileNumber: params.mobileNumber,
-    verificationCode: params.verificationCode,
-  };
-  if (params.fantasyApp === "dream11" && params.state) body.state = params.state;
-  if (params.fantasyApp === "my11circle") {
-    body.reasonCode = params.reasonCode ?? null;
-    body.challenge = params.challenge ?? null;
-  }
-  if (params.fantasyApp === "myteam11" && params.login_auth_token) {
-    body.Loginauthtoken = params.login_auth_token;
-  }
-  if (params.fantasyApp === "vision11" && params.userId) {
-    body.userId = params.userId;
-  }
-
-  const res = await rawFetch<ApiResponse>(`/api/fantasy/verify-otp`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-  if (res.status === "success" && res.data && typeof res.data === "object") {
-    const d = res.data as Record<string, unknown>;
-    return {
-      status: "success",
-      message: resp_message(res),
-      token: d.token as string | undefined,
-      my11circleChallenge: d.my11circleChallenge as string | undefined,
-      my11circleUserId: d.my11circleUserId as string | undefined,
-      mobileNumber: params.mobileNumber,
-    };
-  }
-  return { status: "fail", message: resp_message(res) || "Invalid OTP" };
-}
-
-/* ---------- Direct Team Transfer (NO Dream11 token required) ---------- */
-
-export interface DirectTransferResult {
-  status: "success" | "fail";
-  message?: string;
-  link?: string; // the dream11 transfer URL the user opens manually
-}
-
-/**
- * Generate a direct Dream11 transfer link for a single team.
- *
- * Calls POST /api/classic/dream11/addteam with the team's player IDs and
- * captain/vice-captain. The backend returns a one-time dream11.com URL that,
- * when opened, pre-fills the team in Dream11 — NO Dream11 auth token needed.
- *
- * The match MUST have dream11 player IDs in its fantasy_id_list. If the match
- * only supports my11circle, the backend returns an error.
- */
-export async function generateDirectTransferLink(params: {
-  matchId: string; // numeric match ID
-  playerIds: string[]; // dream11 player IDs
-  captainId: string;
-  viceCaptainId: string;
-  matchDbId?: string; // MongoDB _id (for classic endpoint)
-}): Promise<DirectTransferResult> {
-  // Try the classic backend endpoint first (link generation — no auth needed)
-  try {
-    const tgMatchId = params.matchDbId || params.matchId;
-    const res = await rawFetch<ApiResponse>(`/api/classic/dream11/addteam`, {
-      method: "POST",
-      body: JSON.stringify({
-        tgMatchId,
-        playerData: params.playerIds,
-        captainData: params.captainId,
-        vicecaptainData: params.viceCaptainId,
-        generateLinkFlag: "general",
-      }),
-    });
-    if (res.status === "success" && res.data) {
-      let link: string | undefined;
-      if (typeof res.data === "string") {
-        const dec = decrypt<{ link?: string }>(res.data);
-        link = dec?.link;
-      } else if (typeof res.data === "object") {
-        link = (res.data as { link?: string }).link;
-      }
-      if (link) {
-        return { status: "success", link };
-      }
-    }
-  } catch (err) {
-    // Fall through
-  }
-
-  // If classic endpoint fails, return failure — don't generate fake links
-  return {
-    status: "fail",
-    message: "Dream11 direct transfer not available for this match. Use OTP login + authenticated transfer instead.",
-  };
-}
-
-/* ---------- Bulk Team Transfer to Linked Fantasy Accounts ---------- */
-
-export interface BulkTransferItem {
-  teamNo: number;
-  playerIds: string[];
-  captainId: string;
-  viceCaptainId: string;
-}
-
-export interface BulkTransferResult {
-  totalAttempted: number;
-  successCount: number;
-  failCount: number;
-  results: Array<{
-    teamNo: number;
-    success: boolean;
-    message?: string;
-  }>;
-  transferLinks: Array<{ teamNo: number; link?: string }>; // for direct-link mode
-}
-
-/**
- * Bulk transfer teams to Dream11 via direct link generation.
- * For each team, generates a one-time Dream11 transfer URL (no auth required).
- * Returns all links so the user can open them one by one.
- *
- * Rate-limited to avoid backend throttling (200ms between requests).
- */
-export async function bulkDirectTransfer(
-  teams: BulkTransferItem[],
-  matchId: string,
-  matchDbId?: string,
-  onProgress?: (done: number, total: number) => void
-): Promise<BulkTransferResult> {
-  const results: BulkTransferResult["results"] = [];
-  const transferLinks: BulkTransferResult["transferLinks"] = [];
-  let successCount = 0;
-  let failCount = 0;
-
-  for (let i = 0; i < teams.length; i++) {
-    const t = teams[i];
-    const res = await generateDirectTransferLink({
-      matchId,
-      matchDbId,
-      playerIds: t.playerIds,
-      captainId: t.captainId,
-      viceCaptainId: t.viceCaptainId,
-    });
-    if (res.status === "success" && res.link) {
-      successCount++;
-      results.push({ teamNo: t.teamNo, success: true });
-      transferLinks.push({ teamNo: t.teamNo, link: res.link });
-    } else {
-      failCount++;
-      results.push({ teamNo: t.teamNo, success: false, message: res.message });
-      transferLinks.push({ teamNo: t.teamNo });
-    }
-    onProgress?.(i + 1, teams.length);
-    // Rate limit: 200ms between requests (matches dream11 backend limit)
-    if (i < teams.length - 1) {
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  }
-
-  return {
-    totalAttempted: teams.length,
-    successCount,
-    failCount,
-    results,
-    transferLinks,
-  };
-}
-
-/**
- * Bulk transfer teams to a LINKED fantasy account via /api/fantasy/add-team.
- * Requires the user to have completed OTP login and have an authToken saved.
- *
- * Body format (per team):
- *   {matchId, captain, vice_captain, players, fantasyApp, authToken, sportIndex, type: "new"}
- *
- * If replaceMode=true and existingTeamIds is provided, sends type:"edit" with id field
- * to REPLACE existing teams on the linked account instead of creating new ones.
- */
-export async function bulkTransferToLinkedAccount(
-  teams: BulkTransferItem[],
-  params: {
-    matchId: string;
-    fantasyApp: FantasyApp;
-    authToken: string;
-    sportIndex?: number;
-    my11circleChallenge?: string;
-    my11circleUserId?: string;
-    mobileNumber?: string;
-    replaceMode?: boolean;
-    existingTeamIds?: string[]; // team IDs on the fantasy platform to replace
-  },
-  onProgress?: (done: number, total: number) => void
-): Promise<BulkTransferResult> {
-  const results: BulkTransferResult["results"] = [];
-  const transferLinks: BulkTransferResult["transferLinks"] = [];
-  let successCount = 0;
-  let failCount = 0;
-  const delay = params.fantasyApp === "dream11" ? 200 : 2000;
-
-  for (let i = 0; i < teams.length; i++) {
-    const t = teams[i];
-    // In replace mode, use type:"edit" + id if we have an existing team ID for this slot
-    const isReplace = params.replaceMode && params.existingTeamIds && i < params.existingTeamIds.length;
-    // Convert IDs to numbers (Dream11 API expects numeric IDs)
-    const numericPlayers = t.playerIds.map((id) => Number(id)).filter((n) => !isNaN(n));
-    const numericCaptain = Number(t.captainId);
-    const numericVC = Number(t.viceCaptainId);
-
-    const body: Record<string, unknown> = {
-      matchId: params.matchId,
-      captain: isNaN(numericCaptain) ? t.captainId : numericCaptain,
-      vice_captain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
-      players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
-      fantasyApp: params.fantasyApp,
-      authToken: params.authToken,
-      sportIndex: params.sportIndex ?? 0,
-      type: isReplace ? "edit" : "new",
-    };
-    if (isReplace && params.existingTeamIds) {
-      body.id = params.existingTeamIds[i];
-    }
-    if (params.fantasyApp === "my11circle") {
-      body.my11circleChallenge = params.my11circleChallenge || null;
-      body.my11circleUserId = params.my11circleUserId || null;
-      body.my11circleMobile = params.mobileNumber || null;
-    }
-    if (params.fantasyApp === "vision11" && params.mobileNumber) {
-      body.userId = params.mobileNumber;
-    }
-
-    try {
-      // The original site hits /api/fantasy/add-team for new and /api/fantasy/edit-team for edit
-      const endpoint = isReplace ? `/api/fantasy/edit-team` : `/api/fantasy/add-team`;
-      const res = await rawFetch<ApiResponse>(endpoint, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      if (res.status === "success") {
-        successCount++;
-        results.push({ teamNo: t.teamNo, success: true });
-        transferLinks.push({ teamNo: t.teamNo });
-      } else {
-        failCount++;
-        results.push({ teamNo: t.teamNo, success: false, message: resp_message(res) });
-        transferLinks.push({ teamNo: t.teamNo });
-      }
-    } catch (err: any) {
-      failCount++;
-      results.push({ teamNo: t.teamNo, success: false, message: err?.message });
-      transferLinks.push({ teamNo: t.teamNo });
-    }
-    onProgress?.(i + 1, teams.length);
-    if (i < teams.length - 1) {
-      await new Promise((r) => setTimeout(r, delay));
-    }
-  }
-
-  return {
-    totalAttempted: teams.length,
-    successCount,
-    failCount,
-    results,
-    transferLinks,
-  };
-}
-
 /* ---------- Free Contest Join ---------- */
 
 export interface FreeContest {
@@ -1189,41 +823,8 @@ export async function fetchFreeContests(params: {
   matchId: string;
   allTeamIds: number[];
 }): Promise<FreeContestsResult> {
-  const isGuestToken = !params.authToken || params.authToken.startsWith("guest_") || params.authToken.startsWith("test_");
-
-  if (isGuestToken) {
-    await new Promise((r) => setTimeout(r, 600));
-    return {
-      status: "success",
-      contests: [
-        {
-          contestId: "free_mega_" + params.matchId,
-          contestName: "Mega Free Contest",
-          totalPrizeAmount: 1000,
-          prizeDisplayText: "₹1,000",
-          maxAllowedTeams: 5,
-          maxJoinTeamCount: 5,
-          joinedTeamIds: [],
-          joinedCount: 0,
-          availableSlots: Math.min(5, params.allTeamIds.length),
-          notJoinedTeamIds: params.allTeamIds,
-          canJoinMore: params.allTeamIds.length > 0,
-        },
-        {
-          contestId: "free_practice_" + params.matchId,
-          contestName: "Practice Contest",
-          totalPrizeAmount: 100,
-          prizeDisplayText: "₹100",
-          maxAllowedTeams: 1,
-          maxJoinTeamCount: 1,
-          joinedTeamIds: [],
-          joinedCount: 0,
-          availableSlots: Math.min(1, params.allTeamIds.length),
-          notJoinedTeamIds: params.allTeamIds,
-          canJoinMore: params.allTeamIds.length > 0,
-        },
-      ],
-    };
+  if (!params.authToken) {
+    return { status: "fail", message: "No auth token", contests: [] };
   }
 
   try {
@@ -1275,15 +876,13 @@ export async function joinFreeContest(params: {
   contestId: string;
   teamIds: number[];
 }): Promise<JoinContestFullResult> {
-  const isGuestToken = !params.authToken || params.authToken.startsWith("guest_") || params.authToken.startsWith("test_");
-  if (isGuestToken) {
-    await new Promise((r) => setTimeout(r, 800));
+  if (!params.authToken) {
     return {
-      status: "success",
+      status: "fail",
       contestId: params.contestId,
-      joinResults: params.teamIds.map((id) => ({ teamId: id, success: true })),
-      summary: { successCount: params.teamIds.length, failedCount: 0 },
-      message: `Joined ${params.teamIds.length} team(s) (simulated)`,
+      joinResults: [],
+      summary: { successCount: 0, failedCount: params.teamIds.length },
+      message: "No auth token",
     };
   }
   try {
@@ -1323,4 +922,266 @@ export async function joinFreeContest(params: {
       summary: { successCount: 0, failedCount: params.teamIds.length },
     };
   }
+}
+
+/* ---------- Mobile OTP Login (fantasy platform linking) ---------- */
+
+export interface SendOtpResult {
+  status: "success" | "fail";
+  message?: string;
+  state?: string;
+  reasonCode?: number;
+  challenge?: string;
+  login_auth_token?: string;
+  userId?: string;
+  retries_left?: number;
+  resends_left?: number;
+}
+
+export async function sendFantasyOtp(params: {
+  fantasyApp: FantasyApp;
+  mobileNumber: string;
+}): Promise<SendOtpResult> {
+  const res = await rawFetch<ApiResponse>(`/api/fantasy/send-otp`, {
+    method: "POST",
+    body: JSON.stringify({
+      fantasyApp: params.fantasyApp,
+      mobileNumber: params.mobileNumber,
+    }),
+  });
+  if (res.status === "success" && res.data && typeof res.data === "object") {
+    const d = res.data as Record<string, unknown>;
+    return {
+      status: "success",
+      message: (res.message as string) || "",
+      state: d.state as string | undefined,
+      reasonCode: d.reasonCode as number | undefined,
+      challenge: d.challenge as string | undefined,
+      login_auth_token: d.login_auth_token as string | undefined,
+      userId: d.userId as string | undefined,
+      retries_left: d.retries_left as number | undefined,
+      resends_left: d.resends_left as number | undefined,
+    };
+  }
+  return { status: "fail", message: (res.message as string) || "Failed to send OTP" };
+}
+
+export interface VerifyOtpResult {
+  status: "success" | "fail";
+  message?: string;
+  token?: string;
+  my11circleChallenge?: string;
+  my11circleUserId?: string;
+  mobileNumber?: string;
+}
+
+export async function verifyFantasyOtp(params: {
+  fantasyApp: FantasyApp;
+  mobileNumber: string;
+  verificationCode: string;
+  state?: string;
+  reasonCode?: number;
+  challenge?: string;
+  login_auth_token?: string;
+  userId?: string;
+}): Promise<VerifyOtpResult> {
+  const body: Record<string, unknown> = {
+    fantasyApp: params.fantasyApp,
+    mobileNumber: params.mobileNumber,
+    verificationCode: params.verificationCode,
+  };
+  if (params.fantasyApp === "dream11" && params.state) body.state = params.state;
+  if (params.fantasyApp === "my11circle") {
+    body.reasonCode = params.reasonCode ?? null;
+    body.challenge = params.challenge ?? null;
+  }
+  if (params.fantasyApp === "myteam11" && params.login_auth_token) {
+    body.Loginauthtoken = params.login_auth_token;
+  }
+  if (params.fantasyApp === "vision11" && params.userId) {
+    body.userId = params.userId;
+  }
+
+  const res = await rawFetch<ApiResponse>(`/api/fantasy/verify-otp`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  if (res.status === "success" && res.data && typeof res.data === "object") {
+    const d = res.data as Record<string, unknown>;
+    return {
+      status: "success",
+      message: (res.message as string) || "",
+      token: d.token as string | undefined,
+      my11circleChallenge: d.my11circleChallenge as string | undefined,
+      my11circleUserId: d.my11circleUserId as string | undefined,
+      mobileNumber: params.mobileNumber,
+    };
+  }
+  return { status: "fail", message: (res.message as string) || "Invalid OTP" };
+}
+
+/* ---------- Direct Team Transfer (NO auth needed — link generation) ---------- */
+
+export interface DirectTransferResult {
+  status: "success" | "fail";
+  message?: string;
+  link?: string;
+}
+
+export async function generateDirectTransferLink(params: {
+  matchId: string;
+  playerIds: string[];
+  captainId: string;
+  viceCaptainId: string;
+  matchDbId?: string;
+}): Promise<DirectTransferResult> {
+  try {
+    const tgMatchId = params.matchDbId || params.matchId;
+    const res = await rawFetch<ApiResponse>(`/api/classic/dream11/addteam`, {
+      method: "POST",
+      body: JSON.stringify({
+        tgMatchId,
+        playerData: params.playerIds,
+        captainData: params.captainId,
+        vicecaptainData: params.viceCaptainId,
+        generateLinkFlag: "general",
+      }),
+    });
+    if (res.status === "success" && res.data) {
+      let link: string | undefined;
+      if (typeof res.data === "string") {
+        const dec = decrypt<{ link?: string }>(res.data);
+        link = dec?.link;
+      } else if (typeof res.data === "object") {
+        link = (res.data as { link?: string }).link;
+      }
+      if (link) return { status: "success", link };
+    }
+  } catch {}
+  return { status: "fail", message: "Dream11 direct transfer not available for this match." };
+}
+
+/* ---------- Bulk Team Transfer to Linked Fantasy Accounts ---------- */
+
+export interface BulkTransferItem {
+  teamNo: number;
+  playerIds: string[];
+  captainId: string;
+  viceCaptainId: string;
+}
+
+export interface BulkTransferResult {
+  totalAttempted: number;
+  successCount: number;
+  failCount: number;
+  results: Array<{ teamNo: number; success: boolean; message?: string }>;
+  transferLinks: Array<{ teamNo: number; link?: string }>;
+}
+
+export async function bulkDirectTransfer(
+  teams: BulkTransferItem[],
+  matchId: string,
+  matchDbId?: string,
+  onProgress?: (done: number, total: number) => void
+): Promise<BulkTransferResult> {
+  const results: BulkTransferResult["results"] = [];
+  const transferLinks: BulkTransferResult["transferLinks"] = [];
+  let successCount = 0;
+  let failCount = 0;
+
+  for (let i = 0; i < teams.length; i++) {
+    const t = teams[i];
+    const res = await generateDirectTransferLink({
+      matchId,
+      matchDbId,
+      playerIds: t.playerIds,
+      captainId: t.captainId,
+      viceCaptainId: t.viceCaptainId,
+    });
+    if (res.status === "success" && res.link) {
+      successCount++;
+      results.push({ teamNo: t.teamNo, success: true });
+      transferLinks.push({ teamNo: t.teamNo, link: res.link });
+    } else {
+      failCount++;
+      results.push({ teamNo: t.teamNo, success: false, message: res.message });
+      transferLinks.push({ teamNo: t.teamNo });
+    }
+    onProgress?.(i + 1, teams.length);
+    if (i < teams.length - 1) await new Promise((r) => setTimeout(r, 200));
+  }
+
+  return { totalAttempted: teams.length, successCount, failCount, results, transferLinks };
+}
+
+export async function bulkTransferToLinkedAccount(
+  teams: BulkTransferItem[],
+  params: {
+    matchId: string;
+    fantasyApp: FantasyApp;
+    authToken: string;
+    sportIndex?: number;
+    my11circleChallenge?: string;
+    my11circleUserId?: string;
+    mobileNumber?: string;
+    replaceMode?: boolean;
+    existingTeamIds?: string[];
+  },
+  onProgress?: (done: number, total: number) => void
+): Promise<BulkTransferResult> {
+  const results: BulkTransferResult["results"] = [];
+  const transferLinks: BulkTransferResult["transferLinks"] = [];
+  let successCount = 0;
+  let failCount = 0;
+  const delay = params.fantasyApp === "dream11" ? 200 : 2000;
+
+  for (let i = 0; i < teams.length; i++) {
+    const t = teams[i];
+    const isReplace = params.replaceMode && params.existingTeamIds && i < params.existingTeamIds.length;
+    const numericPlayers = t.playerIds.map((id) => Number(id)).filter((n) => !isNaN(n));
+    const numericCaptain = Number(t.captainId);
+    const numericVC = Number(t.viceCaptainId);
+
+    const body: Record<string, unknown> = {
+      matchId: params.matchId,
+      captain: isNaN(numericCaptain) ? t.captainId : numericCaptain,
+      vice_captain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
+      players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
+      fantasyApp: params.fantasyApp,
+      authToken: params.authToken,
+      sportIndex: params.sportIndex ?? 0,
+      type: isReplace ? "edit" : "new",
+    };
+    if (isReplace && params.existingTeamIds) body.id = params.existingTeamIds[i];
+    if (params.fantasyApp === "my11circle") {
+      body.my11circleChallenge = params.my11circleChallenge || null;
+      body.my11circleUserId = params.my11circleUserId || null;
+      body.my11circleMobile = params.mobileNumber || null;
+    }
+
+    try {
+      const endpoint = isReplace ? `/api/fantasy/edit-team` : `/api/fantasy/add-team`;
+      const res = await rawFetch<ApiResponse>(endpoint, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      if (res.status === "success") {
+        successCount++;
+        results.push({ teamNo: t.teamNo, success: true });
+        transferLinks.push({ teamNo: t.teamNo });
+      } else {
+        failCount++;
+        results.push({ teamNo: t.teamNo, success: false, message: (res.message as string) || "Failed" });
+        transferLinks.push({ teamNo: t.teamNo });
+      }
+    } catch (err: any) {
+      failCount++;
+      results.push({ teamNo: t.teamNo, success: false, message: err?.message || "Network error" });
+      transferLinks.push({ teamNo: t.teamNo });
+    }
+    onProgress?.(i + 1, teams.length);
+    if (i < teams.length - 1) await new Promise((r) => setTimeout(r, delay));
+  }
+
+  return { totalAttempted: teams.length, successCount, failCount, results, transferLinks };
 }
