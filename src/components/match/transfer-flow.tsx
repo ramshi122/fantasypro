@@ -43,7 +43,7 @@ import {
 } from "@/lib/api";
 import { TeamDisplay } from "./team-display";
 import { AutoGenerator } from "./auto-generator";
-import { BulkTransferModal } from "./bulk-transfer-modal";
+import { ApnaTransferModal } from "./apna-transfer-modal";
 import { FreeContestsModal } from "./free-contests-modal";
 import { OtpLoginModal } from "@/components/auth/otp-login-modal";
 import {
@@ -647,8 +647,8 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         }}
       />
 
-      {/* Bulk Transfer modal (direct link OR linked account) */}
-      <BulkTransferModal
+      {/* APNA-style Transfer modal */}
+      <ApnaTransferModal
         open={showBulkTransfer}
         defaultApp={selectedTransferApp}
         onClose={() => {
