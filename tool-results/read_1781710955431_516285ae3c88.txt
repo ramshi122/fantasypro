@@ -1,0 +1,1119 @@
+     1→import { NextResponse } from "next/server";
+     2→import { generateTransferUrl, type Player } from "@/lib/tg-api";
+     3→
+     4→// ============ TYPES ============
+     5→interface TeamPlayer {
+     6→  name: string;
+     7→  team: string;
+     8→  role: string;
+     9→  isCaptain: boolean;
+    10→  isViceCaptain: boolean;
+    11→  credits: number;
+    12→  fantasyId: number | null;
+    13→  image?: string;
+    14→}
+    15→
+    16→type TeamCategory = "SL" | "GL" | "MGL";
+    17→type RiskLevel = "Safe" | "Balanced" | "Aggressive";
+    18→type TeamStrategy = "Bat First" | "Bowl First" | "All-Rounder Heavy" | "Differential" | "GL Contrarian" | "GL Balanced" | "GL Aggressive" | "GL Core Rotation";
+    19→
+    20→type GLTeamStrategy = "GL Contrarian" | "GL Balanced" | "GL Aggressive" | "GL Core Rotation";
+    21→
+    22→const glStrategies: GLTeamStrategy[] = ["GL Contrarian", "GL Balanced", "GL Aggressive", "GL Core Rotation"];
+    23→const standardStrategies: TeamStrategy[] = ["Bat First", "Bowl First", "All-Rounder Heavy", "Differential"];
+    24→
+    25→// Toss: which team won the toss and what they chose
+    26→type TossResult = "team1-bat" | "team1-bowl" | "team2-bat" | "team2-bowl" | "unknown";
+    27→// Pitch type
+    28→type PitchReport = "batting" | "bowling" | "spin" | "pace" | "balanced";
+    29→// Ground size
+    30→type GroundSize = "small" | "large" | "balanced";
+    31→
+    32→interface GeneratedTeam {
+    33→  id: number;
+    34→  players: TeamPlayer[];
+    35→  team1Count: number;
+    36→  team2Count: number;
+    37→  totalCredits: number;
+    38→  transferUrl: string;
+    39→  category: TeamCategory;
+    40→  riskLevel: RiskLevel;
+    41→  strategy: TeamStrategy;
+    42→}
+    43→
+    44→// ============ TEAM STRUCTURE REQUIREMENTS ============
+    45→const cricketRoleRequirements: Record<string, [number, number]> = {
+    46→  WK: [1, 2],
+    47→  BAT: [3, 5],
+    48→  AR: [2, 4],  // All-rounders (AR + AL treated as same)
+    49→  BOWL: [3, 5],
+    50→};
+    51→
+    52→const otherRoleRequirements: Record<string, Record<string, [number, number]>> = {
+    53→  football: { GK: [1, 1], DEF: [3, 5], MID: [3, 5], FWD: [1, 3] },
+    54→  kabaddi: { DEF: [2, 3], ALL: [1, 3], RAID: [2, 4] },
+    55→};
+    56→
+    57→const isAllRounderRole = (role: string) => role === "AR" || role === "AL";
+    58→
+    59→// ============ PLAYER KEY HELPER ============
+    60→// Use name+team as unique key to avoid index confusion across different arrays
+    61→function playerKey(p: { name: string; team: string }): string {
+    62→  return `${p.name}|${p.team}`;
+    63→}
+    64→
+    65→// ============ WEIGHTED PRIORITY SCORING ============
+    66→interface WeightConfig {
+    67→  wkWeight: number;
+    68→  batWeight: number;
+    69→  arWeight: number;
+    70→  bowlWeight: number;
+    71→  topOrderBonus: number;
+    72→  openingBowlBonus: number;
+    73→  powerHitterBonus: number;
+    74→  spinnerBonus: number;
+    75→  pacerBonus: number;
+    76→  battingTeamBias: number;
+    77→  bowlingTeamBias: number;
+    78→}
+    79→
+    80→function getWeights(toss: TossResult, pitch: PitchReport, ground: GroundSize): WeightConfig {
+    81→  const w: WeightConfig = {
+    82→    wkWeight: 1.0, batWeight: 1.0, arWeight: 1.0, bowlWeight: 1.0,
+    83→    topOrderBonus: 0, openingBowlBonus: 0, powerHitterBonus: 0,
+    84→    spinnerBonus: 0, pacerBonus: 0, battingTeamBias: 0, bowlingTeamBias: 0,
+    85→  };
+    86→
+    87→  // ---- TOSS ANALYSIS ----
+    88→  if (toss === "team1-bat") {
+    89→    w.topOrderBonus = 20; w.battingTeamBias = 10; w.bowlingTeamBias = 5;
+    90→  } else if (toss === "team1-bowl") {
+    91→    w.openingBowlBonus = 20; w.bowlingTeamBias = 10; w.battingTeamBias = 5;
+    92→  } else if (toss === "team2-bat") {
+    93→    w.topOrderBonus = 20; w.battingTeamBias = 10; w.bowlingTeamBias = 5;
+    94→  } else if (toss === "team2-bowl") {
+    95→    w.openingBowlBonus = 20; w.bowlingTeamBias = 10; w.battingTeamBias = 5;
+    96→  }
+    97→
+    98→  // ---- PITCH REPORT ----
+    99→  switch (pitch) {
+   100→    case "batting": w.batWeight = 1.5; w.arWeight = 1.3; w.bowlWeight = 0.7; break;
+   101→    case "bowling": w.bowlWeight = 1.5; w.arWeight = 1.4; w.batWeight = 0.8; break;
+   102→    case "spin": w.spinnerBonus = 25; w.bowlWeight = 1.2; break;
+   103→    case "pace": w.pacerBonus = 25; w.bowlWeight = 1.2; break;
+   104→  }
+   105→
+   106→  // ---- GROUND CONDITIONS ----
+   107→  switch (ground) {
+   108→    case "small": w.powerHitterBonus = 20; w.batWeight += 0.3; break;
+   109→    case "large": w.bowlWeight += 0.3; w.arWeight += 0.2; break;
+   110→  }
+   111→
+   112→  return w;
+   113→}
+   114→
+   115→// ============ PRIORITY SCORE CALCULATION ============
+   116→function calcWeightedScore(
+   117→  p: Player,
+   118→  weights: WeightConfig,
+   119→  team1Code: string,
+   120→  team2Code: string,
+   121→  noise: number = 0
+   122→): number {
+   123→  let score = 0;
+   124→
+   125→  // Base stats
+   126→  score += (p.captainPercentage || 0) * 2;
+   127→  score += (p.viceCaptainPercentage || 0) * 1.5;
+   128→  score += (p.points || 0) * 0.1;
+   129→  if (p.playing === true) score += 50;
+   130→  const selBy = parseFloat(p.selectedBy || "0");
+   131→  score += selBy * 0.5;
+   132→
+   133→  // Role-based weight
+   134→  if (p.role === "WK") score *= weights.wkWeight;
+   135→  else if (p.role === "BAT") score *= weights.batWeight;
+   136→  else if (isAllRounderRole(p.role)) score *= weights.arWeight;
+   137→  else if (p.role === "BOWL") score *= weights.bowlWeight;
+   138→
+   139→  // Top-order batter bonus
+   140→  if (p.role === "BAT" && (p.captainPercentage || 0) > 20) {
+   141→    score += weights.topOrderBonus;
+   142→  }
+   143→
+   144→  // Opening bowler bonus
+   145→  if (p.role === "BOWL" && (p.captainPercentage || 0) > 15) {
+   146→    score += weights.openingBowlBonus;
+   147→  }
+   148→
+   149→  // Power hitter bonus
+   150→  if (weights.powerHitterBonus > 0 && (p.role === "BAT" || isAllRounderRole(p.role))) {
+   151→    const sel = parseFloat(p.selectedBy || "0");
+   152→    if (sel > 30) score += weights.powerHitterBonus;
+   153→  }
+   154→
+   155→  // Spinner/Pacer bonus
+   156→  if (p.role === "BOWL") {
+   157→    const pt = (p.playerType || "").toLowerCase();
+   158→    if (weights.spinnerBonus > 0 && (pt.includes("spin") || pt.includes("ortho") || pt.includes("leg"))) {
+   159→      score += weights.spinnerBonus;
+   160→    }
+   161→    if (weights.pacerBonus > 0 && (pt.includes("pace") || pt.includes("fast") || pt.includes("medium"))) {
+   162→      score += weights.pacerBonus;
+   163→    }
+   164→    if (!pt && (weights.spinnerBonus > 0 || weights.pacerBonus > 0)) {
+   165→      const sel = parseFloat(p.selectedBy || "0");
+   166→      if (sel > 25) score += Math.max(weights.spinnerBonus, weights.pacerBonus) * 0.3;
+   167→    }
+   168→  }
+   169→
+   170→  // Toss-based team bias
+   171→  if (weights.battingTeamBias > 0 || weights.bowlingTeamBias > 0) {
+   172→    if (p.team === team1Code) {
+   173→      score += weights.battingTeamBias;
+   174→    } else if (p.team === team2Code) {
+   175→      score += weights.bowlingTeamBias;
+   176→    }
+   177→  }
+   178→
+   179→  // Add noise for variety
+   180→  score += Math.random() * noise;
+   181→
+   182→  return score;
+   183→}
+   184→
+   185→// ============ SORTED PLAYER WITH SCORE ============
+   186→interface ScoredPlayer extends Player {
+   187→  priorityScore: number;
+   188→}
+   189→
+   190→function sortWithWeights(
+   191→  arr: Player[],
+   192→  weights: WeightConfig,
+   193→  team1Code: string,
+   194→  team2Code: string,
+   195→  noiseLevel: number
+   196→): ScoredPlayer[] {
+   197→  return [...arr]
+   198→    .map((p) => ({
+   199→      ...p,
+   200→      priorityScore: calcWeightedScore(p, weights, team1Code, team2Code, noiseLevel),
+   201→    }))
+   202→    .sort((a, b) => {
+   203→      // Playing players always first
+   204→      if (a.playing === true && b.playing !== true) return -1;
+   205→      if (a.playing !== true && b.playing === true) return 1;
+   206→      return b.priorityScore - a.priorityScore;
+   207→    });
+   208→}
+   209→
+   210→// ============ PICK FROM TEAM WITH ROLE REQUIREMENTS ============
+   211→// Uses Set<string> (player keys) for tracking instead of numeric indices
+   212→function pickFromTeam(
+   213→  sorted: ScoredPlayer[],
+   214→  maxCount: number,
+   215→  alreadyPicked: ScoredPlayer[],
+   216→  usedKeys: Set<string>,
+   217→  reqs: Record<string, [number, number]>,
+   218→  maxCredits: number,
+   219→  currentCredits: number
+   220→) {
+   221→  const picked: ScoredPlayer[] = [];
+   222→  let credits = currentCredits;
+   223→
+   224→  // First pass: fill minimum role requirements
+   225→  for (const [role, [min]] of Object.entries(reqs)) {
+   226→    const currentCount = [...alreadyPicked, ...picked].filter(p =>
+   227→      isAllRounderRole(role) ? isAllRounderRole(p.role) : p.role === role
+   228→    ).length;
+   229→    const needed = Math.max(0, min - currentCount);
+   230→    for (let r = 0; r < needed && picked.length < maxCount; r++) {
+   231→      const idx = sorted.findIndex(
+   232→        (p) => !usedKeys.has(playerKey(p)) &&
+   233→          (isAllRounderRole(role) ? isAllRounderRole(p.role) : p.role === role) &&
+   234→          credits + p.credits <= maxCredits
+   235→      );
+   236→      if (idx !== -1) {
+   237→        const player = sorted[idx];
+   238→        picked.push(player);
+   239→        usedKeys.add(playerKey(player));
+   240→        credits += player.credits;
+   241→      }
+   242→    }
+   243→  }
+   244→
+   245→  // Second pass: fill remaining with best available
+   246→  for (const p of sorted) {
+   247→    if (picked.length >= maxCount) break;
+   248→    if (usedKeys.has(playerKey(p))) continue;
+   249→    if (credits + p.credits > maxCredits) continue;
+   250→
+   251→    const allPickedSoFar = [...alreadyPicked, ...picked];
+   252→    const currentRoleCount = allPickedSoFar.filter(pp =>
+   253→      isAllRounderRole(p.role) ? isAllRounderRole(pp.role) : pp.role === p.role
+   254→    ).length;
+   255→    const roleMax = reqs[p.role]?.[1] || reqs[isAllRounderRole(p.role) ? "AR" : p.role]?.[1] || 6;
+   256→
+   257→    if (currentRoleCount < roleMax) {
+   258→      picked.push(p);
+   259→      usedKeys.add(playerKey(p));
+   260→      credits += p.credits;
+   261→    }
+   262→  }
+   263→
+   264→  return { picked, credits };
+   265→}
+   266→
+   267→// ============ IDENTIFY CORE PLAYERS ============
+   268→// Returns Set of player keys (name|team) for the top N players
+   269→function identifyCorePlayers(
+   270→  allPlayers: Player[],
+   271→  weights: WeightConfig,
+   272→  team1Code: string,
+   273→  team2Code: string,
+   274→  coreSize: number = 7
+   275→): Set<string> {
+   276→  const sorted = sortWithWeights(allPlayers, weights, team1Code, team2Code, 0);
+   277→  const coreKeys = new Set<string>();
+   278→  for (let i = 0; i < Math.min(coreSize, sorted.length); i++) {
+   279→    coreKeys.add(playerKey(sorted[i]));
+   280→  }
+   281→  return coreKeys;
+   282→}
+   283→
+   284→// ============ STRATEGY-SPECIFIC TEAM RATIO & ROLE OVERRIDE ============
+   285→interface StrategyConfig {
+   286→  ratios: { t1: number; t2: number }[];
+   287→  roleOverrides?: Partial<Record<string, [number, number]>>;
+   288→  noiseLevel: number;
+   289→  category: TeamCategory;
+   290→  riskLevel: RiskLevel;
+   291→}
+   292→
+   293→function getStrategyConfig(strategy: TeamStrategy): StrategyConfig {
+   294→  switch (strategy) {
+   295→    case "Bat First":
+   296→      return {
+   297→        ratios: [{ t1: 7, t2: 4 }, { t1: 6, t2: 5 }, { t1: 7, t2: 4 }],
+   298→        roleOverrides: { BAT: [4, 5], BOWL: [3, 4] },
+   299→        noiseLevel: 15,
+   300→        category: "SL",
+   301→        riskLevel: "Safe",
+   302→      };
+   303→    case "Bowl First":
+   304→      return {
+   305→        ratios: [{ t1: 4, t2: 7 }, { t1: 5, t2: 6 }, { t1: 4, t2: 7 }],
+   306→        roleOverrides: { BOWL: [4, 5], BAT: [3, 4] },
+   307→        noiseLevel: 15,
+   308→        category: "SL",
+   309→        riskLevel: "Safe",
+   310→      };
+   311→    case "All-Rounder Heavy":
+   312→      return {
+   313→        ratios: [{ t1: 6, t2: 5 }, { t1: 5, t2: 6 }, { t1: 6, t2: 5 }],
+   314→        roleOverrides: { AR: [3, 4], BAT: [3, 4], BOWL: [3, 4] },
+   315→        noiseLevel: 20,
+   316→        category: "GL",
+   317→        riskLevel: "Balanced",
+   318→      };
+   319→    case "Differential":
+   320→      return {
+   321→        ratios: [{ t1: 5, t2: 6 }, { t1: 4, t2: 7 }, { t1: 7, t2: 4 }, { t1: 6, t2: 5 }],
+   322→        roleOverrides: {},
+   323→        noiseLevel: 40,
+   324→        category: "MGL",
+   325→        riskLevel: "Aggressive",
+   326→      };
+   327→    case "GL Contrarian":
+   328→      return {
+   329→        ratios: [{ t1: 5, t2: 6 }, { t1: 4, t2: 7 }, { t1: 7, t2: 4 }, { t1: 6, t2: 5 }],
+   330→        roleOverrides: { BAT: [3, 5], AR: [3, 4], BOWL: [3, 5] },
+   331→        noiseLevel: 60,
+   332→        category: "GL",
+   333→        riskLevel: "Aggressive",
+   334→      };
+   335→    case "GL Balanced":
+   336→      return {
+   337→        ratios: [{ t1: 6, t2: 5 }, { t1: 5, t2: 6 }, { t1: 6, t2: 5 }],
+   338→        roleOverrides: { AR: [3, 4] },
+   339→        noiseLevel: 40,
+   340→        category: "GL",
+   341→        riskLevel: "Balanced",
+   342→      };
+   343→    case "GL Aggressive":
+   344→      return {
+   345→        ratios: [{ t1: 5, t2: 6 }, { t1: 4, t2: 7 }, { t1: 7, t2: 4 }],
+   346→        roleOverrides: { BAT: [3, 4], AR: [3, 4], BOWL: [4, 5] },
+   347→        noiseLevel: 80,
+   348→        category: "MGL",
+   349→        riskLevel: "Aggressive",
+   350→      };
+   351→    case "GL Core Rotation":
+   352→      return {
+   353→        ratios: [{ t1: 6, t2: 5 }, { t1: 5, t2: 6 }, { t1: 6, t2: 5 }, { t1: 5, t2: 6 }],
+   354→        roleOverrides: {},
+   355→        noiseLevel: 50,
+   356→        category: "GL",
+   357→        riskLevel: "Balanced",
+   358→      };
+   359→    default:
+   360→      return {
+   361→        ratios: [{ t1: 6, t2: 5 }, { t1: 5, t2: 6 }],
+   362→        noiseLevel: 15,
+   363→        category: "SL",
+   364→        riskLevel: "Safe",
+   365→      };
+   366→  }
+   367→}
+   368→
+   369→// ============ GENERATE SINGLE TEAM ============
+   370→function generateSingleTeam(
+   371→  t: number,
+   372→  team1Players: Player[],
+   373→  team2Players: Player[],
+   374→  allPlayers: Player[],  // All eligible players (offline already filtered)
+   375→  sport: string,
+   376→  maxCredits: number,
+   377→  teamSize: number,
+   378→  platform: string,
+   379→  matchId: string,
+   380→  team1Code: string,
+   381→  team2Code: string,
+   382→  strategy: TeamStrategy,
+   383→  weights: WeightConfig,
+   384→  coreKeys: Set<string>,
+   385→  config: StrategyConfig
+   386→): GeneratedTeam | null {
+   387→  const reqs: Record<string, [number, number]> = sport === "cricket"
+   388→    ? { ...cricketRoleRequirements, ...config.roleOverrides } as Record<string, [number, number]>
+   389→    : (otherRoleRequirements[sport] || cricketRoleRequirements);
+   390→
+   391→  // Track used players by name|team key — avoids index confusion
+   392→  const usedKeys = new Set<string>();
+   393→  const ratio = config.ratios[t % config.ratios.length];
+   394→
+   395→  const sorted1 = sortWithWeights(team1Players, weights, team1Code, team2Code, config.noiseLevel);
+   396→  const sorted2 = sortWithWeights(team2Players, weights, team1Code, team2Code, config.noiseLevel);
+   397→
+   398→  const t1Max = Math.min(ratio.t1, team1Players.length, sport === "kabaddi" ? 5 : 7);
+   399→  const t2Max = Math.min(teamSize - t1Max, team2Players.length);
+   400→
+   401→  // Pick from team1
+   402→  const { picked: picked1, credits: c1 } = pickFromTeam(sorted1, t1Max, [], usedKeys, reqs, maxCredits, 0);
+   403→  // Pick from team2
+   404→  const { picked: picked2, credits: c2 } = pickFromTeam(sorted2, t2Max, picked1, usedKeys, reqs, maxCredits, c1);
+   405→
+   406→  let allPicked = [...picked1, ...picked2];
+   407→  let credits = c1 + c2;
+   408→
+   409→  // Ensure core players are included (for non-differential strategies)
+   410→  if (strategy !== "Differential") {
+   411→    for (const coreKeyStr of coreKeys) {
+   412→      if (usedKeys.has(coreKeyStr)) continue;
+   413→      // Find the core player in allPlayers
+   414→      const corePlayer = allPlayers.find(p => playerKey(p) === coreKeyStr);
+   415→      if (!corePlayer) continue;
+   416→
+   417→      // Check if adding this core player is feasible
+   418→      if (credits + corePlayer.credits > maxCredits) continue;
+   419→
+   420→      // Find the weakest non-core player of the same role to swap
+   421→      const sameRolePicked = allPicked
+   422→        .map((p, i) => ({ p, i }))
+   423→        .filter(({ p }) => !coreKeys.has(playerKey(p)) && p.role === corePlayer.role);
+   424→
+   425→      if (sameRolePicked.length > 0) {
+   426→        // Replace the weakest one
+   427→        const weakest = sameRolePicked.sort((a, b) => a.p.priorityScore - b.p.priorityScore)[0];
+   428→        usedKeys.delete(playerKey(weakest.p));
+   429→        credits -= weakest.p.credits;
+   430→        allPicked[weakest.i] = {
+   431→          ...corePlayer,
+   432→          priorityScore: calcWeightedScore(corePlayer, weights, team1Code, team2Code, 0),
+   433→        };
+   434→        usedKeys.add(coreKeyStr);
+   435→        credits += corePlayer.credits;
+   436→      }
+   437→    }
+   438→  }
+   439→
+   440→  // Fill remaining spots from ALL eligible players
+   441→  if (allPicked.length < teamSize) {
+   442→    const remaining = sortWithWeights(allPlayers, weights, team1Code, team2Code, config.noiseLevel)
+   443→      .filter((p) => !usedKeys.has(playerKey(p)) && credits + p.credits <= maxCredits);
+   444→
+   445→    for (const p of remaining) {
+   446→      if (allPicked.length >= teamSize) break;
+   447→      if (credits + p.credits > maxCredits) continue;
+   448→
+   449→      // Check role constraints
+   450→      const currentRoleCount = allPicked.filter(pp =>
+   451→        isAllRounderRole(p.role) ? isAllRounderRole(pp.role) : pp.role === p.role
+   452→      ).length;
+   453→      const roleMax = reqs[p.role]?.[1] || reqs[isAllRounderRole(p.role) ? "AR" : p.role]?.[1] || 6;
+   454→
+   455→      if (currentRoleCount < roleMax) {
+   456→        allPicked.push(p);
+   457→        usedKeys.add(playerKey(p));
+   458→        credits += p.credits;
+   459→      }
+   460→    }
+   461→  }
+   462→
+   463→  allPicked = allPicked.slice(0, teamSize);
+   464→
+   465→  // Credit optimization: swap expensive players for cheaper same-role alternatives
+   466→  let totalCredits = allPicked.reduce((sum, p) => sum + (p.credits || 0), 0);
+   467→  if (totalCredits > maxCredits) {
+   468→    const cheaperOptions = allPlayers
+   469→      .filter(p => !usedKeys.has(playerKey(p)))
+   470→      .sort((a, b) => a.credits - b.credits);
+   471→
+   472→    const sortedByCredits = [...allPicked].sort((a, b) => b.credits - a.credits);
+   473→    for (const expensive of sortedByCredits) {
+   474→      if (totalCredits <= maxCredits) break;
+   475→      const cheaper = cheaperOptions.find(r =>
+   476→        (r.role === expensive.role || (isAllRounderRole(r.role) && isAllRounderRole(expensive.role))) &&
+   477→        !usedKeys.has(playerKey(r)) &&
+   478→        r.credits < expensive.credits
+   479→      );
+   480→      if (cheaper) {
+   481→        usedKeys.delete(playerKey(expensive));
+   482→        totalCredits -= expensive.credits;
+   483→        const idx = allPicked.findIndex(p => playerKey(p) === playerKey(expensive));
+   484→        if (idx !== -1) {
+   485→          allPicked[idx] = { ...cheaper, priorityScore: 0 };
+   486→          usedKeys.add(playerKey(cheaper));
+   487→          totalCredits += cheaper.credits;
+   488→        }
+   489→      }
+   490→    }
+   491→  }
+   492→
+   493→  if (allPicked.length < teamSize) return null;
+   494→
+   495→  // ---- SAFETY: Exclude any bench players that might have slipped through ----
+   496→  allPicked = allPicked.filter(p => p.playing !== false);
+   497→  if (allPicked.length < teamSize) return null;
+   498→
+   499→  // ---- BUILD TEAM PLAYERS ----
+   500→  // Normalize AL→AR for consistency (both are all-rounders)
+   501→  const teamPlayers: TeamPlayer[] = allPicked.map((p) => {
+   502→    const platformKey = platform as string;
+   503→    const fantasyId = p.fantasyIdList?.find((f: { name: string; id: number }) => f.name === platformKey)?.id || null;
+   504→    return {
+   505→      name: p.name, team: p.team, role: p.role === "AL" ? "AR" : p.role,
+   506→      isCaptain: false, isViceCaptain: false,
+   507→      credits: p.credits, fantasyId, image: p.image,
+   508→    };
+   509→  });
+   510→
+   511→  // ---- CAPTAIN & VICE-CAPTAIN SELECTION ----
+   512→  const captainPriority = ["AR", "BAT", "WK", "BOWL"];
+   513→
+   514→  const captainCandidates = teamPlayers
+   515→    .map((p, i) => ({
+   516→      player: p, index: i,
+   517→      score: allPicked[i].captainPercentage || 0,
+   518→      priority: captainPriority.indexOf(p.role) === -1 ? 99 : captainPriority.indexOf(p.role),
+   519→    }))
+   520→    .sort((a, b) => a.priority !== b.priority ? a.priority - b.priority : b.score - a.score);
+   521→
+   522→  if (captainCandidates.length > 0) {
+   523→    const cIdx = t % Math.min(captainCandidates.length, 5);
+   524→    teamPlayers[captainCandidates[cIdx].index].isCaptain = true;
+   525→  } else if (teamPlayers.length > 0) {
+   526→    teamPlayers[t % teamPlayers.length].isCaptain = true;
+   527→  }
+   528→
+   529→  const vcCandidates = teamPlayers
+   530→    .map((p, i) => ({
+   531→      player: p, index: i,
+   532→      score: allPicked[i].viceCaptainPercentage || 0,
+   533→      priority: captainPriority.indexOf(p.role) === -1 ? 99 : captainPriority.indexOf(p.role),
+   534→    }))
+   535→    .filter(p => !p.player.isCaptain)
+   536→    .sort((a, b) => a.priority !== b.priority ? a.priority - b.priority : b.score - a.score);
+   537→
+   538→  if (vcCandidates.length > 0) {
+   539→    const vcIdx = t % Math.min(vcCandidates.length, 5);
+   540→    teamPlayers[vcCandidates[vcIdx].index].isViceCaptain = true;
+   541→  } else {
+   542→    const nonC = teamPlayers.filter(p => !p.isCaptain);
+   543→    if (nonC.length > 0) nonC[t % nonC.length].isViceCaptain = true;
+   544→  }
+   545→
+   546→  const captainIndex = teamPlayers.findIndex(p => p.isCaptain);
+   547→  const viceCaptainIndex = teamPlayers.findIndex(p => p.isViceCaptain);
+   548→  const transferUrl = generateTransferUrl(
+   549→    platform as "dream11" | "my11circle" | "jumbo",
+   550→    matchId, allPicked, captainIndex, viceCaptainIndex
+   551→  );
+   552→
+   553→  const finalCredits = teamPlayers.reduce((sum, p) => sum + (p.credits || 0), 0);
+   554→
+   555→  return {
+   556→    id: t + 1,
+   557→    players: teamPlayers,
+   558→    team1Count: teamPlayers.filter(p => p.team === team1Code).length,
+   559→    team2Count: teamPlayers.filter(p => p.team === team2Code).length,
+   560→    totalCredits: finalCredits,
+   561→    transferUrl,
+   562→    category: config.category,
+   563→    riskLevel: config.riskLevel,
+   564→    strategy,
+   565→  };
+   566→}
+   567→
+   568→// ============ TEAM UNIQUENESS CHECK ============
+   569→function isTeamUnique(team: GeneratedTeam, existingTeams: GeneratedTeam[]): boolean {
+   570→  const teamKey = team.players.map(p => playerKey(p)).sort().join(",");
+   571→  return !existingTeams.some(t => t.players.map(p => playerKey(p)).sort().join(",") === teamKey);
+   572→}
+   573→
+   574→// ============ C/VC OVERRIDE FOR GL TEAMS ============
+   575→function overrideCVCForGL(
+   576→  team: GeneratedTeam,
+   577→  allPicked: ScoredPlayer[],
+   578→  usedCVPairs: Set<string>,
+   579→  teamIndex: number
+   580→): { team: GeneratedTeam; usedCVPairs: Set<string> } {
+   581→  const teamPlayers = [...team.players];
+   582→  const captainPriority = ["AR", "AL", "BAT", "WK", "BOWL"];
+   583→
+   584→  // Build candidate list with priority scoring
+   585→  const candidates = teamPlayers.map((p, i) => ({
+   586→    player: p,
+   587→    index: i,
+   588→    score: allPicked[i]?.captainPercentage || 0,
+   589→    priority: captainPriority.indexOf(p.role) === -1 ? 99 : captainPriority.indexOf(p.role),
+   590→  }));
+   591→
+   592→  // Generate all possible C/VC pairs ordered by priority
+   593→  const pairs: { cIdx: number; vcIdx: number }[] = [];
+   594→  const sortedCandidates = [...candidates].sort((a, b) =>
+   595→    a.priority !== b.priority ? a.priority - b.priority : b.score - a.score
+   596→  );
+   597→
+   598→  for (const c of sortedCandidates) {
+   599→    for (const vc of sortedCandidates) {
+   600→      if (c.index === vc.index) continue;
+   601→      pairs.push({ cIdx: c.index, vcIdx: vc.index });
+   602→    }
+   603→  }
+   604→
+   605→  // Find first unused pair
+   606→  let foundPair = false;
+   607→  for (const pair of pairs) {
+   608→    const pairKey = `${playerKey(teamPlayers[pair.cIdx])}|${playerKey(teamPlayers[pair.vcIdx])}`;
+   609→    if (!usedCVPairs.has(pairKey)) {
+   610→      // Reset all C/VC flags
+   611→      for (const tp of teamPlayers) {
+   612→        tp.isCaptain = false;
+   613→        tp.isViceCaptain = false;
+   614→      }
+   615→      teamPlayers[pair.cIdx].isCaptain = true;
+   616→      teamPlayers[pair.vcIdx].isViceCaptain = true;
+   617→      usedCVPairs.add(pairKey);
+   618→      foundPair = true;
+   619→      break;
+   620→    }
+   621→  }
+   622→
+   623→  // If all pairs used, fall back to systematic rotation based on teamIndex
+   624→  if (!foundPair) {
+   625→    const cIdx = teamIndex % teamPlayers.length;
+   626→    let vcIdx = (teamIndex + 1) % teamPlayers.length;
+   627→    if (vcIdx === cIdx) vcIdx = (vcIdx + 1) % teamPlayers.length;
+   628→    for (const tp of teamPlayers) {
+   629→      tp.isCaptain = false;
+   630→      tp.isViceCaptain = false;
+   631→    }
+   632→    teamPlayers[cIdx].isCaptain = true;
+   633→    teamPlayers[vcIdx].isViceCaptain = true;
+   634→  }
+   635→
+   636→  return { team: { ...team, players: teamPlayers }, usedCVPairs };
+   637→}
+   638→
+   639→// ============ COMBINATION TEAM GENERATOR ============
+   640→function generateCombinationTeams(
+   641→  selectedPlayerKeys: string[],
+   642→  eligiblePlayers: Player[],
+   643→  sport: string,
+   644→  maxCredits: number,
+   645→  teamSize: number,
+   646→  platform: string,
+   647→  matchId: string,
+   648→  team1Code: string,
+   649→  team2Code: string,
+   650→  numTeams: number,
+   651→  weights: WeightConfig
+   652→): { teams: GeneratedTeam[]; warning?: string } {
+   653→  // Filter eligible players to ONLY selected ones
+   654→  const selectedPool = eligiblePlayers.filter(p => selectedPlayerKeys.includes(playerKey(p)));
+   655→
+   656→  if (selectedPool.length < teamSize) {
+   657→    return {
+   658→      teams: [],
+   659→      warning: `Selected pool has only ${selectedPool.length} players. Need at least ${teamSize} for a valid team.`,
+   660→    };
+   661→  }
+   662→
+   663→  const team1Selected = selectedPool.filter(p => p.team === team1Code);
+   664→  const team2Selected = selectedPool.filter(p => p.team === team2Code);
+   665→
+   666→  if (team1Selected.length === 0 || team2Selected.length === 0) {
+   667→    return {
+   668→      teams: [],
+   669→      warning: `Need players from both teams. Team1: ${team1Selected.length}, Team2: ${team2Selected.length}`,
+   670→    };
+   671→  }
+   672→
+   673→  // Use selected pool as core (smaller core for more variation)
+   674→  const coreKeys = identifyCorePlayers(selectedPool, weights, team1Code, team2Code, 5);
+   675→
+   676→  const teams: GeneratedTeam[] = [];
+   677→  const usedCVPairs = new Set<string>();
+   678→  let teamId = 0;
+   679→  let attempts = 0;
+   680→  const maxAttempts = numTeams * 10; // Allow more attempts than teams to handle duplicates
+   681→
+   682→  // Distribute across all 4 standard strategies
+   683→  const perStrategy = Math.floor(numTeams / 4);
+   684→  const remainder = numTeams % 4;
+   685→  const distributions: { strategy: TeamStrategy; count: number }[] = [
+   686→    { strategy: "Bat First", count: perStrategy + (remainder > 0 ? 1 : 0) },
+   687→    { strategy: "Bowl First", count: perStrategy + (remainder > 1 ? 1 : 0) },
+   688→    { strategy: "All-Rounder Heavy", count: perStrategy + (remainder > 2 ? 1 : 0) },
+   689→    { strategy: "Differential", count: perStrategy },
+   690→  ];
+   691→
+   692→  for (const dist of distributions) {
+   693→    const config = getStrategyConfig(dist.strategy);
+   694→    let generatedForStrategy = 0;
+   695→    let strategyAttempts = 0;
+   696→    const maxStrategyAttempts = dist.count * 10;
+   697→
+   698→    while (generatedForStrategy < dist.count && strategyAttempts < maxStrategyAttempts) {
+   699→      strategyAttempts++;
+   700→      attempts++;
+   701→
+   702→      const team = generateSingleTeam(
+   703→        teamId + generatedForStrategy + strategyAttempts, // vary seed for variety
+   704→        team1Selected, team2Selected, selectedPool,
+   705→        sport, maxCredits, teamSize, platform, matchId,
+   706→        team1Code, team2Code, dist.strategy, weights, coreKeys, config
+   707→      );
+   708→
+   709→      if (team && isTeamUnique(team, teams)) {
+   710→        // Override C/VC for maximum variation
+   711→        const scoredPlayers = selectedPool.map(p => ({
+   712→          ...p,
+   713→          priorityScore: calcWeightedScore(p, weights, team1Code, team2Code, config.noiseLevel),
+   714→        }));
+   715→        const teamScoredPlayers = team.players.map(tp => {
+   716→          const found = scoredPlayers.find(sp => playerKey(sp) === playerKey(tp));
+   717→          return found || { ...tp, points: 0, selectedBy: '0', playing: null, playerType: '', fantasyIdList: [], priorityScore: 0, captainPercentage: 0, viceCaptainPercentage: 0 } as ScoredPlayer;
+   718→        });
+   719→
+   720→        const { team: updatedTeam, usedCVPairs: updatedPairs } = overrideCVCForGL(team, teamScoredPlayers, usedCVPairs, teamId);
+   721→        Object.assign(usedCVPairs, updatedPairs);
+   722→
+   723→        updatedTeam.id = teams.length + 1;
+   724→        teams.push(updatedTeam);
+   725→        generatedForStrategy++;
+   726→        teamId++;
+   727→      }
+   728→
+   729→      if (attempts >= maxAttempts) break;
+   730→    }
+   731→  }
+   732→
+   733→  const warning = teams.length < numTeams
+   734→    ? `Could only generate ${teams.length} unique teams out of ${numTeams} requested. Pool may be too small for full variation.`
+   735→    : undefined;
+   736→
+   737→  return { teams, warning };
+   738→}
+   739→
+   740→// ============ GL COMBINATION TEAM GENERATOR ============
+   741→function generateGLCombinationTeams(
+   742→  eligiblePlayers: Player[],
+   743→  sport: string,
+   744→  maxCredits: number,
+   745→  teamSize: number,
+   746→  platform: string,
+   747→  matchId: string,
+   748→  team1Code: string,
+   749→  team2Code: string,
+   750→  numTeams: number,
+   751→  weights: WeightConfig
+   752→): { teams: GeneratedTeam[]; warning?: string } {
+   753→  const team1Players = eligiblePlayers.filter(p => p.team === team1Code);
+   754→  const team2Players = eligiblePlayers.filter(p => p.team === team2Code);
+   755→
+   756→  // Multiple core groups for diversity
+   757→  const coreKeysPrimary = identifyCorePlayers(eligiblePlayers, weights, team1Code, team2Code, 4);
+   758→  // Secondary core: players with lower selection % as differentials
+   759→  const differentialPlayers = eligiblePlayers.filter(p => {
+   760→    const selBy = parseFloat(p.selectedBy || "0");
+   761→    return selBy < 30;
+   762→  });
+   763→  const coreKeysDifferential = new Set<string>();
+   764→  const sortedDiffs = sortWithWeights(differentialPlayers, weights, team1Code, team2Code, 0);
+   765→  for (let i = 0; i < Math.min(5, sortedDiffs.length); i++) {
+   766→    coreKeysDifferential.add(playerKey(sortedDiffs[i]));
+   767→  }
+   768→
+   769→  const teams: GeneratedTeam[] = [];
+   770→  const usedCVPairs = new Set<string>();
+   771→  let teamId = 0;
+   772→  let attempts = 0;
+   773→  const maxAttempts = numTeams * 15;
+   774→
+   775→  // Vary role structures for GL diversity
+   776→  const glRoleVariations: Record<string, [number, number]>[] = [
+   777→    { BAT: [3, 5], AR: [3, 4], BOWL: [3, 5], WK: [1, 2] },  // balanced
+   778→    { BAT: [4, 5], AR: [2, 3], BOWL: [3, 5], WK: [1, 2] },  // bat heavy
+   779→    { BAT: [3, 4], AR: [4, 4], BOWL: [3, 5], WK: [1, 2] },  // AR heavy
+   780→    { BAT: [3, 5], AR: [3, 4], BOWL: [4, 5], WK: [1, 2] },  // bowl heavy
+   781→    { BAT: [3, 4], AR: [3, 4], BOWL: [3, 5], WK: [2, 2] },  // dual WK
+   782→  ];
+   783→
+   784→  // Distribute across 4 GL strategies
+   785→  const perStrategy = Math.floor(numTeams / 4);
+   786→  const remainder = numTeams % 4;
+   787→  const distributions: { strategy: GLTeamStrategy; count: number }[] = [
+   788→    { strategy: "GL Contrarian", count: perStrategy + (remainder > 0 ? 1 : 0) },
+   789→    { strategy: "GL Balanced", count: perStrategy + (remainder > 1 ? 1 : 0) },
+   790→    { strategy: "GL Aggressive", count: perStrategy + (remainder > 2 ? 1 : 0) },
+   791→    { strategy: "GL Core Rotation", count: perStrategy },
+   792→  ];
+   793→
+   794→  for (const dist of distributions) {
+   795→    const config = getStrategyConfig(dist.strategy);
+   796→    let generatedForStrategy = 0;
+   797→    let strategyAttempts = 0;
+   798→    const maxStrategyAttempts = dist.count * 15;
+   799→
+   800→    while (generatedForStrategy < dist.count && strategyAttempts < maxStrategyAttempts) {
+   801→      strategyAttempts++;
+   802→      attempts++;
+   803→
+   804→      // Alternate core groups based on strategy
+   805→      let activeCoreKeys = coreKeysPrimary;
+   806→      if (dist.strategy === "GL Contrarian" || dist.strategy === "GL Aggressive") {
+   807→        // Use differential core for contrarian/aggressive
+   808→        activeCoreKeys = strategyAttempts % 3 === 0 ? coreKeysDifferential : coreKeysPrimary;
+   809→      } else if (dist.strategy === "GL Core Rotation") {
+   810→        // Rotate: every other team uses differential core
+   811→        activeCoreKeys = generatedForStrategy % 2 === 0 ? coreKeysPrimary : coreKeysDifferential;
+   812→      }
+   813→
+   814→      // For GL Contrarian, boost differential players by inverting selectedBy weight
+   815→      let activeWeights = weights;
+   816→      if (dist.strategy === "GL Contrarian") {
+   817→        activeWeights = {
+   818→          ...weights,
+   819→          // Reduce bias toward popular players — the noise + strategy config handles the rest
+   820→          batWeight: weights.batWeight * 0.8,
+   821→          bowlWeight: weights.bowlWeight * 1.2,
+   822→          arWeight: weights.arWeight * 1.3,
+   823→        };
+   824→      } else if (dist.strategy === "GL Aggressive") {
+   825→        activeWeights = {
+   826→          ...weights,
+   827→          arWeight: weights.arWeight * 1.2,
+   828→          batWeight: weights.batWeight * 0.9,
+   829→        };
+   830→      }
+   831→
+   832→      // Vary role overrides per team for diversity
+   833→      const variationIdx = generatedForStrategy % glRoleVariations.length;
+   834→      const modifiedConfig: StrategyConfig = {
+   835→        ...config,
+   836→        roleOverrides: {
+   837→          ...config.roleOverrides,
+   838→          ...(sport === "cricket" ? glRoleVariations[variationIdx] : {}),
+   839→        },
+   840→      };
+   841→
+   842→      const team = generateSingleTeam(
+   843→        teamId + generatedForStrategy + strategyAttempts, // unique seed
+   844→        team1Players, team2Players, eligiblePlayers,
+   845→        sport, maxCredits, teamSize, platform, matchId,
+   846→        team1Code, team2Code, dist.strategy, activeWeights, activeCoreKeys, modifiedConfig
+   847→      );
+   848→
+   849→      if (team && isTeamUnique(team, teams)) {
+   850→        // Build scored players for C/VC override
+   851→        const teamScoredPlayers = team.players.map(tp => {
+   852→          const found = eligiblePlayers.find(ep => playerKey(ep) === playerKey(tp));
+   853→          if (found) {
+   854→            return {
+   855→              ...found,
+   856→              priorityScore: calcWeightedScore(found, activeWeights, team1Code, team2Code, config.noiseLevel),
+   857→            };
+   858→          }
+   859→          return { ...tp, points: 0, selectedBy: '0', playing: null, playerType: '', fantasyIdList: [], priorityScore: 0, captainPercentage: 0, viceCaptainPercentage: 0 } as ScoredPlayer;
+   860→        });
+   861→
+   862→        // Aggressive C/VC rotation for GL
+   863→        const { team: updatedTeam, usedCVPairs: updatedPairs } = overrideCVCForGL(team, teamScoredPlayers, usedCVPairs, teamId);
+   864→        // Merge new pairs into usedCVPairs
+   865→        for (const pair of updatedPairs) {
+   866→          usedCVPairs.add(pair);
+   867→        }
+   868→
+   869→        // Recompute transfer URL with new C/VC
+   870→        const captainIndex = updatedTeam.players.findIndex(p => p.isCaptain);
+   871→        const viceCaptainIndex = updatedTeam.players.findIndex(p => p.isViceCaptain);
+   872→        const allPickedForUrl = updatedTeam.players.map(tp => {
+   873→          const found = eligiblePlayers.find(ep => playerKey(ep) === playerKey(tp));
+   874→          return found!;
+   875→        }).filter(Boolean);
+   876→
+   877→        const transferUrl = generateTransferUrl(
+   878→          platform as "dream11" | "my11circle" | "jumbo",
+   879→          matchId, allPickedForUrl, captainIndex, viceCaptainIndex
+   880→        );
+   881→
+   882→        updatedTeam.id = teams.length + 1;
+   883→        updatedTeam.transferUrl = transferUrl;
+   884→        teams.push(updatedTeam);
+   885→        generatedForStrategy++;
+   886→        teamId++;
+   887→      }
+   888→
+   889→      if (attempts >= maxAttempts) break;
+   890→    }
+   891→  }
+   892→
+   893→  const warning = teams.length < numTeams
+   894→    ? `Generated ${teams.length} out of ${numTeams} requested GL teams. Some combinations may not be feasible with the available player pool.`
+   895→    : undefined;
+   896→
+   897→  return { teams, warning };
+   898→}
+   899→
+   900→// ============ MAIN API HANDLER ============
+   901→export async function POST(request: Request) {
+   902→  try {
+   903→    const body = await request.json();
+   904→    const {
+   905→      matchId = "", team1Name = "T1", team2Name = "T2",
+   906→      team1Code = "T1", team2Code = "T2", series = "Match",
+   907→      sport = "cricket", numTeams = 40, players = [], platform = "dream11",
+   908→      tossResult = "unknown" as TossResult,
+   909→      pitchReport = "balanced" as PitchReport,
+   910→      groundSize = "balanced" as GroundSize,
+   911→      mode = "standard" as "standard" | "combination" | "gl_combination",
+   912→      selectedPlayerKeys = [] as string[],
+   913→    } = body;
+   914→
+   915→    if (!Array.isArray(players) || players.length === 0) {
+   916→      return NextResponse.json({ error: "No players provided" }, { status: 400 });
+   917→    }
+   918→
+   919→    // ============ CRITICAL: OFFLINE PLAYER FILTERING ============
+   920→    // Three-state playing field:
+   921→    // - playing: true  = confirmed in playing XI → ALWAYS include
+   922→    // - playing: false = confirmed NOT playing (bench/offline) → ALWAYS EXCLUDE
+   923→    // - playing: null/undefined = lineup not announced → include (unknown)
+   924→    //
+   925→    // Logic: If ANY player has playing: true → lineup IS out → EXCLUDE all playing: false
+   926→    //        If NO player has playing: true → lineup NOT out → include all (status unknown)
+   927→    const hasLineupData = players.some((p: Player) => p.playing === true);
+   928→    const eligiblePlayers = hasLineupData
+   929→      ? players.filter((p: Player) => p.playing !== false)  // Keep true + null/undefined, exclude false
+   930→      : players; // No lineup data → include everyone
+   931→
+   932→    const offlineCount = players.length - eligiblePlayers.length;
+   933→
+   934→    if (eligiblePlayers.length === 0) {
+   935→      return NextResponse.json({ error: "No playing players available. Lineup may not be announced yet." }, { status: 400 });
+   936→    }
+   937→
+   938→    // Check if we have enough playing players for a valid team
+   939→    const teamSize = sport === "cricket" ? 11 : sport === "football" ? 11 : 7;
+   940→    if (eligiblePlayers.length < teamSize) {
+   941→      return NextResponse.json({
+   942→        error: `Only ${eligiblePlayers.length} playing players available. Need at least ${teamSize} for a valid team. Wait for full lineup.`,
+   943→        playingCount: eligiblePlayers.length,
+   944→        totalCount: players.length,
+   945→        offlineExcluded: offlineCount,
+   946→      }, { status: 400 });
+   947→    }
+   948→
+   949→    const maxCredits = 100;
+   950→
+   951→    const team1Players = eligiblePlayers.filter((p: Player) => p.team === team1Code || p.team === team1Name);
+   952→    const team2Players = eligiblePlayers.filter((p: Player) => p.team === team2Code || p.team === team2Name);
+   953→
+   954→    // Validate team sizes
+   955→    if (team1Players.length === 0 || team2Players.length === 0) {
+   956→      return NextResponse.json({
+   957→        error: `Not enough players from both teams. Team1: ${team1Players.length}, Team2: ${team2Players.length}`,
+   958→      }, { status: 400 });
+   959→    }
+   960→
+   961→    // Calculate weights based on toss, pitch, ground
+   962→    const weights = getWeights(tossResult, pitchReport, groundSize);
+   963→
+   964→    // ============ MODE-BRANCHED TEAM GENERATION ============
+   965→    if (mode === "combination") {
+   966→      // ---- COMBINATION MODE: Generate teams from user-selected players only ----
+   967→      if (!Array.isArray(selectedPlayerKeys) || selectedPlayerKeys.length === 0) {
+   968→        return NextResponse.json({ error: "selectedPlayerKeys is required for combination mode" }, { status: 400 });
+   969→      }
+   970→
+   971→      const result = generateCombinationTeams(
+   972→        selectedPlayerKeys, eligiblePlayers,
+   973→        sport, maxCredits, teamSize, platform, matchId,
+   974→        team1Code, team2Code, numTeams, weights
+   975→      );
+   976→
+   977→      if (result.teams.length === 0 && result.warning) {
+   978→        return NextResponse.json({ error: result.warning }, { status: 400 });
+   979→      }
+   980→
+   981→      const coreKeys = identifyCorePlayers(
+   982→        eligiblePlayers.filter(p => selectedPlayerKeys.includes(playerKey(p))),
+   983→        weights, team1Code, team2Code, 5
+   984→      );
+   985→
+   986→      const summary = {
+   987→        batFirstTeams: result.teams.filter(t => t.strategy === "Bat First").length,
+   988→        bowlFirstTeams: result.teams.filter(t => t.strategy === "Bowl First").length,
+   989→        arHeavyTeams: result.teams.filter(t => t.strategy === "All-Rounder Heavy").length,
+   990→        differentialTeams: result.teams.filter(t => t.strategy === "Differential").length,
+   991→      };
+   992→
+   993→      return NextResponse.json({
+   994→        success: true,
+   995→        teams: result.teams,
+   996→        match: `${team1Name} vs ${team2Name}`,
+   997→        series,
+   998→        platform,
+   999→        mode: "combination",
+  1000→        warning: result.warning,
+  1001→        generationMeta: {
+  1002→          tossResult,
+  1003→          pitchReport,
+  1004→          groundSize,
+  1005→          corePlayerCount: coreKeys.size,
+  1006→          selectedPoolSize: eligiblePlayers.filter(p => selectedPlayerKeys.includes(playerKey(p))).length,
+  1007→          ...summary,
+  1008→          lineupFiltered: hasLineupData,
+  1009→          totalPlayers: players.length,
+  1010→          playingPlayers: eligiblePlayers.length,
+  1011→          offlinePlayersFiltered: offlineCount,
+  1012→        },
+  1013→      });
+  1014→
+  1015→    } else if (mode === "gl_combination") {
+  1016→      // ---- GL COMBINATION MODE: Generate highly unique GL teams ----
+  1017→      const result = generateGLCombinationTeams(
+  1018→        eligiblePlayers,
+  1019→        sport, maxCredits, teamSize, platform, matchId,
+  1020→        team1Code, team2Code, numTeams, weights
+  1021→      );
+  1022→
+  1023→      const summary = {
+  1024→        glContrarianTeams: result.teams.filter(t => t.strategy === "GL Contrarian").length,
+  1025→        glBalancedTeams: result.teams.filter(t => t.strategy === "GL Balanced").length,
+  1026→        glAggressiveTeams: result.teams.filter(t => t.strategy === "GL Aggressive").length,
+  1027→        glCoreRotationTeams: result.teams.filter(t => t.strategy === "GL Core Rotation").length,
+  1028→      };
+  1029→
+  1030→      return NextResponse.json({
+  1031→        success: true,
+  1032→        teams: result.teams,
+  1033→        match: `${team1Name} vs ${team2Name}`,
+  1034→        series,
+  1035→        platform,
+  1036→        mode: "gl_combination",
+  1037→        warning: result.warning,
+  1038→        generationMeta: {
+  1039→          tossResult,
+  1040→          pitchReport,
+  1041→          groundSize,
+  1042→          ...summary,
+  1043→          lineupFiltered: hasLineupData,
+  1044→          totalPlayers: players.length,
+  1045→          playingPlayers: eligiblePlayers.length,
+  1046→          offlinePlayersFiltered: offlineCount,
+  1047→        },
+  1048→      });
+  1049→
+  1050→    } else {
+  1051→      // ---- STANDARD MODE: Existing behavior (default) ----
+  1052→      // Identify core players using name-based keys
+  1053→      const coreKeys = identifyCorePlayers(eligiblePlayers, weights, team1Code, team2Code, 7);
+  1054→
+  1055→      // ---- FORMULA FOR VARIABLE TEAM COUNTS ----
+  1056→      // Distribute teams across 4 strategies proportionally
+  1057→      const requestedTeams = Math.max(1, Math.min(500, numTeams));
+  1058→      const perStrategy = Math.floor(requestedTeams / 4);
+  1059→      const remainder = requestedTeams % 4;
+  1060→      const distributions: { strategy: TeamStrategy; count: number }[] = [
+  1061→        { strategy: "Bat First", count: perStrategy + (remainder > 0 ? 1 : 0) },
+  1062→        { strategy: "Bowl First", count: perStrategy + (remainder > 1 ? 1 : 0) },
+  1063→        { strategy: "All-Rounder Heavy", count: perStrategy + (remainder > 2 ? 1 : 0) },
+  1064→        { strategy: "Differential", count: perStrategy },
+  1065→      ];
+  1066→
+  1067→      const teams: GeneratedTeam[] = [];
+  1068→      let teamId = 0;
+  1069→
+  1070→      for (const dist of distributions) {
+  1071→        const config = getStrategyConfig(dist.strategy);
+  1072→        for (let i = 0; i < dist.count; i++) {
+  1073→          const team = generateSingleTeam(
+  1074→            teamId, team1Players, team2Players, eligiblePlayers,
+  1075→            sport, maxCredits, teamSize, platform, matchId,
+  1076→            team1Code, team2Code, dist.strategy, weights, coreKeys, config
+  1077→          );
+  1078→          if (team) {
+  1079→            team.id = teamId + 1;
+  1080→            teams.push(team);
+  1081→          }
+  1082→          teamId++;
+  1083→        }
+  1084→      }
+  1085→
+  1086→      // Summary
+  1087→      const batFirstCount = teams.filter(t => t.strategy === "Bat First").length;
+  1088→      const bowlFirstCount = teams.filter(t => t.strategy === "Bowl First").length;
+  1089→      const arHeavyCount = teams.filter(t => t.strategy === "All-Rounder Heavy").length;
+  1090→      const diffCount = teams.filter(t => t.strategy === "Differential").length;
+  1091→
+  1092→      return NextResponse.json({
+  1093→        success: true,
+  1094→        teams,
+  1095→        match: `${team1Name} vs ${team2Name}`,
+  1096→        series,
+  1097→        platform,
+  1098→        generationMeta: {
+  1099→          tossResult,
+  1100→          pitchReport,
+  1101→          groundSize,
+  1102→          corePlayerCount: coreKeys.size,
+  1103→          batFirstTeams: batFirstCount,
+  1104→          bowlFirstTeams: bowlFirstCount,
+  1105→          arHeavyTeams: arHeavyCount,
+  1106→          differentialTeams: diffCount,
+  1107→          lineupFiltered: hasLineupData,
+  1108→          totalPlayers: players.length,
+  1109→          playingPlayers: eligiblePlayers.length,
+  1110→          offlinePlayersFiltered: offlineCount,
+  1111→        },
+  1112→      });
+  1113→    }
+  1114→  } catch (error) {
+  1115→    console.error("Team generation failed:", error);
+  1116→    return NextResponse.json({ error: "Team generation failed. Please try again." }, { status: 500 });
+  1117→  }
+  1118→}
+  1119→

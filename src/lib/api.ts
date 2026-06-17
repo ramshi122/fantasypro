@@ -1366,18 +1366,62 @@ export async function bulkTransferToLinkedAccount(
     }
 
     try {
-      const endpoint = isReplace ? `/api/fantasy/edit-team` : `/api/fantasy/add-team`;
-      const res = await rawFetch<ApiResponse>(endpoint, {
+      // Call our server-side /api/transfer proxy instead of hitting the backend directly.
+      // The proxy handles:
+      //   - Multi-endpoint fallback (dream11: /api/fantasy/add-team → /api/classic/dream11/addteam)
+      //   - Bug-aware success detection (HTTP 201 + "Something Went Wrong!" = tentative success)
+      //   - Token expiry detection (returns needsReauth: true)
+      //   - Edit → Add fallback if edit fails on all endpoints
+      //   - AES decryption of response data
+      const proxyBody = {
+        ...body,
+        skipPreVerify: true, // we already did pre-verify above; skip to avoid double call
+      };
+      const proxyRes = await fetch(`/api/transfer`, {
         method: "POST",
-        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(proxyBody),
+        cache: "no-store",
+        signal: AbortSignal.timeout(45000), // 45s — server proxy has its own 30s timeout per endpoint
       });
+      const res = await proxyRes.json() as ApiResponse & {
+        needsReauth?: boolean;
+        confidence?: "definite" | "tentative";
+        code?: string;
+        backendError?: string;
+      };
+
       if (res.status === "success") {
         successCount++;
-        results.push({ teamNo: t.teamNo, success: true });
+        const confidence = res.confidence === "tentative" ? " (tentative)" : "";
+        results.push({ teamNo: t.teamNo, success: true, message: res.message || `Transferred${confidence}` });
         transferLinks.push({ teamNo: t.teamNo });
+      } else if (res.needsReauth) {
+        // Token expired — record the failure with the re-auth signal
+        failCount++;
+        const msg = (res.error as string) || (res.message as string) || "Token expired — re-link via OTP";
+        results.push({ teamNo: t.teamNo, success: false, message: msg });
+        transferLinks.push({ teamNo: t.teamNo });
+        // Bail out early on confirmed token expiry — no point trying remaining teams
+        // (they'll all fail with the same expired token)
+        for (let j = i + 1; j < teams.length; j++) {
+          failCount++;
+          results.push({ teamNo: teams[j].teamNo, success: false, message: "Skipped — token expired" });
+          transferLinks.push({ teamNo: teams[j].teamNo });
+          onProgress?.(j + 1, teams.length);
+        }
+        return {
+          totalAttempted: teams.length,
+          successCount,
+          failCount,
+          results,
+          transferLinks,
+          needsReauth: true,
+          blockReason: msg,
+        };
       } else {
         failCount++;
-        results.push({ teamNo: t.teamNo, success: false, message: (res.message as string) || "Failed" });
+        results.push({ teamNo: t.teamNo, success: false, message: (res.error as string) || (res.message as string) || "Failed" });
         transferLinks.push({ teamNo: t.teamNo });
       }
     } catch (err: any) {

@@ -1,0 +1,79 @@
+import { NextResponse } from "next/server";
+import { decryptString } from "@/lib/tg-api";
+
+const BACKEND_URL = "https://tgsoftware-api.online";
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const { fantasyApp, tgMatchId, playerData, captainData, vicecaptainData } = body;
+
+    if (!fantasyApp || !tgMatchId || !playerData || !captainData || !vicecaptainData) {
+      return NextResponse.json(
+        { error: "fantasyApp, tgMatchId, playerData, captainData, and vicecaptainData are required" },
+        { status: 400 }
+      );
+    }
+
+    // Route to the correct platform endpoint (matching original APK)
+    let endpoint = "";
+    if (fantasyApp === "dream11") {
+      endpoint = `${BACKEND_URL}/api/classic/dream11/addteam`;
+    } else if (fantasyApp === "my11circle") {
+      endpoint = `${BACKEND_URL}/api/classic/my11circle/addteam`;
+    } else if (fantasyApp === "jumbo") {
+      endpoint = `${BACKEND_URL}/api/classic/jumbo/addteam`;
+    } else {
+      endpoint = `${BACKEND_URL}/api/classic/dream11/addteam`;
+    }
+
+    // Build the payload matching original APK's classic addteam format
+    const payload = {
+      tgMatchId,
+      playerData,
+      captainData,
+      vicecaptainData,
+      generateLinkFlag: "general",
+    };
+
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+
+    // The original APK's classic addteam returns encrypted data in data.data
+    // that needs to be decrypted to get the link
+    let link = null;
+    if (data.data && typeof data.data === "string") {
+      try {
+        const decrypted = decryptString(data.data);
+        if (decrypted) {
+          const parsed = JSON.parse(decrypted);
+          link = parsed.link || null;
+        }
+      } catch {
+        // If decryption fails, try direct access
+        if (typeof data.data === "object" && data.data.link) {
+          link = data.data.link;
+        }
+      }
+    } else if (typeof data.data === "object" && data.data?.link) {
+      link = data.data.link;
+    }
+
+    return NextResponse.json({
+      status: data.status || (res.ok ? "success" : "error"),
+      link,
+      message: data.message || "",
+    }, { status: res.status });
+  } catch (error) {
+    console.error("Classic addteam error:", error);
+    return NextResponse.json(
+      { error: "Failed to create transfer link" },
+      { status: 500 }
+    );
+  }
+}
