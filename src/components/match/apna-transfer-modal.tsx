@@ -380,24 +380,26 @@ export function ApnaTransferModal({
           <div className="p-4 space-y-4">
             {/* Not linked warning */}
             {!isLinked && (
-              <div className="text-center py-6">
+              <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-4 text-center">
                 <Lock className="w-10 h-10 mx-auto text-amber-500 mb-2" />
                 <p className="text-sm font-bold mb-1">{APP_LABELS[selectedApp]?.label} Not Linked</p>
                 <p className="text-xs text-muted-foreground mb-3">
                   Link your {APP_LABELS[selectedApp]?.label} account via OTP to transfer teams.
+                  The flow: OTP login → verify token → fetch existing teams → add/edit teams.
                 </p>
                 <Button className="brand-gradient text-white" onClick={onOpenOtpLogin}>
                   <Zap className="w-4 h-4 mr-2" />
-                  Link via OTP
+                  Link {APP_LABELS[selectedApp]?.label} via OTP
                 </Button>
               </div>
             )}
 
-            {/* Loading */}
+            {/* When linked but still loading existing teams, show stats with 0 */}
             {isLinked && phase === "loading" && (
               <div className="py-8 text-center">
                 <Loader2 className="w-10 h-10 mx-auto text-violet-500 animate-spin mb-3" />
-                <p className="text-sm font-semibold">Fetching existing teams...</p>
+                <p className="text-sm font-semibold">Fetching existing {APP_LABELS[selectedApp]?.label} teams...</p>
+                <p className="text-[10px] text-muted-foreground mt-1">Step 1: Verify token → Step 2: List teams</p>
               </div>
             )}
 
