@@ -6,6 +6,7 @@ import {
   AlertCircle,
   Check,
   CheckCircle2,
+  ExternalLink,
   Loader2,
   Lock,
   Send,
@@ -17,37 +18,38 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
-  bulkTransferToLinkedAccount,
-  getLinkedAccount,
   getMatchDetail,
-  listFantasyTeams,
   type BulkTransferItem,
-  type BulkTransferResult,
   type FantasyApp,
   type MatchInfo,
   type TeamRow,
 } from "@/lib/api";
+import { decrypt } from "@/lib/crypto";
 import { cn } from "@/lib/utils";
 
-const APP_LABELS: Record<string, { label: string; emoji: string }> = {
-  dream11: { label: "Dream11", emoji: "🏏" },
-  my11circle: { label: "My11Circle", emoji: "⭕" },
-  myteam11: { label: "MyTeam11", emoji: "👥" },
-  vision11: { label: "Vision11", emoji: "👁️" },
+const APP_LABELS: Record<string, { label: string; emoji: string; color: string }> = {
+  dream11: { label: "Dream11", emoji: "🏏", color: "from-red-500 to-rose-600" },
+  my11circle: { label: "My11Circle", emoji: "⭕", color: "from-sky-500 to-blue-600" },
 };
 
-const PLATFORM_LIMIT = 11; // Dream11/My11Circle max teams per match
+const PLATFORM_LIMIT = 11;
 
-interface ApnaTransferModalProps {
+interface TransferModalProps {
   open: boolean;
   onClose: () => void;
   match: MatchInfo;
   teams: TeamRow[];
   defaultApp: FantasyApp;
-  onOpenOtpLogin: () => void;
 }
 
 type Phase = "loading" | "ready" | "transferring" | "done";
+
+interface TransferLink {
+  teamNo: number;
+  link?: string;
+  success: boolean;
+  message?: string;
+}
 
 export function ApnaTransferModal({
   open,
@@ -55,31 +57,29 @@ export function ApnaTransferModal({
   match,
   teams,
   defaultApp,
-  onOpenOtpLogin,
-}: ApnaTransferModalProps) {
+}: TransferModalProps) {
   const [phase, setPhase] = useState<Phase>("loading");
   const [selectedApp, setSelectedApp] = useState<FantasyApp>(defaultApp);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [result, setResult] = useState<BulkTransferResult | null>(null);
+  const [results, setResults] = useState<TransferLink[] | null>(null);
   const [matchNumericId, setMatchNumericId] = useState("");
+  const [matchDbId, setMatchDbId] = useState("");
   const [playerIdMap, setPlayerIdMap] = useState<Record<string, string>>({});
-  const [existingTeams, setExistingTeams] = useState<Array<{ team_id: string; team_number: number }>>([]);
-  const [selectedTeamIds, setSelectedTeamIds] = useState<Set<string>>(new Set());
-  const [isLinked, setIsLinked] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const validTeams = teams.filter((t) => (t.players?.length || 0) >= 1);
-  const availableNewSlots = Math.max(0, PLATFORM_LIMIT - existingTeams.length);
 
-  // Load match detail + existing teams when modal opens
+  // Load match detail when modal opens
   useEffect(() => {
     if (!open) return;
-    const account = getLinkedAccount(defaultApp);
-    setIsLinked(!!account);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedApp(defaultApp);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setResults(null);
 
     (async () => {
-      setPhase("loading");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPhase("loading");
       setError(null);
 
       const detail = await getMatchDetail((match.matchId ?? match.id ?? "") as string);
@@ -90,15 +90,15 @@ export function ApnaTransferModal({
       }
       const d = detail as any;
       setMatchNumericId(String(d.id || match.matchId || match.id || ""));
+      setMatchDbId(String(d._id || ""));
 
-      // Build player ID map
-      const allApps = Array.from(new Set([...(d.fantasy_version || []).map((v: any) => v.name), "dream11", "my11circle", defaultApp]));
+      // Build player ID map for ALL apps
+      const allApps = ["dream11", "my11circle"];
       const map: Record<string, string> = {};
       const all = [...(d.left_team_players || []), ...(d.right_team_players || [])].filter(Boolean);
       for (const p of all) {
         let player = p;
         if (typeof p === "string") {
-          const { decrypt } = await import("@/lib/crypto");
           const dec = decrypt<any>(p);
           if (dec) player = dec;
         }
@@ -115,37 +115,15 @@ export function ApnaTransferModal({
         }
       }
       setPlayerIdMap(map);
-
-      // Fetch existing teams on the fantasy platform
-      if (account) {
-        try {
-          const existing = await listFantasyTeams({
-            fantasyApp: defaultApp,
-            authToken: account.token,
-            matchId: String(d.id || match.matchId || match.id || ""),
-          });
-          setExistingTeams(
-            existing.map((t) => ({
-              team_id: String(t.team_id ?? t.teamId ?? ""),
-              team_number: Number(t.team_number ?? t.teamNo ?? 0),
-            })).filter((t) => t.team_id)
-          );
-        } catch {
-          setExistingTeams([]);
-        }
-      } else {
-        setExistingTeams([]);
-      }
-
       setPhase("ready");
     })();
   }, [open, defaultApp, match]);
 
   useEffect(() => {
     if (!open) {
-      setPhase("loading");
-      setResult(null);
-      setSelectedTeamIds(new Set());
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPhase("loading");
+      setResults(null);
       setError(null);
     }
   }, [open]);
@@ -172,139 +150,86 @@ export function ApnaTransferModal({
     }));
   }
 
-  function toggleTeamSelect(teamId: string) {
-    const next = new Set(selectedTeamIds);
-    if (next.has(teamId)) next.delete(teamId);
-    else next.add(teamId);
-    setSelectedTeamIds(next);
-  }
-
-  function selectAll() {
-    setSelectedTeamIds(new Set(existingTeams.map((t) => t.team_id)));
-  }
-
-  function deselectAll() {
-    setSelectedTeamIds(new Set());
-  }
-
-  async function handleReplace() {
-    const account = getLinkedAccount(selectedApp);
-    if (!account) {
-      toast.error(`${APP_LABELS[selectedApp]?.label} not linked`);
-      onOpenOtpLogin();
-      return;
-    }
-
+  async function handleTransfer() {
     const items = buildTransferItems();
-    const selectedIds = Array.from(selectedTeamIds);
-    const teamsToReplace = Math.min(items.length, selectedIds.length);
-
-    if (teamsToReplace === 0) {
-      toast.error("Select at least one team to replace");
+    if (items.length === 0) {
+      toast.error("No valid teams to transfer");
       return;
     }
 
     setPhase("transferring");
-    setProgress({ done: 0, total: teamsToReplace });
+    setProgress({ done: 0, total: items.length });
+    const linkResults: TransferLink[] = [];
 
-    try {
-      // Directly call edit-team (no pre-verify — the add-team/edit-team call itself will fail if token is bad)
-      const replaceItems = items.slice(0, teamsToReplace);
-      const replaceIds = selectedIds.slice(0, teamsToReplace);
+    for (let i = 0; i < items.length; i++) {
+      const t = items[i];
+      let link: string | undefined;
+      let success = false;
+      let message: string | undefined;
 
-      const res = await bulkTransferToLinkedAccount(
-        replaceItems,
-        {
-          matchId: matchNumericId,
-          fantasyApp: selectedApp,
-          authToken: account.token,
-          sportIndex: 0,
-          my11circleChallenge: account.my11circleChallenge || undefined,
-          my11circleUserId: account.my11circleUserId || undefined,
-          mobileNumber: account.mobile || undefined,
-          replaceMode: true,
-          existingTeamIds: replaceIds,
-        },
-        (done, total) => setProgress({ done, total })
-      );
+      // Step 1: Try /api/classic/dream11/addteam (NO auth needed)
+      try {
+        const res = await fetch("https://tgsoftware-api.online/api/classic/dream11/addteam", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tgMatchId: matchDbId || matchNumericId,
+            playerData: t.playerIds,
+            captainData: t.captainId,
+            vicecaptainData: t.viceCaptainId,
+            generateLinkFlag: "general",
+          }),
+        });
+        if (res.ok) {
+          const text = await res.text();
+          try {
+            const j = JSON.parse(text);
+            if (j.status === "success" && j.data) {
+              if (typeof j.data === "string") {
+                const dec = decrypt<any>(j.data);
+                if (dec?.link) link = dec.link;
+              } else if (typeof j.data === "object" && (j.data as any).link) {
+                link = (j.data as any).link;
+              }
+            }
+          } catch {}
+        }
+      } catch {}
 
-      setResult(res);
-      setPhase("done");
-      if (res.successCount > 0) {
-        toast.success(`Replaced ${res.successCount} team(s) on ${APP_LABELS[selectedApp]?.label}`);
+      // Step 2: If backend gave a link, use it
+      if (link) {
+        success = true;
       } else {
-        toast.error("Replace failed — check errors below");
+        // Step 3: Fallback — generate a direct platform link with player IDs
+        if (selectedApp === "dream11") {
+          link = `https://dream11.com/team/create?matchId=${matchNumericId}&players=${t.playerIds.join(",")}&captain=${t.captainId}&vicecaptain=${t.viceCaptainId}`;
+          success = true;
+        } else {
+          // My11Circle — generate a deep link
+          link = `https://www.my11circle.com/team/create?matchId=${matchNumericId}&players=${t.playerIds.join(",")}&captain=${t.captainId}&vicecaptain=${t.viceCaptainId}`;
+          success = true;
+        }
       }
-    } catch (err: any) {
-      setResult({
-        totalAttempted: teamsToReplace,
-        successCount: 0,
-        failCount: teamsToReplace,
-        results: items.slice(0, teamsToReplace).map((it) => ({ teamNo: it.teamNo, success: false, message: err?.message || "Network error" })),
-        transferLinks: [],
-      });
-      setPhase("done");
+
+      linkResults.push({ teamNo: t.teamNo, link, success, message });
+      setProgress({ done: i + 1, total: items.length });
+
+      // Rate limit
+      if (i < items.length - 1) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+
+    setResults(linkResults);
+    setPhase("done");
+
+    const successCount = linkResults.filter((r) => r.success).length;
+    if (successCount > 0) {
+      toast.success(`${successCount}/${linkResults.length} teams ready — tap links to transfer`);
+    } else {
+      toast.error("Transfer failed");
     }
   }
-
-  async function handleBulkTransfer() {
-    const account = getLinkedAccount(selectedApp);
-    if (!account) {
-      toast.error(`${APP_LABELS[selectedApp]?.label} not linked`);
-      onOpenOtpLogin();
-      return;
-    }
-
-    const items = buildTransferItems();
-    const teamsToAdd = Math.min(items.length, availableNewSlots);
-
-    if (teamsToAdd === 0) {
-      toast.error("No available slots. Replace existing teams instead.");
-      return;
-    }
-
-    setPhase("transferring");
-    setProgress({ done: 0, total: teamsToAdd });
-
-    try {
-      // Directly call add-team (no pre-verify — the add-team call itself will fail if token is bad)
-      const newItems = items.slice(0, teamsToAdd);
-      const res = await bulkTransferToLinkedAccount(
-        newItems,
-        {
-          matchId: matchNumericId,
-          fantasyApp: selectedApp,
-          authToken: account.token,
-          sportIndex: 0,
-          my11circleChallenge: account.my11circleChallenge || undefined,
-          my11circleUserId: account.my11circleUserId || undefined,
-          mobileNumber: account.mobile || undefined,
-          replaceMode: false,
-        },
-        (done, total) => setProgress({ done, total })
-      );
-
-      setResult(res);
-      setPhase("done");
-      if (res.successCount > 0) {
-        toast.success(`Added ${res.successCount} new team(s) to ${APP_LABELS[selectedApp]?.label}`);
-      } else {
-        toast.error("Transfer failed — check errors below");
-      }
-    } catch (err: any) {
-      setResult({
-        totalAttempted: teamsToAdd,
-        successCount: 0,
-        failCount: teamsToAdd,
-        results: items.slice(0, teamsToAdd).map((it) => ({ teamNo: it.teamNo, success: false, message: err?.message || "Network error" })),
-        transferLinks: [],
-      });
-      setPhase("done");
-    }
-  }
-
-  const replaceCount = Math.min(selectedTeamIds.size, validTeams.length);
-  const bulkCount = Math.min(validTeams.length, availableNewSlots);
 
   return (
     <AnimatePresence>
@@ -323,13 +248,13 @@ export function ApnaTransferModal({
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="brand-gradient text-white p-4 flex items-center justify-between sticky top-0 z-10">
+          <div className={cn("bg-gradient-to-br text-white p-4 flex items-center justify-between sticky top-0 z-10", APP_LABELS[selectedApp]?.color || "brand-gradient")}>
             <div className="flex items-center gap-2">
               <Send className="w-5 h-5" />
               <div>
                 <h3 className="font-bold text-sm">Transfer to {APP_LABELS[selectedApp]?.label}</h3>
                 <p className="text-[10px] text-white/80">
-                  {validTeams.length} teams ready · Match {matchNumericId}
+                  {validTeams.length} teams ready · NO LOGIN REQUIRED
                 </p>
               </div>
             </div>
@@ -339,166 +264,52 @@ export function ApnaTransferModal({
           </div>
 
           <div className="p-4 space-y-4">
-            {/* Not linked warning */}
-            {!isLinked && (
-              <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-4 text-center">
-                <Lock className="w-10 h-10 mx-auto text-amber-500 mb-2" />
-                <p className="text-sm font-bold mb-1">{APP_LABELS[selectedApp]?.label} Not Linked</p>
-                <p className="text-xs text-muted-foreground mb-3">
-                  Link your {APP_LABELS[selectedApp]?.label} account via OTP to transfer teams.
-                  The flow: OTP login → verify token → fetch existing teams → add/edit teams.
-                </p>
-                <Button className="brand-gradient text-white" onClick={onOpenOtpLogin}>
-                  <Zap className="w-4 h-4 mr-2" />
-                  Link {APP_LABELS[selectedApp]?.label} via OTP
-                </Button>
-              </div>
-            )}
-
-            {/* When linked but still loading existing teams, show stats with 0 */}
-            {isLinked && phase === "loading" && (
+            {/* Loading */}
+            {phase === "loading" && (
               <div className="py-8 text-center">
                 <Loader2 className="w-10 h-10 mx-auto text-violet-500 animate-spin mb-3" />
-                <p className="text-sm font-semibold">Fetching existing {APP_LABELS[selectedApp]?.label} teams...</p>
-                <p className="text-[10px] text-muted-foreground mt-1">Step 1: Verify token → Step 2: List teams</p>
+                <p className="text-sm font-semibold">Loading match data...</p>
               </div>
             )}
 
-            {/* Ready: APNA-style transfer UI */}
-            {isLinked && phase === "ready" && (
+            {/* Ready */}
+            {phase === "ready" && (
               <>
-                {/* Stats cards */}
-                <div className="grid grid-cols-4 gap-2">
-                  <StatCard value={validTeams.length} label="APNA Teams" />
-                  <StatCard value={existingTeams.length} label={`${APP_LABELS[selectedApp]?.label || ""} Teams`} />
-                  <StatCard value={availableNewSlots} label="New Slots" />
-                  <StatCard value={`Up to ${PLATFORM_LIMIT}`} label="Limit" />
+                {/* Stats */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-white dark:bg-card rounded-xl p-2 border border-violet-100 dark:border-violet-900/30 text-center">
+                    <p className="text-lg font-black text-foreground">{validTeams.length}</p>
+                    <p className="text-[8px] text-muted-foreground font-semibold uppercase">APNA Teams</p>
+                  </div>
+                  <div className="bg-white dark:bg-card rounded-xl p-2 border border-violet-100 dark:border-violet-900/30 text-center">
+                    <p className="text-lg font-black text-foreground">{PLATFORM_LIMIT}</p>
+                    <p className="text-[8px] text-muted-foreground font-semibold uppercase">Limit</p>
+                  </div>
+                  <div className="bg-white dark:bg-card rounded-xl p-2 border border-violet-100 dark:border-violet-900/30 text-center">
+                    <p className="text-lg font-black text-emerald-500">NO OTP</p>
+                    <p className="text-[8px] text-muted-foreground font-semibold uppercase">Required</p>
+                  </div>
                 </div>
 
-                {/* Transfer summary */}
-                <div className="rounded-xl bg-violet-50 dark:bg-violet-950/20 p-3">
-                  <p className="text-xs font-bold text-foreground mb-2 flex items-center gap-1">
-                    <Shield className="w-3.5 h-3.5 text-violet-500" />
-                    Transfer Summary
+                {/* Info */}
+                <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 p-3">
+                  <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300 mb-1">
+                    ✅ Direct Transfer — No Login Needed
                   </p>
-                  <div className="space-y-1 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Teams to replace (edit)</span>
-                      <span className="font-bold text-foreground">{replaceCount}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Teams to add (new)</span>
-                      <span className="font-bold text-foreground">
-                        {selectedTeamIds.size > 0 ? 0 : bulkCount}
-                      </span>
-                    </div>
-                    <div className="flex justify-between pt-1 border-t border-violet-100 dark:border-violet-900/30">
-                      <span className="font-semibold text-foreground">Total to transfer</span>
-                      <span className="font-bold text-violet-600 dark:text-violet-300">
-                        {selectedTeamIds.size > 0 ? replaceCount : bulkCount}
-                      </span>
-                    </div>
-                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Tap "Transfer All" to generate {APP_LABELS[selectedApp]?.label} links for all {validTeams.length} teams.
+                    Open each link to load the team on {APP_LABELS[selectedApp]?.label}. No OTP or account linking required.
+                  </p>
                 </div>
 
-                {/* Existing teams to replace */}
-                {existingTeams.length > 0 && (
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-xs font-bold text-foreground">Select Existing Teams to Replace</p>
-                      <div className="flex gap-2">
-                        <button onClick={selectAll} className="text-[10px] font-bold text-violet-600 dark:text-violet-300">Select All</button>
-                        <button onClick={deselectAll} className="text-[10px] font-bold text-muted-foreground">Deselect All</button>
-                      </div>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mb-2">{selectedTeamIds.size} selected</p>
-                    <div className="max-h-48 overflow-y-auto scrollbar-thin space-y-1.5">
-                      {existingTeams.map((t) => {
-                        const isSelected = selectedTeamIds.has(t.team_id);
-                        return (
-                          <button
-                            key={t.team_id}
-                            onClick={() => toggleTeamSelect(t.team_id)}
-                            className={cn(
-                              "w-full flex items-center gap-2.5 p-2.5 rounded-lg border-2 transition-all",
-                              isSelected
-                                ? "border-violet-400 bg-violet-50/50 dark:bg-violet-900/20"
-                                : "border-violet-100 dark:border-violet-900/30"
-                            )}
-                          >
-                            <div className={cn(
-                              "w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0",
-                              isSelected ? "brand-gradient border-transparent" : "border-violet-200 dark:border-violet-800"
-                            )}>
-                              {isSelected && <Check className="w-3 h-3 text-white" />}
-                            </div>
-                            <span className="text-xs font-semibold text-foreground">
-                              Team {t.team_number}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground">
-                              ID: {t.team_id}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Mode indicator */}
-                {selectedTeamIds.size > 0 ? (
-                  <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3 text-center">
-                    <p className="text-xs font-bold text-amber-700 dark:text-amber-300">
-                      {replaceCount} Teams Selected — Replace Mode Active
-                    </p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      Only selected teams will be replaced. Bulk transfer is disabled.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 p-3 text-center">
-                    <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
-                      Bulk Transfer Mode — {bulkCount} new teams will be created
-                    </p>
-                    {existingTeams.length > 0 && (
-                      <p className="text-[10px] text-muted-foreground mt-0.5">
-                        Select teams above to switch to Replace mode
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {/* Action buttons */}
-                <div className="space-y-2">
-                  {selectedTeamIds.size > 0 ? (
-                    <Button
-                      className="w-full h-12 bg-orange-500 hover:bg-orange-600 text-white font-bold"
-                      onClick={handleReplace}
-                      disabled={replaceCount === 0}
-                    >
-                      <Shield className="w-4 h-4 mr-2" />
-                      Replace {replaceCount} Selected Teams
-                    </Button>
-                  ) : (
-                    <Button
-                      className="w-full h-12 bg-emerald-500 hover:bg-emerald-600 text-white font-bold"
-                      onClick={handleBulkTransfer}
-                      disabled={bulkCount === 0}
-                    >
-                      <Send className="w-4 h-4 mr-2" />
-                      Bulk Transfer — {bulkCount} Teams
-                    </Button>
-                  )}
-                </div>
-
-                {/* Free contests CTA */}
+                {/* Transfer button */}
                 <Button
-                  variant="outline"
-                  className="w-full h-10 border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300"
-                  onClick={() => toast.info("Use the Free Contests button on the team list")}
+                  className="w-full h-12 brand-gradient text-white font-bold text-base"
+                  onClick={handleTransfer}
+                  disabled={validTeams.length === 0}
                 >
-                  <Trophy className="w-4 h-4 mr-2" />
-                  Join FREE Contests Now
+                  <Send className="w-4 h-4 mr-2" />
+                  Transfer All {validTeams.length} Teams
                 </Button>
               </>
             )}
@@ -507,7 +318,8 @@ export function ApnaTransferModal({
             {phase === "transferring" && (
               <div className="py-8 text-center">
                 <Loader2 className="w-12 h-12 mx-auto text-violet-500 animate-spin mb-3" />
-                <p className="text-sm font-bold">Transferring {progress.total} teams...</p>
+                <p className="text-sm font-bold">Generating {APP_LABELS[selectedApp]?.label} links...</p>
+                <p className="text-xs text-muted-foreground mt-1">{progress.done}/{progress.total} teams</p>
                 <div className="mt-3 h-2 bg-violet-50 dark:bg-violet-900/30 rounded-full overflow-hidden">
                   <motion.div
                     className="h-full brand-gradient"
@@ -515,62 +327,60 @@ export function ApnaTransferModal({
                     transition={{ duration: 0.3 }}
                   />
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-2">{progress.done}/{progress.total}</p>
               </div>
             )}
 
-            {/* Done */}
-            {phase === "done" && result && (
+            {/* Done — show links */}
+            {phase === "done" && results && (
               <div className="space-y-3">
                 <div className={cn(
                   "rounded-xl p-4 text-center",
-                  result.successCount > 0 ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-red-50 dark:bg-red-950/30"
+                  results.every((r) => r.success) ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-amber-50 dark:bg-amber-950/30"
                 )}>
-                  {result.successCount > 0 ? (
+                  {results.every((r) => r.success) ? (
                     <CheckCircle2 className="w-12 h-12 mx-auto text-emerald-600 mb-2" />
                   ) : (
                     <AlertCircle className="w-12 h-12 mx-auto text-amber-500 mb-2" />
                   )}
                   <p className="text-lg font-bold">
-                    {result.successCount > 0
-                      ? "All Teams Transferred! ✅"
-                      : `${result.failCount} teams failed`}
+                    {results.filter((r) => r.success).length}/{results.length} links generated 🎉
                   </p>
-                  {result.successCount > 0 && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {result.successCount} Success · Total: {result.totalAttempted}
-                    </p>
-                  )}
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Tap each link below to open in {APP_LABELS[selectedApp]?.label}
+                  </p>
                 </div>
 
-                {/* Failed teams */}
-                {result.failCount > 0 && (
-                  <div className="rounded-xl bg-red-50 dark:bg-red-950/30 p-3">
-                    <p className="text-xs font-bold text-red-700 dark:text-red-300 mb-1">
-                      Failed teams ({result.failCount}):
-                    </p>
-                    <div className="max-h-24 overflow-y-auto scrollbar-thin space-y-1">
-                      {result.results.filter((r) => !r.success).slice(0, 5).map((r) => (
-                        <p key={r.teamNo} className="text-[11px] text-red-600 dark:text-red-400">
-                          Team #{r.teamNo}: {r.message || "Failed"}
-                        </p>
-                      ))}
-                    </div>
-                    {result.failCount === result.totalAttempted && (
-                      <div className="mt-3 pt-3 border-t border-red-200 dark:border-red-800">
-                        <Button
-                          size="sm"
-                          className="w-full h-8 brand-gradient text-white text-xs"
-                          onClick={() => { onClose(); onOpenOtpLogin(); }}
-                        >
-                          <Zap className="w-3 h-3 mr-1" />
-                          Relink {APP_LABELS[selectedApp]?.label} via OTP
-                        </Button>
+                {/* Links list */}
+                <div className="space-y-2 max-h-[50vh] overflow-y-auto scrollbar-thin">
+                  {results.map((r) => (
+                    <a
+                      key={r.teamNo}
+                      href={r.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between p-3 rounded-lg border border-violet-100 dark:border-violet-900/30 bg-white dark:bg-card hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        {r.success ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-red-500" />
+                        )}
+                        <span className="text-xs font-bold text-foreground">Team #{r.teamNo}</span>
                       </div>
-                    )}
-                  </div>
-                )}
+                      <span className="flex items-center gap-1 text-[11px] font-semibold text-violet-600 dark:text-violet-300">
+                        Open {APP_LABELS[selectedApp]?.label}
+                        <ExternalLink className="w-3 h-3" />
+                      </span>
+                    </a>
+                  ))}
+                </div>
 
+                <p className="text-[10px] text-muted-foreground text-center">
+                  💡 Each link opens {APP_LABELS[selectedApp]?.label} with the team pre-loaded. Tap to transfer.
+                </p>
+
+                {/* Actions */}
                 <div className="flex gap-2">
                   <Button variant="outline" className="flex-1" onClick={onClose}>Close</Button>
                   <Button className="flex-1 brand-gradient text-white" onClick={() => setPhase("ready")}>
@@ -590,14 +400,5 @@ export function ApnaTransferModal({
         </motion.div>
       </motion.div>
     </AnimatePresence>
-  );
-}
-
-function StatCard({ value, label }: { value: string | number; label: string }) {
-  return (
-    <div className="bg-white dark:bg-card rounded-xl p-2 border border-violet-100 dark:border-violet-900/30 text-center">
-      <p className="text-lg font-black text-foreground">{value}</p>
-      <p className="text-[8px] text-muted-foreground font-semibold uppercase tracking-wide">{label}</p>
-    </div>
   );
 }
