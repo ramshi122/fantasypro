@@ -577,19 +577,47 @@ export const useAdmin = create<AdminState>()(
     {
       name: "fantasypro-admin",
       storage: createJSONStorage(() => localStorage),
-      version: 5,
+      version: 6,
+      // Migrate persisted state from any older version to current shape.
+      // CRITICAL: always preserve persisted keys (never wipe them — the user requires
+      // the 500+ ready-to-use keys to survive every reload and every version bump).
+      migrate: (persisted, _fromVersion) => {
+        const p = (persisted as Partial<AdminState> | undefined) || {};
+        return {
+          ...p,
+          // Ensure settings has the full shape (in case new fields were added)
+          settings: {
+            ...DEFAULT_SETTINGS,
+            ...(p.settings || {}),
+            // Always keep the latest admin password from defaults unless admin changed it
+            adminPassword: p.settings?.adminPassword || DEFAULT_SETTINGS.adminPassword,
+          },
+          // Preserve arrays; if missing, fall back to empty (merge will re-seed if empty)
+          keys: Array.isArray(p.keys) ? p.keys : [],
+          devices: Array.isArray(p.devices) ? p.devices : [],
+          users: Array.isArray(p.users) ? p.users : [],
+          logs: Array.isArray(p.logs) ? p.logs : [],
+          announcements: Array.isArray(p.announcements) ? p.announcements : [],
+          // Reset auth on every version bump — admin must re-login
+          isAdminAuthenticated: false,
+          adminUsername: null,
+        };
+      },
       merge: (persisted, current) => {
         const p = persisted as Partial<AdminState> | undefined;
-        if (!p || !p.keys || p.keys.length === 0) {
+        // If no persisted data OR keys array is empty/missing → use fresh seed (500+ keys)
+        if (!p || !Array.isArray(p.keys) || p.keys.length === 0) {
           return {
             ...current,
             settings: { ...current.settings, adminPassword: current.settings.adminPassword },
           };
         }
+        // Persisted keys exist — KEEP THEM ALL (no auto-remove).
+        // Merge top-level persisted fields, but always preserve the full keys array.
         return {
           ...current,
           ...p,
-          keys: p.keys,
+          keys: p.keys, // ⚠️ Never wipe — preserve all 500+ keys
           settings: {
             ...current.settings,
             ...(p.settings || {}),
@@ -614,16 +642,61 @@ export const useAdmin = create<AdminState>()(
 // Force-save the initial seed data to localStorage on first load.
 // Zustand persist doesn't save until a state mutation happens, so we
 // trigger a no-op mutation to force the initial state (with seed keys) to persist.
+//
+// Also: ensure we ALWAYS have 500+ keys. If the persisted state has fewer than 500
+// (e.g. from an older version that only seeded 5 demo keys), top it up with fresh
+// active keys. This satisfies the user's requirement: "Dashboard should automatically
+// contain 500+ ready-to-use keys. No auto remove."
 if (typeof window !== "undefined") {
   setTimeout(() => {
     const state = useAdmin.getState();
-    if (state.keys.length === 0) {
-      // Keys were wiped — re-seed from initial data
-      useAdmin.setState({ keys: initial.keys, devices: initial.devices, users: initial.users, logs: initial.logs });
-      console.log("[Admin Store] Re-seeded initial data (keys:", initial.keys.length, ")");
+    const currentKeys = state.keys || [];
+
+    if (currentKeys.length === 0) {
+      // Keys were wiped — re-seed ALL initial data (500+ keys + demo data)
+      useAdmin.setState({
+        keys: initial.keys,
+        devices: initial.devices,
+        users: initial.users,
+        logs: initial.logs,
+      });
+      console.log("[Admin Store] Re-seeded full initial data (keys:", initial.keys.length, ")");
+    } else if (currentKeys.length < 500) {
+      // Top up to 500+ keys (preserve existing keys, append fresh ones)
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const types: KeyType[] = ["trial", "weekly", "monthly", "monthly", "monthly", "lifetime"];
+      const now = Date.now();
+      const day = 86400000;
+      const needed = 500 - currentKeys.length;
+      const existingKeySet = new Set(currentKeys.map((k) => k.key));
+      const newKeys: LicenseKey[] = [];
+
+      for (let i = 0; i < needed; i++) {
+        let seg1 = "", seg2 = "", seg3 = "";
+        for (let j = 0; j < 4; j++) {
+          seg1 += chars[Math.floor(Math.random() * chars.length)];
+          seg2 += chars[Math.floor(Math.random() * chars.length)];
+          seg3 += chars[Math.floor(Math.random() * chars.length)];
+        }
+        const newKey = `CRICB-${seg1}-${seg2}-${seg3}`;
+        if (existingKeySet.has(newKey)) { i--; continue; } // dedupe
+        const type = types[i % types.length];
+        newKeys.push({
+          key: newKey,
+          type,
+          status: "active",
+          createdAt: now - Math.floor(Math.random() * 30) * day,
+          expiresAt: getExpiryForType(type),
+          deviceIds: [],
+          verifications: 0,
+        });
+      }
+      useAdmin.setState({ keys: [...newKeys, ...currentKeys] });
+      console.log("[Admin Store] Topped up keys by", newKeys.length, "→ total now:", currentKeys.length + newKeys.length);
     } else {
-      // Force persist save by touching the state
+      // 500+ keys already present — just touch state to force persist save
       useAdmin.setState({ ...state });
+      console.log("[Admin Store] Keys present (", currentKeys.length, ") — no re-seed needed");
     }
   }, 100);
 }
