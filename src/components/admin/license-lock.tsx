@@ -41,14 +41,17 @@ export function LicenseLockOverlay() {
 
   async function handleVerify() {
     if (!keyInput.trim()) {
-      toast.error("Enter your license key");
+      toast.error("Please enter your license key");
       return;
     }
     const result = await activate(keyInput);
     if (result?.success) {
-      toast.success(result.message);
+      toast.success(result.message || "✅ License Key Verified Successfully");
     } else {
-      toast.error(result?.message || "Verification failed");
+      // Show the EXACT error reason from verifyLicense
+      const errorMsg = result?.message || "Verification failed";
+      console.log("[License Lock] Verification failed:", errorMsg);
+      toast.error(errorMsg);
     }
   }
 

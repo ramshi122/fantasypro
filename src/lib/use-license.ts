@@ -43,19 +43,25 @@ export function useLicense() {
 
   const activate = useCallback(async (key: string): Promise<{ success: boolean; message: string }> => {
     setVerifying(true);
+    // Clean the key: trim spaces, convert to uppercase
+    const cleanKey = key.trim().toUpperCase();
+    console.log("[useLicense] Activating key:", cleanKey);
+
     return new Promise((resolve) => {
       setTimeout(() => {
         const deviceId = getDeviceId();
-        const result = admin.verifyLicense(key.trim().toUpperCase(), deviceId);
+        console.log("[useLicense] Device ID:", deviceId);
+        const result = admin.verifyLicense(cleanKey, deviceId);
+        console.log("[useLicense] Verify result:", JSON.stringify(result));
         setVerifying(false);
         if (result.valid) {
-          setLicenseVerified(key.trim().toUpperCase());
-          setLicenseState({ verified: true, key: key.trim().toUpperCase(), deviceId });
+          setLicenseVerified(cleanKey);
+          setLicenseState({ verified: true, key: cleanKey, deviceId });
           setShowActivate(false);
           setKeyInput("");
-          resolve({ success: true, message: "License activated!" });
+          resolve({ success: true, message: result.message || "✅ License Key Verified Successfully" });
         } else {
-          resolve({ success: false, message: result.message });
+          resolve({ success: false, message: result.message || "Verification failed — unknown reason" });
         }
       }, 800);
     });

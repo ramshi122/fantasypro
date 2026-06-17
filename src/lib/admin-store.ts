@@ -346,32 +346,79 @@ export const useAdmin = create<AdminState>()(
       },
 
       verifyLicense: (key, deviceId) => {
-        const k = get().keys.find((x) => x.key === key);
-        if (!k) return { valid: false, message: "Invalid license key" };
-        if (k.status === "suspended") return { valid: false, message: "License suspended" };
-        if (k.status === "expired" || (k.expiresAt && k.expiresAt < Date.now())) {
-          return { valid: false, message: "License expired" };
+        // Step 1: Clean the key — trim spaces, convert to uppercase
+        const cleanKey = key.trim().toUpperCase();
+        console.log("[License Verify] Entered key:", cleanKey);
+        console.log("[License Verify] Device ID:", deviceId);
+
+        // Step 2: Validate format (CRICB-XXXX-XXXX-XXXX)
+        const keyPattern = /^[A-Z]+-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+        if (!keyPattern.test(cleanKey)) {
+          console.log("[License Verify] FAIL: Invalid format. Expected PREFIX-XXXX-XXXX-XXXX");
+          return { valid: false, message: "Invalid key format. Expected format: CRICB-XXXX-XXXX-XXXX" };
         }
-        // Allow binding up to 2 devices. If already bound to 2+ and this device isn't one of them, reject.
+
+        // Step 3: Look up key in database
+        const allKeys = get().keys;
+        console.log("[License Verify] Total keys in database:", allKeys.length);
+        const k = allKeys.find((x) => x.key.toUpperCase() === cleanKey);
+
+        if (!k) {
+          console.log("[License Verify] FAIL: Key not found in database");
+          console.log("[License Verify] Available keys:", allKeys.map(x => x.key).slice(0, 10).join(", "), "...");
+          return { valid: false, message: "Key not found — this key does not exist in the database" };
+        }
+
+        console.log("[License Verify] Key found:", k.key, "| Status:", k.status, "| Type:", k.type);
+
+        // Step 4: Check status
+        if (k.status === "suspended") {
+          console.log("[License Verify] FAIL: Key is suspended");
+          return { valid: false, message: "Key suspended — contact admin to reactivate" };
+        }
+
+        if (k.status === "expired") {
+          console.log("[License Verify] FAIL: Key status is expired");
+          return { valid: false, message: "Key expired — status marked as expired" };
+        }
+
+        // Step 5: Check expiry date
+        if (k.expiresAt && k.expiresAt < Date.now()) {
+          const expiredDate = new Date(k.expiresAt).toLocaleDateString();
+          console.log("[License Verify] FAIL: Key expired on", expiredDate);
+          return { valid: false, message: `Key expired on ${expiredDate} — generate a new key` };
+        }
+
+        console.log("[License Verify] Expiry check passed. ExpiresAt:", k.expiresAt ? new Date(k.expiresAt).toLocaleDateString() : "Lifetime");
+
+        // Step 6: Check device binding (max 2 devices per key)
         if (k.deviceIds.length >= 2 && !k.deviceIds.includes(deviceId)) {
-          return { valid: false, message: "Device limit reached (max 2). Contact admin to reset." };
+          console.log("[License Verify] FAIL: Device limit reached. Bound devices:", k.deviceIds.length);
+          return { valid: false, message: `Device limit reached (max 2). Bound: ${k.deviceIds.length}. Contact admin to reset.` };
         }
-        // Bind device if not already
+
+        console.log("[License Verify] Device check passed. Bound devices:", k.deviceIds.length, "| This device already bound:", k.deviceIds.includes(deviceId));
+
+        // Step 7: All checks passed — bind device and update status
         if (!k.deviceIds.includes(deviceId)) {
           set((s) => ({
             keys: s.keys.map((x) =>
-              x.key === key ? { ...x, deviceIds: [...x.deviceIds, deviceId], lastVerified: Date.now(), verifications: x.verifications + 1, status: "used" } : x
+              x.key === k.key ? { ...x, deviceIds: [...x.deviceIds, deviceId], lastVerified: Date.now(), verifications: x.verifications + 1, status: "used" as KeyStatus } : x
             ),
           }));
+          console.log("[License Verify] Device bound successfully. New device count:", k.deviceIds.length + 1);
         } else {
           set((s) => ({
             keys: s.keys.map((x) =>
-              x.key === key ? { ...x, lastVerified: Date.now(), verifications: x.verifications + 1 } : x
+              x.key === k.key ? { ...x, lastVerified: Date.now(), verifications: x.verifications + 1 } : x
             ),
           }));
+          console.log("[License Verify] Device already bound. Verification count:", k.verifications + 1);
         }
-        get().addLog("key_verification", `Key ${key} verified on ${deviceId}`);
-        return { valid: true, message: "License verified" };
+
+        get().addLog("key_verification", `Key ${cleanKey} verified on ${deviceId} | Type: ${k.type} | Status: ${k.status}`);
+        console.log("[License Verify] ✅ SUCCESS: License verified");
+        return { valid: true, message: "✅ License Key Verified Successfully" };
       },
 
       unbindDevice: (deviceId) => {
