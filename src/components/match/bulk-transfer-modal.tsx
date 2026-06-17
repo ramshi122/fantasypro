@@ -100,18 +100,10 @@ export function BulkTransferModal({
       const chosenApp = defaultApp || (apps.find((a) => supported.includes(a)) as FantasyApp) || (supported[0] as FantasyApp) || "dream11";
       setSelectedApp(chosenApp);
 
-      // Mode selection:
-      // - If user has the chosen app LINKED → use "linked" mode (real API transfer with replace support)
-      // - If Dream11 but NOT linked → use "direct" mode (link generation, no login)
-      // - If My11Circle/other but NOT linked → use "linked" (will prompt OTP)
-      const isChosenLinked = apps.includes(chosenApp);
-      if (isChosenLinked) {
-        setMode("linked");
-      } else if (chosenApp === "dream11") {
-        setMode("direct");
-      } else {
-        setMode("linked");
-      }
+      // Mode selection — ALL apps use "linked" mode (real API transfer)
+      // The real flow: auth/verify → list-of-teams → add-team (new) or edit-team (replace)
+      // This requires OTP login to get the auth token, which is then sent in the body (no Bearer)
+      setMode("linked");
 
       // Build player ID map for ALL apps (not just supported ones)
       // so Dream11 transfer works even on My11Circle-only matches
@@ -298,10 +290,10 @@ export function BulkTransferModal({
   }
 
   // App selector for linked mode
-  // For linked mode: allow if the SELECTED app is linked (not just supported apps)
+  // For linked mode: allow if the SELECTED app is linked
   const canUseLinked = linkedApps.includes(selectedApp);
-  // Direct link works for Dream11 (no login needed)
-  const canUseDirect = selectedApp === "dream11";
+  // Direct mode disabled — all transfers use authenticated API (add-team/edit-team)
+  const canUseDirect = false;
 
   return (
     <AnimatePresence>
@@ -383,37 +375,8 @@ export function BulkTransferModal({
                   </div>
                 )}
 
-                {/* Mode selection */}
+                {/* Mode selection — only authenticated transfer (linked mode) */}
                 <div className="space-y-2">
-                  <button
-                    onClick={() => setMode("direct")}
-                    disabled={!canUseDirect}
-                    className={cn(
-                      "w-full p-3 rounded-xl border-2 transition-all text-left flex items-start gap-3",
-                      mode === "direct"
-                        ? "border-violet-400 bg-violet-50/50 dark:bg-violet-900/20"
-                        : "border-violet-100 dark:border-violet-900/30",
-                      !canUseDirect && "opacity-50 cursor-not-allowed"
-                    )}
-                  >
-                    <div className="w-9 h-9 rounded-lg brand-gradient flex items-center justify-center flex-shrink-0">
-                      <Link2 className="w-4 h-4 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-foreground flex items-center gap-1.5">
-                        Direct Link Transfer
-                        <span className="text-[9px] bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 px-1.5 py-0.5 rounded-full font-bold">
-                          NO LOGIN
-                        </span>
-                      </p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">
-                        {canUseDirect
-                          ? "Generate Dream11 transfer links for all teams. Open each link to load the team — no OTP needed."
-                          : "Not available — this match doesn't support Dream11 direct transfer."}
-                      </p>
-                    </div>
-                  </button>
-
                   <button
                     onClick={() => {
                       if (!linkedApps.includes(selectedApp)) {
@@ -519,21 +482,12 @@ export function BulkTransferModal({
                     disabled={mode === "direct" && !canUseDirect}
                     className="w-full h-12 brand-gradient text-white font-bold disabled:opacity-50"
                   >
-                    {mode === "direct" ? (
-                      <>
-                        <Link2 className="w-4 h-4 mr-2" />
-                        {replaceExisting
-                          ? `Generate ${validTeams.length} Replace Links`
-                          : `Generate ${validTeams.length} Transfer Links`}
-                      </>
-                    ) : (
-                      <>
-                        <Send className="w-4 h-4 mr-2" />
-                        {replaceExisting
-                          ? `Replace ${validTeams.length} Teams on ${APP_LABELS[selectedApp]?.label || selectedApp}`
-                          : `Transfer ${validTeams.length} Teams to ${APP_LABELS[selectedApp]?.label || selectedApp}`}
-                      </>
-                    )}
+                    <>
+                      <Send className="w-4 h-4 mr-2" />
+                      {replaceExisting
+                        ? `Replace ${validTeams.length} Teams on ${APP_LABELS[selectedApp]?.label || selectedApp}`
+                        : `Transfer ${validTeams.length} Teams to ${APP_LABELS[selectedApp]?.label || selectedApp}`}
+                    </>
                   </Button>
                 )}
 

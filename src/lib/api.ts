@@ -945,9 +945,9 @@ export async function generateDirectTransferLink(params: {
   playerIds: string[]; // dream11 player IDs
   captainId: string;
   viceCaptainId: string;
-  matchDbId?: string; // MongoDB _id (fallback)
+  matchDbId?: string; // MongoDB _id (for classic endpoint)
 }): Promise<DirectTransferResult> {
-  // Try the backend endpoint first (with MongoDB _id)
+  // Try the classic backend endpoint first (link generation — no auth needed)
   try {
     const tgMatchId = params.matchDbId || params.matchId;
     const res = await rawFetch<ApiResponse>(`/api/classic/dream11/addteam`, {
@@ -973,43 +973,13 @@ export async function generateDirectTransferLink(params: {
       }
     }
   } catch (err) {
-    // Fall through to fallback
+    // Fall through
   }
 
-  // Fallback: try with numeric match ID
-  try {
-    const res = await rawFetch<ApiResponse>(`/api/classic/dream11/addteam`, {
-      method: "POST",
-      body: JSON.stringify({
-        tgMatchId: params.matchId,
-        playerData: params.playerIds,
-        captainData: params.captainId,
-        vicecaptainData: params.viceCaptainId,
-        generateLinkFlag: "general",
-      }),
-    });
-    if (res.status === "success" && res.data) {
-      let link: string | undefined;
-      if (typeof res.data === "string") {
-        const dec = decrypt<{ link?: string }>(res.data);
-        link = dec?.link;
-      } else if (typeof res.data === "object") {
-        link = (res.data as { link?: string }).link;
-      }
-      if (link) {
-        return { status: "success", link };
-      }
-    }
-  } catch (err) {
-    // Fall through to Dream11 URL fallback
-  }
-
-  // Last resort: generate a Dream11 team URL with player IDs encoded
-  // Dream11 uses URL params for team creation: https://dream11.com/team/create?matchId=XXX&players=1,2,3&captain=1&vicecaptain=2
-  const dream11Url = `https://dream11.com/team/create?matchId=${params.matchId}&players=${params.playerIds.join(",")}&captain=${params.captainId}&vicecaptain=${params.viceCaptainId}`;
+  // If classic endpoint fails, return failure — don't generate fake links
   return {
-    status: "success",
-    link: dream11Url,
+    status: "fail",
+    message: "Dream11 direct transfer not available for this match. Use OTP login + authenticated transfer instead.",
   };
 }
 
