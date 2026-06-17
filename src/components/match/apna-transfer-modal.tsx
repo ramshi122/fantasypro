@@ -21,7 +21,6 @@ import {
   getLinkedAccount,
   getMatchDetail,
   listFantasyTeams,
-  verifyFantasyAuth,
   type BulkTransferItem,
   type BulkTransferResult,
   type FantasyApp,
@@ -209,26 +208,7 @@ export function ApnaTransferModal({
     setProgress({ done: 0, total: teamsToReplace });
 
     try {
-      // Step 1: Verify auth token
-      const verifyRes = await verifyFantasyAuth({
-        fantasyApp: selectedApp,
-        authToken: account.token,
-        matchId: matchNumericId,
-      });
-      if (!verifyRes.validToken) {
-        toast.error("Session expired. Relink via OTP.");
-        setResult({
-          totalAttempted: teamsToReplace,
-          successCount: 0,
-          failCount: teamsToReplace,
-          results: items.slice(0, teamsToReplace).map((it) => ({ teamNo: it.teamNo, success: false, message: "Auth token expired" })),
-          transferLinks: [],
-        });
-        setPhase("done");
-        return;
-      }
-
-      // Step 2: Replace selected teams (edit-team)
+      // Directly call edit-team (no pre-verify — the add-team/edit-team call itself will fail if token is bad)
       const replaceItems = items.slice(0, teamsToReplace);
       const replaceIds = selectedIds.slice(0, teamsToReplace);
 
@@ -287,26 +267,7 @@ export function ApnaTransferModal({
     setProgress({ done: 0, total: teamsToAdd });
 
     try {
-      // Step 1: Verify auth token
-      const verifyRes = await verifyFantasyAuth({
-        fantasyApp: selectedApp,
-        authToken: account.token,
-        matchId: matchNumericId,
-      });
-      if (!verifyRes.validToken) {
-        toast.error("Session expired. Relink via OTP.");
-        setResult({
-          totalAttempted: teamsToAdd,
-          successCount: 0,
-          failCount: teamsToAdd,
-          results: items.slice(0, teamsToAdd).map((it) => ({ teamNo: it.teamNo, success: false, message: "Auth token expired" })),
-          transferLinks: [],
-        });
-        setPhase("done");
-        return;
-      }
-
-      // Step 2: Add new teams (add-team)
+      // Directly call add-team (no pre-verify — the add-team call itself will fail if token is bad)
       const newItems = items.slice(0, teamsToAdd);
       const res = await bulkTransferToLinkedAccount(
         newItems,
