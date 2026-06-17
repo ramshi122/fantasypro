@@ -12,7 +12,6 @@ import {
   ChevronRight,
   Copy,
   Delete,
-  DeviceMobile,
   Eye,
   EyeOff,
   Key,
@@ -377,6 +376,22 @@ function LicensesTab() {
           >
             <Key className="w-3 h-3 mr-1" />
             Generate
+          </Button>
+          <Button
+            size="sm"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs"
+            onClick={() => {
+              const fixed = admin.validateAllKeys();
+              if (fixed > 0) {
+                toast.success(`✅ Validated all keys — ${fixed} key(s) fixed (expired/suspended re-activated, expiry extended)`);
+              } else {
+                toast.success(`✅ All ${admin.keys.length} keys are already valid`);
+              }
+            }}
+            title="Re-activate any expired/suspended keys and extend past-expiry dates"
+          >
+            <CheckCircle2 className="w-3 h-3 mr-1" />
+            Validate All
           </Button>
         </div>
       </div>

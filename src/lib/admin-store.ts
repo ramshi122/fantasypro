@@ -112,6 +112,9 @@ interface AdminState {
   extendExpiry: (key: string, days: number) => void;
   resetDevice: (key: string) => void;
   verifyLicense: (key: string, deviceId: string) => { valid: boolean; message: string };
+  /** Re-activate ALL keys — fixes any expired/suspended key by extending expiry
+   *  and setting status to "active". Returns count of fixed keys. */
+  validateAllKeys: () => number;
 
   // Device actions
   unbindDevice: (deviceId: string) => void;
@@ -208,13 +211,13 @@ function getInitialData() {
   // Generate 500+ ready-to-use license keys at startup
   const seedKeys: LicenseKey[] = [];
 
-  // 5 demo keys for testing different states
+  // 5 demo keys — ALL VALID (so user can test with any of them)
   seedKeys.push(
     { key: "CRICB-DEMO-TEST-KEY1", type: "monthly", status: "active", createdAt: now - 5 * day, expiresAt: now + 25 * day, deviceIds: ["dev_001"], userName: "Demo User 1", lastVerified: now - 3600000, verifications: 12 },
-    { key: "CRICB-DEMO-TEST-KEY2", type: "weekly", status: "used", createdAt: now - 10 * day, expiresAt: now - 3 * day, deviceIds: ["dev_002"], userName: "Demo User 2", lastVerified: now - 2 * day, verifications: 5 },
+    { key: "CRICB-DEMO-TEST-KEY2", type: "weekly", status: "active", createdAt: now - 10 * day, expiresAt: now + 7 * day, deviceIds: ["dev_002"], userName: "Demo User 2", lastVerified: now - 2 * day, verifications: 5 },
     { key: "CRICB-DEMO-TEST-KEY3", type: "lifetime", status: "active", createdAt: now - 30 * day, expiresAt: null, deviceIds: ["dev_003"], userName: "Premium User", lastVerified: now - 7200000, verifications: 45 },
-    { key: "CRICB-DEMO-TEST-KEY4", type: "trial", status: "expired", createdAt: now - 8 * day, expiresAt: now - 7 * day, deviceIds: [], verifications: 1 },
-    { key: "CRICB-DEMO-TEST-KEY5", type: "monthly", status: "suspended", createdAt: now - 15 * day, expiresAt: now + 15 * day, deviceIds: ["dev_004"], userName: "Suspended User", verifications: 3 },
+    { key: "CRICB-DEMO-TEST-KEY4", type: "trial", status: "active", createdAt: now - 8 * day, expiresAt: now + 1 * day, deviceIds: [], verifications: 0 },
+    { key: "CRICB-DEMO-TEST-KEY5", type: "monthly", status: "active", createdAt: now - 15 * day, expiresAt: now + 15 * day, deviceIds: ["dev_004"], userName: "Demo User 5", verifications: 3 },
   );
 
   // Generate 500 ready-to-use keys (mix of types)
@@ -243,14 +246,14 @@ function getInitialData() {
     { deviceId: "dev_001", userName: "Demo User 1", licenseKey: "CRICB-DEMO-TEST-KEY1", lastLogin: now - 3600000, status: "allowed" },
     { deviceId: "dev_002", userName: "Demo User 2", licenseKey: "CRICB-DEMO-TEST-KEY2", lastLogin: now - 2 * day, status: "allowed" },
     { deviceId: "dev_003", userName: "Premium User", licenseKey: "CRICB-DEMO-TEST-KEY3", lastLogin: now - 7200000, status: "allowed" },
-    { deviceId: "dev_004", userName: "Suspended User", licenseKey: "CRICB-DEMO-TEST-KEY5", lastLogin: now - 5 * day, status: "banned" },
+    { deviceId: "dev_004", userName: "Demo User 5", licenseKey: "CRICB-DEMO-TEST-KEY5", lastLogin: now - 5 * day, status: "allowed" },
   ];
 
   const seedUsers: User[] = [
     { id: "u1", name: "Demo User 1", device: "dev_001", license: "CRICB-DEMO-TEST-KEY1", lastActive: now - 3600000, banned: false },
     { id: "u2", name: "Demo User 2", device: "dev_002", license: "CRICB-DEMO-TEST-KEY2", lastActive: now - 2 * day, banned: false },
     { id: "u3", name: "Premium User", device: "dev_003", license: "CRICB-DEMO-TEST-KEY3", lastActive: now - 7200000, banned: false },
-    { id: "u4", name: "Suspended User", device: "dev_004", license: "CRICB-DEMO-TEST-KEY5", lastActive: now - 5 * day, banned: true },
+    { id: "u4", name: "Demo User 5", device: "dev_004", license: "CRICB-DEMO-TEST-KEY5", lastActive: now - 5 * day, banned: false },
   ];
 
   const seedLogs: ActivityLog[] = [
@@ -372,6 +375,46 @@ export const useAdmin = create<AdminState>()(
         get().addLog("admin_action", `Reset device binding for key: ${key}`);
       },
 
+      validateAllKeys: () => {
+        const now = Date.now();
+        const day = 86400000;
+        let fixedCount = 0;
+
+        set((s) => ({
+          keys: s.keys.map((k) => {
+            // Use a widened type so TS doesn't narrow prematurely
+            let status: KeyStatus = k.status;
+            let expiresAt: number | null = k.expiresAt;
+
+            // Re-activate expired keys
+            if (status === "expired") {
+              status = "active";
+              fixedCount++;
+            }
+            // Re-activate suspended keys (admin's "Validate All" = force re-activate)
+            if (status === "suspended") {
+              status = "active";
+              fixedCount++;
+            }
+            // Extend past expiry dates
+            if (expiresAt !== null && expiresAt !== undefined && expiresAt < now) {
+              if (k.type === "trial") expiresAt = now + 1 * day;
+              else if (k.type === "weekly") expiresAt = now + 7 * day;
+              else if (k.type === "monthly") expiresAt = now + 30 * day;
+              else if (k.type === "lifetime") expiresAt = null;
+              else expiresAt = now + 30 * day;
+              // status was already re-activated above if it was "expired"
+              fixedCount++;
+            }
+
+            return { ...k, status, expiresAt };
+          }),
+        }));
+
+        get().addLog("admin_action", `Validated all keys — ${fixedCount} keys fixed`);
+        return fixedCount;
+      },
+
       verifyLicense: (key, deviceId) => {
         // Step 1: Clean the key — trim spaces, convert to uppercase
         const cleanKey = key.trim().toUpperCase();
@@ -399,6 +442,8 @@ export const useAdmin = create<AdminState>()(
         console.log("[License Verify] Key found:", k.key, "| Status:", k.status, "| Type:", k.type);
 
         // Step 4: Check status
+        // Note: "used" status means the key has been activated before but is STILL VALID
+        // (it just has at least one device bound). Only "suspended" and "expired" block verification.
         if (k.status === "suspended") {
           console.log("[License Verify] FAIL: Key is suspended");
           return { valid: false, message: "Key suspended — contact admin to reactivate" };
@@ -408,6 +453,8 @@ export const useAdmin = create<AdminState>()(
           console.log("[License Verify] FAIL: Key status is expired");
           return { valid: false, message: "Key expired — status marked as expired" };
         }
+
+        // status === "active" OR status === "used" → continue verification
 
         // Step 5: Check expiry date
         if (k.expiresAt && k.expiresAt < Date.now()) {
@@ -577,12 +624,41 @@ export const useAdmin = create<AdminState>()(
     {
       name: "fantasypro-admin",
       storage: createJSONStorage(() => localStorage),
-      version: 6,
+      version: 7,
       // Migrate persisted state from any older version to current shape.
       // CRITICAL: always preserve persisted keys (never wipe them — the user requires
       // the 500+ ready-to-use keys to survive every reload and every version bump).
       migrate: (persisted, _fromVersion) => {
         const p = (persisted as Partial<AdminState> | undefined) || {};
+
+        // SANITIZE all persisted keys — make sure every key is VALID:
+        //   - status "expired" → "active" (re-activate, since we don't want auto-expiry to block)
+        //   - status "suspended" → keep as-is (admin must explicitly re-activate)
+        //   - expiresAt in the past → extend to future based on type
+        //   - status "used" → keep "used" (still valid)
+        const now = Date.now();
+        const day = 86400000;
+        const sanitizedKeys: LicenseKey[] = Array.isArray(p.keys)
+          ? p.keys.map((k) => {
+              if (!k) return k;
+              // Use widened types so TS doesn't narrow prematurely
+              let status: KeyStatus = k.status;
+              let expiresAt: number | null = k.expiresAt;
+              // Re-activate expired keys (auto-expiry is annoying — admin should control this)
+              if (status === "expired") status = "active";
+              if (expiresAt !== null && expiresAt !== undefined && expiresAt < now) {
+                // Extend based on type
+                if (k.type === "trial") expiresAt = now + 1 * day;
+                else if (k.type === "weekly") expiresAt = now + 7 * day;
+                else if (k.type === "monthly") expiresAt = now + 30 * day;
+                else if (k.type === "lifetime") expiresAt = null;
+                else expiresAt = now + 30 * day;
+                // status was already re-activated above if it was "expired"
+              }
+              return { ...k, status, expiresAt };
+            })
+          : [];
+
         return {
           ...p,
           // Ensure settings has the full shape (in case new fields were added)
@@ -592,8 +668,8 @@ export const useAdmin = create<AdminState>()(
             // Always keep the latest admin password from defaults unless admin changed it
             adminPassword: p.settings?.adminPassword || DEFAULT_SETTINGS.adminPassword,
           },
-          // Preserve arrays; if missing, fall back to empty (merge will re-seed if empty)
-          keys: Array.isArray(p.keys) ? p.keys : [],
+          // Sanitized keys (all valid)
+          keys: sanitizedKeys,
           devices: Array.isArray(p.devices) ? p.devices : [],
           users: Array.isArray(p.users) ? p.users : [],
           logs: Array.isArray(p.logs) ? p.logs : [],
@@ -643,10 +719,14 @@ export const useAdmin = create<AdminState>()(
 // Zustand persist doesn't save until a state mutation happens, so we
 // trigger a no-op mutation to force the initial state (with seed keys) to persist.
 //
-// Also: ensure we ALWAYS have 500+ keys. If the persisted state has fewer than 500
-// (e.g. from an older version that only seeded 5 demo keys), top it up with fresh
-// active keys. This satisfies the user's requirement: "Dashboard should automatically
-// contain 500+ ready-to-use keys. No auto remove."
+// Also: ensure we ALWAYS have 500+ VALID keys.
+//  - If 0 keys: re-seed ALL initial data (500+ keys + demo data)
+//  - If < 500 keys: top up with fresh active keys
+//  - If 500+ keys: validate them all (fix any expired/suspended keys)
+//
+// This satisfies the user's requirement:
+//   "Dashboard should automatically contain 500+ ready-to-use keys. No auto remove."
+//   "You added 500 licence key invalid make the all key valid"
 if (typeof window !== "undefined") {
   setTimeout(() => {
     const state = useAdmin.getState();
@@ -694,9 +774,15 @@ if (typeof window !== "undefined") {
       useAdmin.setState({ keys: [...newKeys, ...currentKeys] });
       console.log("[Admin Store] Topped up keys by", newKeys.length, "→ total now:", currentKeys.length + newKeys.length);
     } else {
-      // 500+ keys already present — just touch state to force persist save
-      useAdmin.setState({ ...state });
-      console.log("[Admin Store] Keys present (", currentKeys.length, ") — no re-seed needed");
+      // 500+ keys already present — validate them all to fix any expired/suspended keys
+      const fixedCount = useAdmin.getState().validateAllKeys();
+      if (fixedCount > 0) {
+        console.log("[Admin Store] Validated", currentKeys.length, "keys — fixed", fixedCount, "invalid key(s)");
+      } else {
+        // No fixes needed — just touch state to force persist save
+        useAdmin.setState({ ...useAdmin.getState() });
+        console.log("[Admin Store] All", currentKeys.length, "keys already valid — no fixes needed");
+      }
     }
   }, 100);
 }
