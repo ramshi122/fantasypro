@@ -503,17 +503,21 @@ export const useAdmin = create<AdminState>()(
     {
       name: "fantasypro-admin",
       storage: createJSONStorage(() => localStorage),
-      version: 2, // bump to force password update from admin123 → 8950888988
+      version: 3, // bump to fix seed data being wiped
       merge: (persisted, current) => {
         const p = persisted as Partial<AdminState> | undefined;
-        // Always use the latest default password from current settings
+        if (!p || !p.keys || p.keys.length === 0) {
+          // No persisted data or empty keys — use current (with seed data)
+          return current;
+        }
+        // Merge persisted data but always use latest default password
         return {
           ...current,
           ...p,
           settings: {
             ...current.settings,
-            ...(p?.settings || {}),
-            adminPassword: current.settings.adminPassword, // always use latest default
+            ...(p.settings || {}),
+            adminPassword: current.settings.adminPassword,
           },
         };
       },
