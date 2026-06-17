@@ -32,7 +32,6 @@ import {
   editTeam,
   getLocalTeams,
   getMatchDetail,
-  listFantasyTeams,
   saveFantasyToken,
   getFantasyToken,
   type MatchInfo,
@@ -92,15 +91,8 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
     setStep("loading");
     setError(null);
     try {
-      // 1. Fetch match detail (real players) in parallel with team list
-      const [matchDetail, teams] = await Promise.all([
-        getMatchDetail(matchId).catch(() => null),
-        listFantasyTeams({
-          fantasyApp: "dream11",
-          authToken: token || "guest",
-          matchId,
-        }).catch(() => [] as TeamRow[]),
-      ]);
+      // 1. Fetch match detail (real players)
+      const matchDetail = await getMatchDetail(matchId).catch(() => null);
 
       // Extract players from match detail
       let allPlayers: MatchPlayer[] = [];
@@ -137,16 +129,9 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         setPlayingPlayerIds(new Set());
       }
 
-      // Merge: localStorage teams take priority (they're the ones the user created)
+      // localStorage teams = the user's APNA teams (generated locally)
       const localTeams = getLocalTeams(matchId);
-      const merged = [...localTeams];
-      // Add any backend teams not already in local
-      for (const t of teams) {
-        if (!merged.find((m) => m.teamId === t.teamId)) {
-          merged.push(t);
-        }
-      }
-      setExistingTeams(merged);
+      setExistingTeams(localTeams);
       setStep("ready");
     } catch (err: any) {
       setError(err?.message || "Failed to load match data.");

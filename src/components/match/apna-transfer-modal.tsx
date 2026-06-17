@@ -69,7 +69,7 @@ export function ApnaTransferModal({
   const [isLinked, setIsLinked] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const validTeams = teams.filter((t) => (t.players?.length || 0) === 11);
+  const validTeams = teams.filter((t) => (t.players?.length || 0) >= 1);
   const availableNewSlots = Math.max(0, PLATFORM_LIMIT - existingTeams.length);
 
   // Load match detail + existing teams when modal opens
