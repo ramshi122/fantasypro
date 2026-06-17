@@ -550,17 +550,19 @@ export const useAdmin = create<AdminState>()(
     {
       name: "fantasypro-admin",
       storage: createJSONStorage(() => localStorage),
-      version: 3, // bump to fix seed data being wiped
+      version: 4,
       merge: (persisted, current) => {
         const p = persisted as Partial<AdminState> | undefined;
         if (!p || !p.keys || p.keys.length === 0) {
-          // No persisted data or empty keys — use current (with seed data)
-          return current;
+          return {
+            ...current,
+            settings: { ...current.settings, adminPassword: current.settings.adminPassword },
+          };
         }
-        // Merge persisted data but always use latest default password
         return {
           ...current,
           ...p,
+          keys: p.keys,
           settings: {
             ...current.settings,
             ...(p.settings || {}),
@@ -568,9 +570,36 @@ export const useAdmin = create<AdminState>()(
           },
         };
       },
+      partialize: (s) => ({
+        keys: s.keys,
+        devices: s.devices,
+        users: s.users,
+        logs: s.logs,
+        announcements: s.announcements,
+        settings: s.settings,
+        isAdminAuthenticated: s.isAdminAuthenticated,
+        adminUsername: s.adminUsername,
+      }),
     }
   )
 );
+
+// Force-save the initial seed data to localStorage on first load.
+// Zustand persist doesn't save until a state mutation happens, so we
+// trigger a no-op mutation to force the initial state (with seed keys) to persist.
+if (typeof window !== "undefined") {
+  setTimeout(() => {
+    const state = useAdmin.getState();
+    if (state.keys.length === 0) {
+      // Keys were wiped — re-seed from initial data
+      useAdmin.setState({ keys: initial.keys, devices: initial.devices, users: initial.users, logs: initial.logs });
+      console.log("[Admin Store] Re-seeded initial data (keys:", initial.keys.length, ")");
+    } else {
+      // Force persist save by touching the state
+      useAdmin.setState({ ...state });
+    }
+  }, 100);
+}
 
 /* ---------- License Lock (client-side) ---------- */
 
