@@ -100,10 +100,14 @@ export function BulkTransferModal({
       const chosenApp = defaultApp || (apps.find((a) => supported.includes(a)) as FantasyApp) || (supported[0] as FantasyApp) || "dream11";
       setSelectedApp(chosenApp);
 
-      // Mode selection — based on the CHOSEN app, not what's linked:
-      // - Dream11 → ALWAYS "direct" (link generation, NO login/auth needed)
-      // - My11Circle/other → "linked" if linked, else "linked" (will prompt OTP)
-      if (chosenApp === "dream11") {
+      // Mode selection:
+      // - If user has the chosen app LINKED → use "linked" mode (real API transfer with replace support)
+      // - If Dream11 but NOT linked → use "direct" mode (link generation, no login)
+      // - If My11Circle/other but NOT linked → use "linked" (will prompt OTP)
+      const isChosenLinked = apps.includes(chosenApp);
+      if (isChosenLinked) {
+        setMode("linked");
+      } else if (chosenApp === "dream11") {
         setMode("direct");
       } else {
         setMode("linked");
@@ -294,10 +298,9 @@ export function BulkTransferModal({
   }
 
   // App selector for linked mode
-  const linkedAndSupported = linkedApps.filter((a) => supportedApps.includes(a));
-  const canUseLinked = linkedAndSupported.length > 0;
-  // Direct link ALWAYS works for Dream11 — no match support restriction
-  // because /api/classic/dream11/addteam generates a transfer link regardless
+  // For linked mode: allow if the SELECTED app is linked (not just supported apps)
+  const canUseLinked = linkedApps.includes(selectedApp);
+  // Direct link works for Dream11 (no login needed)
   const canUseDirect = selectedApp === "dream11";
 
   return (
@@ -413,8 +416,8 @@ export function BulkTransferModal({
 
                   <button
                     onClick={() => {
-                      if (!canUseLinked) {
-                        toast.info("Please link a supported fantasy account via OTP first");
+                      if (!linkedApps.includes(selectedApp)) {
+                        toast.info(`Link your ${APP_LABELS[selectedApp]?.label || selectedApp} account via OTP first`);
                         onOpenOtpLogin();
                         return;
                       }
@@ -432,10 +435,10 @@ export function BulkTransferModal({
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-foreground flex items-center gap-1.5">
-                        Auto Transfer to Linked Account
-                        {canUseLinked ? (
-                          <span className="text-[9px] bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 px-1.5 py-0.5 rounded-full font-bold">
-                            {linkedAndSupported.length} READY
+                        Auto Transfer to {APP_LABELS[selectedApp]?.label || selectedApp}
+                        {linkedApps.includes(selectedApp) ? (
+                          <span className="text-[9px] bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 px-1.5 py-0.5 rounded-full font-bold">
+                            LINKED ✓
                           </span>
                         ) : (
                           <span className="text-[9px] bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 px-1.5 py-0.5 rounded-full font-bold">
@@ -444,20 +447,22 @@ export function BulkTransferModal({
                         )}
                       </p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">
-                        Auto-send all teams directly to your linked account. Requires OTP login.
+                        {linkedApps.includes(selectedApp)
+                          ? `Send teams to your ${APP_LABELS[selectedApp]?.label} account via API. Supports replace mode to overwrite existing teams.`
+                          : `Link your ${APP_LABELS[selectedApp]?.label || selectedApp} account via OTP to enable real API transfer with replace support.`}
                       </p>
                     </div>
                   </button>
                 </div>
 
-                {/* App selector for linked mode */}
-                {mode === "linked" && canUseLinked && (
+                {/* App selector for linked mode — show ALL linked apps */}
+                {mode === "linked" && linkedApps.length > 0 && (
                   <div>
                     <label className="text-xs font-semibold text-foreground mb-1.5 block">
                       Transfer to:
                     </label>
                     <div className="flex gap-2 flex-wrap">
-                      {linkedAndSupported.map((app) => (
+                      {linkedApps.map((app) => (
                         <button
                           key={app}
                           onClick={() => setSelectedApp(app)}
@@ -533,7 +538,7 @@ export function BulkTransferModal({
                 )}
 
                 {/* Quick link to OTP login */}
-                {mode === "linked" && !canUseLinked && (
+                {mode === "linked" && !linkedApps.includes(selectedApp) && (
                   <Button
                     variant="outline"
                     className="w-full h-10"
