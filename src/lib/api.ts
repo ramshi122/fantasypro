@@ -302,6 +302,80 @@ function normalizeMatch(raw: any): MatchInfo {
   };
 }
 
+/**
+ * Detect which fantasy apps are supported by a match.
+ *
+ * Source of truth = `fantasy_list` field from the API. It's an array like
+ *   ["dream11"]                → Dream11 only
+ *   ["dream11","my11circle"]   → both
+ *   ["my11circle"]             → My11Circle only
+ *   [] or missing              → no fantasy app supported
+ *
+ * Also falls back to checking fantasy_version (alternate field shape used by
+ * some endpoints where each entry is { name: "dream11" }).
+ * Also falls back to checking explicit dream11Url / my11circleUrl fields.
+ *
+ * Visibility rule (per user spec):
+ *   Dream11 available → show match card
+ *   My11Circle available → show match card
+ *   Both available → show match card
+ *   Neither available → HIDE match card
+ */
+export function getSupportedFantasyApps(match: MatchInfo | any): string[] {
+  if (!match) return [];
+  const apps = new Set<string>();
+
+  // 1) Primary source: fantasy_list (array of strings)
+  const fl = match.fantasy_list;
+  if (Array.isArray(fl)) {
+    for (const entry of fl) {
+      if (typeof entry === "string") {
+        apps.add(entry.toLowerCase());
+      } else if (entry && typeof entry === "object" && typeof entry.name === "string") {
+        apps.add(entry.name.toLowerCase());
+      }
+    }
+  }
+
+  // 2) Alternate source: fantasy_version (array of { name: "..." })
+  const fv = match.fantasy_version;
+  if (Array.isArray(fv)) {
+    for (const entry of fv) {
+      if (entry && typeof entry === "object" && typeof entry.name === "string") {
+        apps.add(entry.name.toLowerCase());
+      } else if (typeof entry === "string") {
+        apps.add(entry.toLowerCase());
+      }
+    }
+  }
+
+  // 3) Fallback: explicit URL fields
+  if (match.dream11Url || match.dream11_url) apps.add("dream11");
+  if (match.my11circleUrl || match.my11circle_url) apps.add("my11circle");
+
+  return Array.from(apps);
+}
+
+/** Convenience: does this match support Dream11 transfer? */
+export function matchSupportsDream11(match: MatchInfo | any): boolean {
+  return getSupportedFantasyApps(match).includes("dream11");
+}
+
+/** Convenience: does this match support My11Circle transfer? */
+export function matchSupportsMy11Circle(match: MatchInfo | any): boolean {
+  return getSupportedFantasyApps(match).includes("my11circle");
+}
+
+/**
+ * Visibility rule:
+ *   Show match card if Dream11 OR My11Circle (or both) are available.
+ *   Hide match card if NEITHER is available.
+ */
+export function shouldShowMatchCard(match: MatchInfo | any): boolean {
+  const apps = getSupportedFantasyApps(match);
+  return apps.includes("dream11") || apps.includes("my11circle");
+}
+
 export async function getMatches(sport: Sport): Promise<MatchInfo[]> {
   const resp = await rawFetch(`/api/fantasy/matches/${sport}`, { method: "GET" });
   if (resp.status && resp.status !== "success") return [];

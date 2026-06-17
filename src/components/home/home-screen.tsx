@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useApp } from "@/lib/store";
-import { getMatches, type MatchInfo } from "@/lib/api";
+import { getMatches, shouldShowMatchCard, type MatchInfo } from "@/lib/api";
 import { SportTabs, MatchTabs } from "./sport-tabs";
 import { PromoBanners } from "./promo-banners";
 import { MatchCard } from "./match-card";
@@ -28,7 +28,18 @@ export function HomeScreen() {
         setError("No matches returned by the API. Try another sport.");
         setMatches([]);
       } else {
-        setMatches(data);
+        // Filter: hide matches where NEITHER Dream11 NOR My11Circle is supported.
+        // Visibility rule:
+        //   Dream11 available → show
+        //   My11Circle available → show
+        //   Both available → show
+        //   Neither available → HIDE
+        const visible = data.filter(shouldShowMatchCard);
+        const hiddenCount = data.length - visible.length;
+        if (hiddenCount > 0) {
+          console.log(`[home] Filtered out ${hiddenCount} match(es) with no Dream11/My11Circle support`);
+        }
+        setMatches(visible);
       }
     } catch (err: any) {
       console.error("[home] getMatches failed:", err);
@@ -44,7 +55,9 @@ export function HomeScreen() {
   }, [sport]);
 
 
-  const displayMatches = tab === "saved" ? savedMatches : matches;
+  const displayMatches = tab === "saved"
+    ? savedMatches.filter(shouldShowMatchCard)
+    : matches;
 
   return (
     <div className="px-4 py-4 space-y-4 pb-24">

@@ -4,6 +4,7 @@ import { Bookmark, Clock } from "lucide-react";
 import { motion } from "framer-motion";
 import { useApp } from "@/lib/store";
 import { formatCountdown, isMatchLive, shortName, teamColor } from "@/lib/format";
+import { getSupportedFantasyApps } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { MatchInfo } from "@/lib/api";
 import { useEffect, useState } from "react";
@@ -43,11 +44,10 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
   const countdown = formatCountdown(match.startTime);
   const saved = isSaved(id);
 
-  // Detect supported fantasy apps from fantasy_version field
-  const fantasyVersions = (match as any).fantasy_version || (match as any).fantasy_list || [];
-  const supportedApps: string[] = Array.isArray(fantasyVersions)
-    ? fantasyVersions.map((v: any) => typeof v === "string" ? v : v?.name).filter(Boolean)
-    : [];
+  // Single source of truth: use the helper from api.ts that checks
+  // fantasy_list + fantasy_version + explicit URL fields.
+  // This drives both the badge display AND the match card visibility rule.
+  const supportedApps = getSupportedFantasyApps(match);
 
   function onCardClick() {
     openMatch(match);

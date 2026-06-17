@@ -2,12 +2,17 @@
 
 import { useApp } from "@/lib/store";
 import { MatchCard } from "@/components/home/match-card";
+import { shouldShowMatchCard } from "@/lib/api";
 import { Bookmark } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function MyMatchesScreen() {
   const savedMatches = useApp((s) => s.savedMatches);
   const setView = useApp((s) => s.setView);
+
+  // Apply the same visibility rule as the home screen:
+  //   Hide saved matches where NEITHER Dream11 NOR My11Circle is supported.
+  const visibleSaved = savedMatches.filter(shouldShowMatchCard);
 
   return (
     <div className="px-4 py-4 pb-24 space-y-4">
@@ -20,12 +25,12 @@ export function MyMatchesScreen() {
           Your bookmarked matches appear here for quick access.
         </p>
         <div className="mt-3 text-3xl font-black">
-          {savedMatches.length}
+          {visibleSaved.length}
           <span className="text-sm font-medium text-white/80 ml-1.5">saved</span>
         </div>
       </div>
 
-      {savedMatches.length === 0 ? (
+      {visibleSaved.length === 0 ? (
         <div className="text-center py-16">
           <div className="w-16 h-16 mx-auto rounded-full bg-violet-50 dark:bg-violet-900/30 flex items-center justify-center mb-3">
             <Bookmark className="w-8 h-8 text-violet-400" />
@@ -40,7 +45,7 @@ export function MyMatchesScreen() {
         </div>
       ) : (
         <div className="space-y-3">
-          {savedMatches.map((m, i) => (
+          {visibleSaved.map((m, i) => (
             <MatchCard key={(m.matchId ?? m.id ?? i) as string} match={m} index={i} />
           ))}
         </div>
