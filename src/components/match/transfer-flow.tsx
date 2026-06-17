@@ -32,7 +32,6 @@ import {
   editTeam,
   getLocalTeams,
   getMatchDetail,
-  joinContest,
   listFantasyTeams,
   saveFantasyToken,
   getFantasyToken,
@@ -156,12 +155,14 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   }, [matchId, token]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadAll();
   }, [loadAll, refreshKey]);
 
   // Check if user already has a Dream11 token saved
   useEffect(() => {
     const t = getFantasyToken("dream11");
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (t) setLinkedApp("dream11");
   }, []);
 
@@ -207,32 +208,11 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
     }
   }
 
-  async function handleTransfer(team: TeamRow, app: FantasyApp) {
-    // Verify token (mock-success in guest mode, real call otherwise)
-    const authToken = getFantasyToken(app) || (isGuest ? "guest_" + app : "");
-    if (!authToken) {
-      setShowLinkModal(true);
-      return;
-    }
-    setStep("saving");
-    try {
-      const res = await joinContest({
-        authToken,
-        matchId,
-        contestId: "free_contest_" + matchId,
-        teamIds: [Number(team.teamNo)],
-      });
-      if (res.success) {
-        toast.success(`Team #${team.teamNo} transferred to ${app}!`);
-        setRefreshKey((k) => k + 1);
-      } else {
-        toast.error(res.message || "Transfer failed");
-      }
-    } catch (err: any) {
-      toast.error(err?.message || "Transfer failed");
-    } finally {
-      setStep("ready");
-    }
+  function handleTransfer(team: TeamRow, app: FantasyApp) {
+    // Open the APNA Transfer modal for the selected app (same as toolbar buttons)
+    if (!license.requireLicense()) return;
+    setSelectedTransferApp(app);
+    setShowBulkTransfer(true);
   }
 
   function handleLinkApp(app: FantasyApp, authToken: string) {
