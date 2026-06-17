@@ -204,13 +204,40 @@ const DEFAULT_SETTINGS: AdminSettings = {
 function getInitialData() {
   const now = Date.now();
   const day = 86400000;
-  const seedKeys: LicenseKey[] = [
+
+  // Generate 500+ ready-to-use license keys at startup
+  const seedKeys: LicenseKey[] = [];
+
+  // 5 demo keys for testing different states
+  seedKeys.push(
     { key: "CRICB-DEMO-TEST-KEY1", type: "monthly", status: "active", createdAt: now - 5 * day, expiresAt: now + 25 * day, deviceIds: ["dev_001"], userName: "Demo User 1", lastVerified: now - 3600000, verifications: 12 },
     { key: "CRICB-DEMO-TEST-KEY2", type: "weekly", status: "used", createdAt: now - 10 * day, expiresAt: now - 3 * day, deviceIds: ["dev_002"], userName: "Demo User 2", lastVerified: now - 2 * day, verifications: 5 },
     { key: "CRICB-DEMO-TEST-KEY3", type: "lifetime", status: "active", createdAt: now - 30 * day, expiresAt: null, deviceIds: ["dev_003"], userName: "Premium User", lastVerified: now - 7200000, verifications: 45 },
     { key: "CRICB-DEMO-TEST-KEY4", type: "trial", status: "expired", createdAt: now - 8 * day, expiresAt: now - 7 * day, deviceIds: [], verifications: 1 },
     { key: "CRICB-DEMO-TEST-KEY5", type: "monthly", status: "suspended", createdAt: now - 15 * day, expiresAt: now + 15 * day, deviceIds: ["dev_004"], userName: "Suspended User", verifications: 3 },
-  ];
+  );
+
+  // Generate 500 ready-to-use keys (mix of types)
+  const types: KeyType[] = ["trial", "weekly", "monthly", "monthly", "monthly", "lifetime"];
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  for (let i = 0; i < 500; i++) {
+    let seg1 = "", seg2 = "", seg3 = "";
+    for (let j = 0; j < 4; j++) {
+      seg1 += chars[Math.floor(Math.random() * chars.length)];
+      seg2 += chars[Math.floor(Math.random() * chars.length)];
+      seg3 += chars[Math.floor(Math.random() * chars.length)];
+    }
+    const type = types[i % types.length];
+    seedKeys.push({
+      key: `CRICB-${seg1}-${seg2}-${seg3}`,
+      type,
+      status: "active",
+      createdAt: now - Math.floor(Math.random() * 30) * day,
+      expiresAt: getExpiryForType(type),
+      deviceIds: [],
+      verifications: 0,
+    });
+  }
 
   const seedDevices: Device[] = [
     { deviceId: "dev_001", userName: "Demo User 1", licenseKey: "CRICB-DEMO-TEST-KEY1", lastLogin: now - 3600000, status: "allowed" },
@@ -550,7 +577,7 @@ export const useAdmin = create<AdminState>()(
     {
       name: "fantasypro-admin",
       storage: createJSONStorage(() => localStorage),
-      version: 4,
+      version: 5,
       merge: (persisted, current) => {
         const p = persisted as Partial<AdminState> | undefined;
         if (!p || !p.keys || p.keys.length === 0) {
