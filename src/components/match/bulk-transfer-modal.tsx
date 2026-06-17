@@ -677,18 +677,20 @@ export function BulkTransferModal({
                               ⚠️ Dream11 Transfer Failed
                             </p>
                             <p className="text-[10px] text-muted-foreground mb-2.5">
-                              This match may not have Dream11 player IDs mapped. The backend couldn't generate a transfer link.
-                              Try transferring to My11Circle instead (⭕ My11Circle button).
+                              This match may not have Dream11 player IDs mapped. Try My11Circle instead.
                             </p>
                           </>
                         ) : (
                           <>
                             <p className="text-[11px] font-bold text-red-700 dark:text-red-300 mb-2">
-                              ⚠️ Relink your account to fix this
+                              ⚠️ Transfer Failed
                             </p>
                             <p className="text-[10px] text-muted-foreground mb-2.5">
-                              The backend rejected the transfer because your {APP_LABELS[selectedApp]?.label} session is invalid or expired.
-                              Complete OTP login with your real mobile number to get a fresh auth token.
+                              {result.results[0]?.message?.includes("Proxy returned 400")
+                                ? "Dream11 rejected the team (Proxy 400). This usually means: 1) The match hasn't opened for team creation on Dream11 yet, 2) The team composition violates Dream11 rules, or 3) Your session needs refresh. Try again closer to match time or relink via OTP."
+                                : result.results[0]?.message?.includes("Auth token expired")
+                                  ? "Your linked account session is invalid or expired. Complete OTP login with your real mobile number to get a fresh auth token."
+                                  : "The backend rejected the transfer. Try relinking your account via OTP."}
                             </p>
                             <Button
                               size="sm"

@@ -1091,11 +1091,16 @@ export async function bulkTransferToLinkedAccount(
     const t = teams[i];
     // In replace mode, use type:"edit" + id if we have an existing team ID for this slot
     const isReplace = params.replaceMode && params.existingTeamIds && i < params.existingTeamIds.length;
+    // Convert IDs to numbers (Dream11 API expects numeric IDs)
+    const numericPlayers = t.playerIds.map((id) => Number(id)).filter((n) => !isNaN(n));
+    const numericCaptain = Number(t.captainId);
+    const numericVC = Number(t.viceCaptainId);
+
     const body: Record<string, unknown> = {
       matchId: params.matchId,
-      captain: t.captainId,
-      vice_captain: t.viceCaptainId,
-      players: t.playerIds,
+      captain: isNaN(numericCaptain) ? t.captainId : numericCaptain,
+      vice_captain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
+      players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
       fantasyApp: params.fantasyApp,
       authToken: params.authToken,
       sportIndex: params.sportIndex ?? 0,
