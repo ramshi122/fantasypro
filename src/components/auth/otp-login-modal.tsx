@@ -125,10 +125,14 @@ export function OtpLoginModal({
       if (res.status === "success" && res.token) {
         // Save token + extras (mobile, my11circle challenge/userId) in one record
         // so the user is NEVER asked to login again until they explicitly unlink.
+        // Also save Dream11 subscription fields (maxAllowedTeam, subscriptionTier)
+        // so we know the per-match team limit.
         saveFantasyToken(selectedApp, res.token, {
           mobile,
           my11circleChallenge: res.my11circleChallenge,
           my11circleUserId: res.my11circleUserId,
+          maxAllowedTeam: res.maxAllowedTeam ?? null,
+          subscriptionTier: res.subscriptionTier ?? null,
         });
         setPhase("done");
         toast.success(`${APPS.find((a) => a.id === selectedApp)?.label} linked successfully!`);

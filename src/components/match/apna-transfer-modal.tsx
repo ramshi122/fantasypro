@@ -20,6 +20,7 @@ import {
   bulkTransferToLinkedAccount,
   getLinkedAccount,
   getMatchDetail,
+  getPlatformLimit,
   listFantasyTeams,
   type BulkTransferItem,
   type BulkTransferResult,
@@ -65,7 +66,14 @@ export function ApnaTransferModal({
   const [lastTransferType, setLastTransferType] = useState<"classic" | "otp">("classic");
 
   const validTeams = teams.filter((t) => (t.players?.length || 0) >= 1);
-  const PLATFORM_LIMIT = 11;
+  // Per-platform team limit — matches the ORIGINAL teamgeneration.in APK:
+  //   dream11 = 40 (or backend-provided maxAllowedTeam if user has subscription)
+  //   my11circle = 40
+  //   jumbo = 50
+  //   other apps = 11 (platform default)
+  // The user must be able to transfer up to this many teams per match.
+  const linkedAccount = getLinkedAccount(selectedApp);
+  const PLATFORM_LIMIT = getPlatformLimit(selectedApp, linkedAccount);
   const availableNewSlots = Math.max(0, PLATFORM_LIMIT - existingTeams.length);
   const replaceCount = Math.min(selectedTeamIds.size, validTeams.length);
   const bulkCount = Math.min(validTeams.length, availableNewSlots);
@@ -350,10 +358,24 @@ export function ApnaTransferModal({
 
                         {/* Stats */}
                         <div className="grid grid-cols-3 gap-2">
-                          <div className="bg-white dark:bg-card rounded-xl p-2 border text-center"><p className="text-base font-black">{validTeams.length}</p><p className="text-[8px] text-muted-foreground uppercase">APNA</p></div>
-                          <div className="bg-white dark:bg-card rounded-xl p-2 border text-center"><p className="text-base font-black">{existingTeams.length}</p><p className="text-[8px] text-muted-foreground uppercase">Platform</p></div>
-                          <div className="bg-white dark:bg-card rounded-xl p-2 border text-center"><p className="text-base font-black">{availableNewSlots}</p><p className="text-[8px] text-muted-foreground uppercase">Slots</p></div>
+                          <div className="bg-white dark:bg-card rounded-xl p-2 border text-center">
+                            <p className="text-base font-black">{validTeams.length}</p>
+                            <p className="text-[8px] text-muted-foreground uppercase">APNA</p>
+                          </div>
+                          <div className="bg-white dark:bg-card rounded-xl p-2 border text-center">
+                            <p className="text-base font-black">{existingTeams.length}<span className="text-[10px] text-muted-foreground">/{PLATFORM_LIMIT}</span></p>
+                            <p className="text-[8px] text-muted-foreground uppercase">Platform</p>
+                          </div>
+                          <div className="bg-white dark:bg-card rounded-xl p-2 border text-center">
+                            <p className="text-base font-black">{availableNewSlots}</p>
+                            <p className="text-[8px] text-muted-foreground uppercase">Free Slots</p>
+                          </div>
                         </div>
+                        {linkedAccount?.subscriptionTier && (
+                          <p className="text-[10px] text-center text-violet-600 dark:text-violet-300 font-semibold">
+                            {APP_LABELS[selectedApp]?.label} {linkedAccount.subscriptionTier} plan · max {PLATFORM_LIMIT} teams/match
+                          </p>
+                        )}
 
                         {/* Replace selection */}
                         {existingTeams.length > 0 && (

@@ -34,6 +34,58 @@ export const API_BASE = "https://tgsoftware-api.online";
 export type Sport = "cricket" | "football" | "basketball" | "kabaddi";
 export type FantasyApp = "dream11" | "my11circle" | "myteam11" | "vision11";
 
+/**
+ * Per-platform team limits — matches the ORIGINAL teamgeneration.in APK source.
+ *
+ * Found in the original APK's compiled JS:
+ *   {id:1, name:"Dream11",   slug:"dream11",    limit:40, available:true}
+ *   {id:2, name:"My11Circle", slug:"my11circle", limit:40, available:true}
+ *   {id:3, name:"Jumbo",      slug:"jumbo",      limit:50, available:true}
+ *
+ * Logic from the original APK:
+ *   - If backend returns maxAllowedTeam (Dream11 subscription field) → use that
+ *   - Else if app is "dream11" → 40
+ *   - Else → use the platform's `limit` field
+ *
+ * This means:
+ *   - Dream11:    up to 40 teams (with paid subscription; backend may return lower)
+ *   - My11Circle: up to 40 teams
+ *   - Jumbo:      up to 50 teams
+ *   - Other apps: default to 11 (the platform default)
+ */
+export const PLATFORM_LIMITS: Record<string, number> = {
+  dream11: 40,
+  my11circle: 40,
+  jumbo: 50,
+  myteam11: 20,
+  vision11: 20,
+};
+
+export const DEFAULT_PLATFORM_LIMIT = 11;
+
+/**
+ * Get the per-platform team limit for a given fantasy app and linked account.
+ *
+ * @param app - The fantasy app slug (dream11, my11circle, etc.)
+ * @param account - The linked account (optional — may contain maxAllowedTeam for Dream11)
+ * @returns The maximum number of teams the user can have for this match on this platform
+ */
+export function getPlatformLimit(
+  app: FantasyApp | string,
+  account?: { maxAllowedTeam?: number | null } | null
+): number {
+  // Dream11: backend may return maxAllowedTeam (depends on subscription tier)
+  // Use that if present, otherwise fall back to the platform limit (40)
+  if (app === "dream11") {
+    if (account?.maxAllowedTeam && account.maxAllowedTeam > 0) {
+      return Math.min(account.maxAllowedTeam, PLATFORM_LIMITS.dream11);
+    }
+    return PLATFORM_LIMITS.dream11;
+  }
+  // Other apps: use the platform's limit field
+  return PLATFORM_LIMITS[app] || DEFAULT_PLATFORM_LIMIT;
+}
+
 /* ---------- Types ---------- */
 
 export interface MatchPlayer {
@@ -633,19 +685,33 @@ function localId(): string {
  *
  * The token persists across page reloads and browser sessions. The user is
  * only asked to login again if they explicitly unlink the app.
+ *
+ * For Dream11, `maxAllowedTeam` may be returned by the backend based on the
+ * user's subscription tier. We save it so we know the per-match team limit.
  */
 export function saveFantasyToken(
   app: FantasyApp,
   token: string,
-  extras?: { mobile?: string; my11circleChallenge?: string; my11circleUserId?: string }
+  extras?: {
+    mobile?: string;
+    my11circleChallenge?: string;
+    my11circleUserId?: string;
+    maxAllowedTeam?: number | null;
+    subscriptionTier?: string | null;
+  }
 ) {
   if (typeof window === "undefined") return;
   const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+  // Preserve existing fields (e.g. maxAllowedTeam) if not provided in this call
+  const existing = all[app] && typeof all[app] === "object" ? all[app] : {};
   all[app] = {
+    ...existing,
     token,
-    mobile: extras?.mobile || null,
-    my11circleChallenge: extras?.my11circleChallenge || null,
-    my11circleUserId: extras?.my11circleUserId || null,
+    mobile: extras?.mobile || existing.mobile || null,
+    my11circleChallenge: extras?.my11circleChallenge || existing.my11circleChallenge || null,
+    my11circleUserId: extras?.my11circleUserId || existing.my11circleUserId || null,
+    maxAllowedTeam: extras?.maxAllowedTeam ?? existing.maxAllowedTeam ?? null,
+    subscriptionTier: extras?.subscriptionTier || existing.subscriptionTier || null,
     linkedAt: Date.now(),
   };
   localStorage.setItem(LOCAL_FANTASY_TOKENS_KEY, JSON.stringify(all));
@@ -670,6 +736,10 @@ export interface LinkedFantasyAccount {
   mobile?: string | null;
   my11circleChallenge?: string | null;
   my11circleUserId?: string | null;
+  /** Dream11 only: max teams per match based on subscription tier (null = use default 40) */
+  maxAllowedTeam?: number | null;
+  /** Dream11 only: subscription tier label (e.g. "Pro", "Max") */
+  subscriptionTier?: string | null;
   linkedAt?: number;
 }
 
@@ -688,6 +758,8 @@ export function getLinkedAccount(app: FantasyApp): LinkedFantasyAccount | null {
       mobile: entry.mobile,
       my11circleChallenge: entry.my11circleChallenge,
       my11circleUserId: entry.my11circleUserId,
+      maxAllowedTeam: entry.maxAllowedTeam ?? null,
+      subscriptionTier: entry.subscriptionTier ?? null,
       linkedAt: entry.linkedAt,
     };
   } catch {
@@ -1127,6 +1199,12 @@ export interface VerifyOtpResult {
   my11circleChallenge?: string;
   my11circleUserId?: string;
   mobileNumber?: string;
+  /** Dream11 only: max teams per match based on subscription tier */
+  maxAllowedTeam?: number | null;
+  /** Dream11 only: subscription tier label (e.g. "Pro", "Max") */
+  subscriptionTier?: string | null;
+  /** Dream11 only: is the user's subscription active? */
+  d11SubscriptionActive?: boolean | null;
 }
 
 export async function verifyFantasyOtp(params: {
@@ -1169,6 +1247,10 @@ export async function verifyFantasyOtp(params: {
       my11circleChallenge: d.my11circleChallenge as string | undefined,
       my11circleUserId: d.my11circleUserId as string | undefined,
       mobileNumber: params.mobileNumber,
+      // Dream11 subscription fields — present when the user has a paid Dream11 plan
+      maxAllowedTeam: typeof d.maxAllowedTeam === "number" ? d.maxAllowedTeam : null,
+      subscriptionTier: typeof d.subscriptionTier === "string" ? d.subscriptionTier : null,
+      d11SubscriptionActive: typeof d.d11SubscriptionActive === "boolean" ? d.d11SubscriptionActive : null,
     };
   }
   return { status: "fail", message: (res.message as string) || "Invalid OTP" };
@@ -1295,7 +1377,13 @@ export async function bulkTransferToLinkedAccount(
   const transferLinks: BulkTransferResult["transferLinks"] = [];
   let successCount = 0;
   let failCount = 0;
-  const delay = params.fantasyApp === "dream11" ? 200 : 2000;
+  // Per-team delay between transfers — keeps us under the platform's rate limit
+  // without making a 40-team bulk transfer take 80+ seconds.
+  //   - Dream11: 200ms (very lenient rate limit, can handle rapid requests)
+  //   - My11Circle: 500ms (slightly stricter rate limit, but still tolerates fast bulk)
+  //   - Default: 500ms
+  // Total time for 40 teams: ~8-20 seconds + per-team transfer time.
+  const delay = params.fantasyApp === "dream11" ? 200 : 500;
 
   // ─── PRE-TRANSFER AUTH VERIFY (mirrors original APK flow) ────────────────
   // The original teamgeneration.in calls /api/fantasy/auth/verify before
