@@ -964,6 +964,7 @@ export interface JoinContestResult {
 }
 
 export async function joinContest(params: {
+  fantasyApp: FantasyApp;
   authToken: string;
   matchId: string | number;
   contestId: string;
@@ -984,8 +985,10 @@ export async function joinContest(params: {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (userToken) headers.Authorization = `Bearer ${userToken}`;
 
+    // Route to the correct platform endpoint based on fantasyApp
+    // (was previously always falling through to my11circle due to missing fantasyApp field)
     const endpoint =
-      params.authToken && params.fantasyApp === "dream11"
+      params.fantasyApp === "dream11"
         ? `/api/dream11/contest/join-contest`
         : `/api/my11circle/contest/join-contest`;
 
@@ -1003,7 +1006,7 @@ export async function joinContest(params: {
       contestId: params.contestId,
       success: resp.status === "success",
       teamIds: params.teamIds,
-      message: resp.message || (resp.status === "success" ? "Joined" : "Failed"),
+      message: (resp.message as string) || (resp.status === "success" ? "Joined" : "Failed"),
     };
   } catch (err: any) {
     return {
@@ -1057,25 +1060,26 @@ export async function fetchFreeContests(params: {
     const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (userToken) headers.Authorization = `Bearer ${userToken}`;
-    const endpoint =
-      params.fantasyApp === "dream11"
-        ? `/api/dream11/contest/all-free-status`
-        : `/api/my11circle/contest/all-free-status`;
-    const res = await rawFetch<ApiResponse>(endpoint, {
+    // Use our OWN server-side proxy (NOT rawFetch — that prepends the backend URL)
+    // to avoid CORS issues and get consistent error handling.
+    const proxyRes = await fetch(`/api/contest/free-status`, {
       method: "POST",
       headers,
       body: JSON.stringify({
+        fantasyApp: params.fantasyApp,
         authToken: params.authToken,
-        matchId: params.matchId,
+        matchId: String(params.matchId),
         allTeamIds: params.allTeamIds,
       }),
+      cache: "no-store",
     });
+    const res = await proxyRes.json() as ApiResponse & { contests?: FreeContest[] };
     if (res.status === "success") {
       return { status: "success", contests: (res.contests || []) as FreeContest[] };
     }
     return {
       status: "fail",
-      message: resp_message(res) || "Failed to fetch free contests",
+      message: (res.message as string) || (res.error as string) || "Failed to fetch free contests",
       contests: [],
     };
   } catch (err: any) {
@@ -1089,6 +1093,8 @@ export interface JoinContestFullResult {
   contestId: string;
   joinResults: Array<{ teamId: number; success: boolean }>;
   summary: { successCount: number; failedCount: number };
+  /** Set when the auth token is expired — caller should prompt re-link via OTP */
+  needsReauth?: boolean;
 }
 
 /**
@@ -1115,29 +1121,35 @@ export async function joinFreeContest(params: {
     const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (userToken) headers.Authorization = `Bearer ${userToken}`;
-    const endpoint =
-      params.fantasyApp === "dream11"
-        ? `/api/dream11/contest/join-contest`
-        : `/api/my11circle/contest/join-contest`;
-    const res = await rawFetch<ApiResponse>(endpoint, {
+    // Use our OWN server-side proxy (NOT rawFetch — that prepends the backend URL)
+    const proxyRes = await fetch(`/api/contest/join`, {
       method: "POST",
       headers,
       body: JSON.stringify({
+        fantasyApp: params.fantasyApp,
         authToken: params.authToken,
-        matchId: params.matchId,
-        contestId: params.contestId,
+        matchId: String(params.matchId),
+        contestId: String(params.contestId),
         teamIds: params.teamIds,
       }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(45000),
     });
+    const res = await proxyRes.json() as ApiResponse & {
+      joinResults?: Array<{ teamId: number; success: boolean }>;
+      summary?: { successCount: number; failedCount: number };
+      needsReauth?: boolean;
+    };
     return {
       status: res.status === "success" ? "success" : "fail",
-      message: resp_message(res),
+      message: (res.message as string) || (res.error as string) || (res.status === "success" ? "Joined" : "Failed"),
       contestId: params.contestId,
       joinResults: (res.joinResults || []) as Array<{ teamId: number; success: boolean }>,
       summary: (res.summary as { successCount: number; failedCount: number }) || {
         successCount: 0,
         failedCount: params.teamIds.length,
       },
+      needsReauth: res.needsReauth === true,
     };
   } catch (err: any) {
     return {

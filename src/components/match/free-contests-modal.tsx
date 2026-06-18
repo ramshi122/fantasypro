@@ -201,6 +201,11 @@ export function FreeContestsModal({
           })
         );
         setPhase("done");
+      } else if (res.needsReauth) {
+        // Token expired — prompt re-link via OTP
+        toast.error(res.message || "Session expired — re-link via OTP");
+        setTimeout(() => onOpenOtpLogin(), 800);
+        setPhase("ready");
       } else {
         toast.error(res.message || "Failed to join contest");
         setPhase("ready");
