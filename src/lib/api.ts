@@ -1385,13 +1385,27 @@ export async function bulkTransferToLinkedAccount(
   // Total time for 40 teams: ~8-20 seconds + per-team transfer time.
   const delay = params.fantasyApp === "dream11" ? 200 : 500;
 
-  // ─── PRE-TRANSFER AUTH VERIFY (mirrors original APK flow) ────────────────
-  // The original teamgeneration.in calls /api/fantasy/auth/verify before
-  // starting a bulk transfer. We do the same via our /api/auth/verify proxy.
+  // ─── PRE-TRANSFER AUTH VERIFY ──────────────────────────────────────────
   //
-  // IMPORTANT: This NEVER blocks on network errors. It only blocks when the
-  // backend explicitly returns validToken=false (HTTP 401/403).
-  if (!params.skipVerify && params.authToken) {
+  // IMPORTANT: We SKIP pre-verification by default — this matches the original
+  // teamgeneration.in APK behavior. The original route.ts source explicitly says:
+  //
+  //   "Pre-verification adds latency and may give false negatives
+  //    (server says expired but token works)"
+  //
+  // The /api/transfer proxy already handles token expiry REACTIVELY during the
+  // actual transfer:
+  //   - Detects "Proxy returned 400/401/403" from the platform → returns needsReauth
+  //   - Detects "token expired" / "jwt expired" / "invalid token" → returns needsReauth
+  //   - Stops the bulk transfer immediately when the first team fails with auth error
+  //
+  // Calling /api/fantasy/auth/verify before transfer was causing FALSE "session
+  // expired" warnings for Dream11 users with valid tokens. So we only pre-verify
+  // if the caller explicitly sets skipVerify=false.
+  //
+  // Default: SKIP pre-verify (matches original APK).
+  if (params.skipVerify === false && params.authToken) {
+    console.log("[bulkTransfer] Pre-verifying auth token (skipVerify=false)...");
     const verifyResult = await verifyBeforeTransfer({
       fantasyApp: params.fantasyApp,
       authToken: params.authToken,
@@ -1427,6 +1441,8 @@ export async function bulkTransferToLinkedAccount(
         console.log("[bulkTransfer] Using refreshed token from updateUiToken");
       }
     }
+  } else {
+    console.log("[bulkTransfer] Skipping pre-verify (default) — reactive auth detection in /api/transfer");
   }
 
   for (let i = 0; i < teams.length; i++) {
