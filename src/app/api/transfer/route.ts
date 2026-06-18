@@ -404,10 +404,21 @@ export async function POST(request: Request) {
       fantasyApp: app,
       authToken: preparedToken,
       sportIndex: sport,
+      // IMPORTANT: The original APK ALWAYS includes `type` in the payload
+      // (either "new" for add or "edit" for replace). The backend uses this
+      // field to route to the correct operation. Without it, edit-team calls
+      // were being treated as add-team calls → "team not replacing" bug.
+      type: operation === "edit" ? "edit" : "new",
     };
 
-    if (operation === "edit" && id !== undefined && id !== null) {
-      payload.id = id;
+    // For edit/replace operations, include the team ID to replace.
+    // The original APK uses field name `id` with the team_id value from list-of-teams.
+    // Try to coerce to number if possible (backend may expect numeric ID),
+    // but fall back to string if it's not a pure number.
+    if (operation === "edit" && id !== undefined && id !== null && id !== "") {
+      const idNum = typeof id === "string" ? parseInt(id, 10) : id;
+      payload.id = (typeof idNum === "number" && !isNaN(idNum)) ? idNum : id;
+      console.log(`[Transfer][EDIT] Replacing team ID: ${payload.id} (original: ${JSON.stringify(id)})`);
     }
 
     // My11Circle-specific fields
