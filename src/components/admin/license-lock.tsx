@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Loader2,
   Lock,
+  MessageCircle,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -205,8 +206,22 @@ export function LicenseLockOverlay() {
                   </div>
                 </div>
 
-                <div className="text-[9px] text-muted-foreground text-center bg-violet-50 dark:bg-violet-950/20 rounded-lg p-2">
-                  Demo keys: <span className="font-mono font-bold">CRICB-DEMO-TEST-KEY1</span> · <span className="font-mono font-bold">CRICB-DEMO-TEST-KEY3</span>
+                <div className="bg-emerald-50 dark:bg-emerald-950/30 rounded-xl p-3 border border-emerald-200 dark:border-emerald-800 text-center">
+                  <p className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 mb-2">
+                    🔑 Need a license key?
+                  </p>
+                  <p className="text-[9px] text-muted-foreground mb-3">
+                    Contact admin on WhatsApp to purchase a key
+                  </p>
+                  <a
+                    href="https://chat.whatsapp.com/HTUbZHMUIGlGwhs20HoSVR"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-[11px] font-bold px-4 py-2 rounded-lg transition-colors"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    Get Key on WhatsApp
+                  </a>
                 </div>
 
                 <button
