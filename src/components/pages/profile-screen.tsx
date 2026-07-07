@@ -98,29 +98,8 @@ export function ProfileScreen({ onAdminTrigger }: { onAdminTrigger?: () => void 
 
   return (
     <div className="px-4 py-4 pb-24 space-y-4">
-      {/* Profile header */}
-      <div className="brand-gradient rounded-3xl p-5 text-white shadow-lg relative overflow-hidden">
-        <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full" />
-        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-white/5 rounded-full" />
-
-        <div className="relative flex items-center gap-3">
-          <div className="w-16 h-16 rounded-full bg-white/25 backdrop-blur-sm flex items-center justify-center">
-            <User className="w-8 h-8 text-white" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-base font-bold truncate">
-              {user?.name || "Apna Cricket User"}
-            </p>
-            <p className="text-xs text-white/80 truncate">
-              {user?.email || user?.mobile || "Premium Member"}
-            </p>
-            <div className="mt-1 inline-flex items-center gap-1 text-[10px] bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded-full">
-              <Crown className="w-2.5 h-2.5" />
-              {user?.plan || "Free"} Plan
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Profile header — shows real user login details */}
+      <UserProfileHeader />
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-2">
@@ -967,6 +946,129 @@ function LicenseActivationCard() {
               </>
             )}
           </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============== User Profile Header (replaces Guest banner) ============== */
+
+function UserProfileHeader() {
+  const [userRecord, setUserRecord] = useState<{
+    mobile: string;
+    referralCode: string;
+    plan: string;
+    referralCount: number;
+    rewardsEarned: number;
+  } | null>(null);
+  const [licenseTier, setLicenseTier] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Load user record from localStorage
+    import("@/lib/user-auth").then(({ getCurrentUser }) => {
+      const user = getCurrentUser();
+      if (user) {
+        setUserRecord({
+          mobile: user.mobile,
+          referralCode: user.referralCode,
+          plan: user.plan,
+          referralCount: user.referralCount || 0,
+          rewardsEarned: user.rewardsEarned || 0,
+        });
+      }
+    });
+
+    // Load license tier
+    import("@/lib/admin-store").then(({ getLicenseState }) => {
+      const state = getLicenseState();
+      if (state.keyType) {
+        setLicenseTier(state.keyType);
+      }
+    });
+  }, []);
+
+  // Tier info for display
+  const tierInfo: Record<string, { label: string; emoji: string; color: string }> = {
+    trial: { label: "Trial", emoji: "🆓", color: "from-emerald-500 to-green-600" },
+    match_basic: { label: "1 Match", emoji: "🏏", color: "from-amber-500 to-orange-600" },
+    match_full: { label: "24 Hour", emoji: "⏰", color: "from-rose-500 to-pink-600" },
+    weekly: { label: "Weekly", emoji: "📅", color: "from-sky-500 to-blue-600" },
+    monthly: { label: "Pro", emoji: "💎", color: "from-sky-500 to-blue-600" },
+    elite: { label: "Elite", emoji: "👑", color: "from-violet-500 to-purple-600" },
+    lifetime: { label: "Lifetime", emoji: "♾️", color: "from-amber-500 to-yellow-600" },
+  };
+
+  const tier = licenseTier ? tierInfo[licenseTier] : null;
+
+  return (
+    <div className={cn(
+      "rounded-3xl p-5 text-white shadow-lg relative overflow-hidden bg-gradient-to-br",
+      tier?.color || "from-violet-600 to-fuchsia-600"
+    )}>
+      <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full" />
+      <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-white/5 rounded-full" />
+
+      <div className="relative flex items-center gap-3">
+        {/* Avatar */}
+        <div className="w-16 h-16 rounded-full bg-white/25 backdrop-blur-sm flex items-center justify-center text-3xl">
+          {tier?.emoji || "👤"}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          {userRecord ? (
+            <>
+              {/* Logged-in user details */}
+              <p className="text-base font-bold truncate">
+                +91 {userRecord.mobile}
+              </p>
+              <p className="text-xs text-white/80 truncate">
+                Code: {userRecord.referralCode}
+              </p>
+              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                <span className="inline-flex items-center gap-1 text-[10px] bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded-full">
+                  <Crown className="w-2.5 h-2.5" />
+                  {tier?.label || "Free"} Plan
+                </span>
+                <span className="inline-flex items-center gap-1 text-[10px] bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded-full">
+                  <Users className="w-2.5 h-2.5" />
+                  {userRecord.referralCount} Referrals
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Not logged in — show login prompt */}
+              <p className="text-base font-bold truncate">
+                Welcome to Apna Cricket
+              </p>
+              <p className="text-xs text-white/80 truncate">
+                Login to unlock all features
+              </p>
+              <div className="mt-1 inline-flex items-center gap-1 text-[10px] bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded-full">
+                <Crown className="w-2.5 h-2.5" />
+                Guest Mode
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* User stats row — only if logged in */}
+      {userRecord && (
+        <div className="relative mt-3 grid grid-cols-3 gap-2">
+          <div className="bg-white/15 backdrop-blur-sm rounded-lg p-2 text-center">
+            <p className="text-sm font-black">{userRecord.referralCount}</p>
+            <p className="text-[8px] text-white/70 uppercase">Referrals</p>
+          </div>
+          <div className="bg-white/15 backdrop-blur-sm rounded-lg p-2 text-center">
+            <p className="text-sm font-black">{userRecord.rewardsEarned}</p>
+            <p className="text-[8px] text-white/70 uppercase">Days Earned</p>
+          </div>
+          <div className="bg-white/15 backdrop-blur-sm rounded-lg p-2 text-center">
+            <p className="text-sm font-black">{tier?.label || "Free"}</p>
+            <p className="text-[8px] text-white/70 uppercase">Plan</p>
+          </div>
         </div>
       )}
     </div>
