@@ -30,6 +30,7 @@ import { useLicense } from "@/lib/use-license";
 export function LicenseLockOverlay() {
   const {
     isLicensed,
+    isExpired,
     licenseKey,
     showActivate,
     setShowActivate,
@@ -60,6 +61,35 @@ export function LicenseLockOverlay() {
 
   return (
     <>
+      {/* EXPIRY LOCK — full screen when license just expired */}
+      {isExpired && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="fixed inset-0 z-[80] bg-red-950/95 backdrop-blur-md flex items-center justify-center p-4"
+        >
+          <div className="bg-red-900/50 border border-red-500 rounded-3xl p-6 max-w-sm w-full text-center">
+            <div className="w-16 h-16 mx-auto rounded-full bg-red-500/20 flex items-center justify-center mb-3">
+              <Lock className="w-8 h-8 text-red-400" />
+            </div>
+            <h2 className="text-xl font-black text-white mb-1">License Expired</h2>
+            <p className="text-[11px] text-red-200/80 mb-4">
+              Your license key has expired. All services are now locked.
+              Activate a new key to continue using Apna Cricket.
+            </p>
+            <Button
+              className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold h-11"
+              onClick={() => {
+                setShowActivate(true);
+              }}
+            >
+              <ShieldCheck className="w-4 h-4 mr-2" />
+              Activate New Key
+            </Button>
+          </div>
+        </motion.div>
+      )}
+
       {/* Floating lock button — always visible when license not active */}
       <button
         onClick={() => setShowActivate(true)}
