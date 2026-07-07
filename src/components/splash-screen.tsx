@@ -45,30 +45,46 @@ export function SplashScreen({ onFinish, duration = 3500 }: SplashScreenProps) {
           }}
         >
           {/* Stadium light bokeh — top */}
+          {/* IMPORTANT: Use deterministic values (not Math.random) to avoid
+              SSR hydration mismatch. Each particle's position/size is
+              calculated from its index, so server and client render identically. */}
           <div className="absolute top-0 left-0 right-0 h-1/2 overflow-hidden pointer-events-none">
-            {Array.from({ length: 15 }).map((_, i) => (
-              <motion.div
-                key={`bokeh-${i}`}
-                className="absolute rounded-full bg-white"
-                style={{
-                  width: `${4 + Math.random() * 8}px`,
-                  height: `${4 + Math.random() * 8}px`,
-                  left: `${Math.random() * 100}%`,
-                  top: `${Math.random() * 100}%`,
-                  filter: "blur(2px)",
-                }}
-                animate={{
-                  opacity: [0.3, 0.9, 0.3],
-                  scale: [0.8, 1.2, 0.8],
-                }}
-                transition={{
-                  duration: 2 + Math.random() * 2,
-                  repeat: Infinity,
-                  delay: Math.random() * 2,
-                  ease: "easeInOut",
-                }}
-              />
-            ))}
+            {Array.from({ length: 15 }).map((_, i) => {
+              // Deterministic pseudo-random based on index
+              const dRand = (seed: number) => {
+                const x = Math.sin(seed * 9999 + 1) * 10000;
+                return x - Math.floor(x);
+              };
+              const w = 4 + dRand(i * 3 + 1) * 8;
+              const h = 4 + dRand(i * 3 + 2) * 8;
+              const left = dRand(i * 3 + 3) * 100;
+              const top = dRand(i * 3 + 4) * 100;
+              const dur = 2 + dRand(i * 3 + 5) * 2;
+              const delay = dRand(i * 3 + 6) * 2;
+              return (
+                <motion.div
+                  key={`bokeh-${i}`}
+                  className="absolute rounded-full bg-white"
+                  style={{
+                    width: `${w}px`,
+                    height: `${h}px`,
+                    left: `${left}%`,
+                    top: `${top}%`,
+                    filter: "blur(2px)",
+                  }}
+                  animate={{
+                    opacity: [0.3, 0.9, 0.3],
+                    scale: [0.8, 1.2, 0.8],
+                  }}
+                  transition={{
+                    duration: dur,
+                    repeat: Infinity,
+                    delay,
+                    ease: "easeInOut",
+                  }}
+                />
+              );
+            })}
           </div>
 
           {/* Golden light rays from top */}
