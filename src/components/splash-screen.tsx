@@ -8,15 +8,27 @@ interface SplashScreenProps {
   duration?: number; // ms
 }
 
-export function SplashScreen({ onFinish, duration = 2200 }: SplashScreenProps) {
+export function SplashScreen({ onFinish, duration = 3000 }: SplashScreenProps) {
   const [visible, setVisible] = useState(true);
+  const [progress, setProgress] = useState(0);
 
   useEffect(() => {
+    const startTime = Date.now();
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const pct = Math.min(100, (elapsed / duration) * 100);
+      setProgress(pct);
+      if (pct >= 100) clearInterval(interval);
+    }, 50);
+
     const t = setTimeout(() => {
       setVisible(false);
-      setTimeout(() => onFinish?.(), 600); // wait for exit animation
+      setTimeout(() => onFinish?.(), 800);
     }, duration);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      clearInterval(interval);
+    };
   }, [duration, onFinish]);
 
   return (
@@ -24,150 +36,183 @@ export function SplashScreen({ onFinish, duration = 2200 }: SplashScreenProps) {
       {visible && (
         <motion.div
           initial={{ opacity: 1 }}
-          exit={{ opacity: 0, scale: 1.1 }}
-          transition={{ duration: 0.6, ease: "easeInOut" }}
-          className="fixed inset-0 z-[100] brand-gradient flex flex-col items-center justify-center overflow-hidden"
+          exit={{ opacity: 0, scale: 1.05 }}
+          transition={{ duration: 0.8, ease: "easeInOut" }}
+          className="fixed inset-0 z-[100] flex flex-col items-center justify-center overflow-hidden"
+          style={{
+            background: "radial-gradient(ellipse at center, #1e1b4b 0%, #0f0f23 50%, #000000 100%)",
+          }}
         >
-          {/* Animated decorative background shapes */}
+          {/* Animated star field background */}
+          <div className="absolute inset-0">
+            {Array.from({ length: 40 }).map((_, i) => (
+              <motion.div
+                key={i}
+                className="absolute w-1 h-1 bg-white rounded-full"
+                style={{
+                  left: `${Math.random() * 100}%`,
+                  top: `${Math.random() * 100}%`,
+                }}
+                animate={{
+                  opacity: [0, 1, 0],
+                  scale: [0, 1.5, 0],
+                }}
+                transition={{
+                  duration: 2 + Math.random() * 3,
+                  repeat: Infinity,
+                  delay: Math.random() * 3,
+                  ease: "easeInOut",
+                }}
+              />
+            ))}
+          </div>
+
+          {/* Golden rotating rings around logo */}
           <motion.div
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 0.4 }}
-            transition={{ duration: 1.2, ease: "easeOut" }}
-            className="absolute -top-32 -left-32 w-96 h-96 bg-pink-400/30 rounded-full blur-3xl"
+            initial={{ scale: 0, rotate: 0, opacity: 0 }}
+            animate={{ scale: 1, rotate: 360, opacity: 0.6 }}
+            transition={{ duration: 2.5, ease: "easeOut" }}
+            className="absolute w-72 h-72 rounded-full border-2 border-amber-400/30"
+            style={{ boxShadow: "0 0 60px rgba(251, 191, 36, 0.2)" }}
           />
           <motion.div
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 0.3 }}
-            transition={{ duration: 1.4, ease: "easeOut", delay: 0.2 }}
-            className="absolute -bottom-40 -right-40 w-[500px] h-[500px] bg-violet-300/30 rounded-full blur-3xl"
+            initial={{ scale: 0, rotate: 0, opacity: 0 }}
+            animate={{ scale: 1.15, rotate: -360, opacity: 0.4 }}
+            transition={{ duration: 3, ease: "easeOut", delay: 0.3 }}
+            className="absolute w-80 h-80 rounded-full border border-amber-400/20"
           />
           <motion.div
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 0.2 }}
-            transition={{ duration: 1.6, ease: "easeOut", delay: 0.4 }}
-            className="absolute top-1/3 right-1/4 w-72 h-72 bg-fuchsia-300/30 rounded-full blur-3xl"
+            initial={{ scale: 0, rotate: 0, opacity: 0 }}
+            animate={{ scale: 1.3, rotate: 360, opacity: 0.2 }}
+            transition={{ duration: 3.5, ease: "easeOut", delay: 0.6 }}
+            className="absolute w-96 h-96 rounded-full border border-amber-400/10"
           />
 
-          {/* Rotating ring around logo */}
+          {/* 3D-style logo with depth + glow */}
           <motion.div
-            initial={{ scale: 0, rotate: 0 }}
-            animate={{ scale: 1, rotate: 360 }}
-            transition={{ duration: 2, ease: "easeOut" }}
-            className="absolute w-56 h-56 rounded-full border-2 border-white/20"
-          />
-          <motion.div
-            initial={{ scale: 0, rotate: 0 }}
-            animate={{ scale: 1.1, rotate: -360 }}
-            transition={{ duration: 2.5, ease: "easeOut", delay: 0.2 }}
-            className="absolute w-72 h-72 rounded-full border border-white/10"
-          />
-
-          {/* Big logo */}
-          <motion.div
-            initial={{ scale: 0, rotate: -180, opacity: 0 }}
-            animate={{ scale: 1, rotate: 0, opacity: 1 }}
+            initial={{ scale: 0, rotateY: -180, opacity: 0 }}
+            animate={{ scale: 1, rotateY: 0, opacity: 1 }}
             transition={{
-              duration: 0.9,
+              duration: 1.2,
               ease: "backOut",
-              delay: 0.15,
+              delay: 0.3,
             }}
             className="relative z-10"
+            style={{ perspective: 1000 }}
           >
-            <div className="w-44 h-44 rounded-3xl overflow-hidden shadow-2xl shadow-violet-900/50 ring-4 ring-white/30 backdrop-blur-sm flex items-center justify-center bg-white/10">
+            {/* Pulsing glow behind logo */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0, 0.8, 0.4, 0.8] }}
+              transition={{ duration: 2, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+              className="absolute inset-0 w-48 h-48 rounded-full bg-amber-400 blur-3xl -z-10"
+            />
+
+            {/* Logo container with 3D effect */}
+            <motion.div
+              animate={{
+                y: [0, -8, 0],
+                rotateX: [0, 5, 0],
+              }}
+              transition={{
+                duration: 3,
+                repeat: Infinity,
+                ease: "easeInOut",
+                delay: 1.5,
+              }}
+              className="w-48 h-48 rounded-3xl overflow-hidden shadow-2xl ring-4 ring-amber-400/50"
+              style={{
+                boxShadow: "0 20px 60px rgba(0, 0, 0, 0.5), 0 0 80px rgba(251, 191, 36, 0.4)",
+              }}
+            >
               <img
                 src="/logo-square.png"
                 alt="Apna Cricket"
                 className="w-full h-full object-cover"
                 onError={(e) => {
-                  // Fallback: hide image, show AC text
                   (e.currentTarget as HTMLImageElement).style.display = "none";
                   const parent = (e.currentTarget as HTMLImageElement).parentElement;
                   if (parent) {
-                    parent.innerHTML = `<span style="font-size: 72px; font-weight: 900; color: white; line-height: 1;">AC</span>`;
+                    parent.innerHTML = `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1e1b4b,#0f0f23);"><span style="font-size:64px;font-weight:900;color:#fbbf24;">AC</span></div>`;
                   }
                 }}
               />
-            </div>
-
-            {/* Pulsing glow behind logo */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: [0, 0.6, 0] }}
-              transition={{ duration: 2, repeat: Infinity, ease: "easeInOut", delay: 0.8 }}
-              className="absolute inset-0 w-44 h-44 rounded-3xl bg-white blur-2xl -z-10"
-            />
+            </motion.div>
           </motion.div>
 
-          {/* App name */}
+          {/* App name with gold gradient */}
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.7 }}
-            className="relative z-10 mt-8 text-center"
+            transition={{ duration: 0.8, delay: 1 }}
+            className="relative z-10 mt-10 text-center"
           >
-            <h1 className="text-5xl font-black text-white tracking-tight drop-shadow-lg">
-              Apna
-              <span className="bg-gradient-to-r from-amber-300 to-pink-300 bg-clip-text text-transparent">
-                {" "}Cricket
+            <h1 className="text-5xl font-black tracking-tight drop-shadow-2xl">
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-yellow-400 to-amber-600">
+                APNA
+              </span>{" "}
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-700">
+                CRICKET
               </span>
             </h1>
             <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              transition={{ delay: 1 }}
-              className="text-xs text-white/80 mt-2 font-medium tracking-[0.3em] uppercase"
+              transition={{ delay: 1.3 }}
+              className="text-xs text-amber-300/80 mt-3 font-bold tracking-[0.4em] uppercase"
             >
-              Fantasy Team Generator
+              ⭐ Fantasy Team ⭐
+            </motion.p>
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 1.5 }}
+              className="text-[10px] text-slate-400 mt-2 font-medium tracking-[0.2em] uppercase"
+            >
+              Pick • Strategize • Win
             </motion.p>
           </motion.div>
 
-          {/* Animated loading dots */}
+          {/* Premium loading bar */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ delay: 1.2 }}
-            className="absolute bottom-20 flex gap-2"
+            transition={{ delay: 1.8 }}
+            className="absolute bottom-24 left-1/2 -translate-x-1/2 w-64"
           >
-            {[0, 1, 2].map((i) => (
+            <div className="h-1 bg-slate-800 rounded-full overflow-hidden border border-amber-900/30">
               <motion.div
-                key={i}
-                className="w-2.5 h-2.5 rounded-full bg-white/80"
-                animate={{
-                  scale: [1, 1.5, 1],
-                  opacity: [0.4, 1, 0.4],
-                }}
-                transition={{
-                  duration: 1.2,
-                  repeat: Infinity,
-                  delay: i * 0.2,
-                  ease: "easeInOut",
-                }}
+                className="h-full bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-600"
+                style={{ width: `${progress}%` }}
               />
-            ))}
+            </div>
+            <p className="text-center text-[10px] text-amber-400/60 mt-2 font-bold tracking-wider">
+              LOADING • {Math.round(progress)}%
+            </p>
           </motion.div>
 
-          {/* Version footer */}
+          {/* Footer */}
           <motion.p
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ delay: 1.5 }}
-            className="absolute bottom-8 text-[10px] text-white/50 font-medium tracking-wider"
+            transition={{ delay: 2 }}
+            className="absolute bottom-8 text-[10px] text-slate-500 font-medium tracking-wider"
           >
-            © 2026 Apna Cricket · v1.0.0
+            © 2026 Apna Cricket · Premium v1.0.0
           </motion.p>
 
-          {/* Top shimmer line */}
+          {/* Top + bottom shimmer lines */}
           <motion.div
             initial={{ x: "-100%" }}
             animate={{ x: "100%" }}
-            transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
-            className="absolute top-0 w-1/2 h-1 bg-gradient-to-r from-transparent via-white/60 to-transparent"
+            transition={{ duration: 2, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
+            className="absolute top-0 w-1/2 h-0.5 bg-gradient-to-r from-transparent via-amber-400/60 to-transparent"
           />
           <motion.div
             initial={{ x: "100%" }}
             animate={{ x: "-100%" }}
-            transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-            className="absolute bottom-0 w-1/2 h-1 bg-gradient-to-r from-transparent via-white/40 to-transparent"
+            transition={{ duration: 2, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+            className="absolute bottom-0 w-1/2 h-0.5 bg-gradient-to-r from-transparent via-amber-400/40 to-transparent"
           />
         </motion.div>
       )}

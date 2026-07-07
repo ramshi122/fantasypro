@@ -61,23 +61,49 @@ export function HomeScreen() {
 
   return (
     <div className="px-4 py-4 space-y-4 pb-24">
-      {/* Featured banner — top of home screen */}
-      <motion.a
-        href="#"
+      {/* Apna Cricket Premium Branding Video Banner */}
+      <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="block w-full rounded-2xl overflow-hidden shadow-lg relative"
+        className="block w-full rounded-2xl overflow-hidden shadow-xl relative bg-gradient-to-br from-slate-950 via-violet-950 to-slate-950 border border-amber-600/30"
       >
-        <img
-          src="/promo-banner.jpg"
-          alt="Village Eyecare — See Better Than Yesterday"
-          className="w-full h-auto object-cover"
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = "none";
-          }}
-        />
-      </motion.a>
+        <div className="relative aspect-video flex items-center justify-center">
+          {/* Logo with 3D-style glow */}
+          <div className="relative z-10 text-center">
+            <motion.div
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.8, ease: "backOut" }}
+              className="w-28 h-28 mx-auto mb-3 rounded-2xl overflow-hidden shadow-2xl ring-2 ring-amber-400/50"
+              style={{ boxShadow: "0 0 40px rgba(251, 191, 36, 0.4)" }}
+            >
+              <img
+                src="/logo-square.png"
+                alt="Apna Cricket"
+                className="w-full h-full object-cover"
+              />
+            </motion.div>
+            <h2 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 drop-shadow-lg">
+              APNA CRICKET
+            </h2>
+            <p className="text-[10px] text-amber-200/80 font-bold tracking-[0.3em] uppercase mt-1">
+              Fantasy Team
+            </p>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium">
+              Pick • Strategize • Win
+            </p>
+          </div>
+
+          {/* Animated shimmer overlay */}
+          <motion.div
+            className="absolute inset-0 bg-gradient-to-r from-transparent via-amber-400/10 to-transparent"
+            initial={{ x: "-100%" }}
+            animate={{ x: "100%" }}
+            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+          />
+        </div>
+      </motion.div>
 
       <SportTabs />
 

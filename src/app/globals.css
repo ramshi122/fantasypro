@@ -132,14 +132,54 @@
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
+  /* Premium dark theme — default */
+  html {
+    color-scheme: dark;
+  }
+  html:not(.light) {
+    --background: oklch(0.13 0.02 295);
+    --foreground: oklch(0.98 0.005 300);
+    --card: oklch(0.18 0.03 295);
+    --card-foreground: oklch(0.98 0.005 300);
+    --popover: oklch(0.18 0.03 295);
+    --popover-foreground: oklch(0.98 0.005 300);
+    --primary: oklch(0.7 0.25 295);
+    --primary-foreground: oklch(0.13 0.02 295);
+    --secondary: oklch(0.25 0.04 295);
+    --secondary-foreground: oklch(0.98 0.005 300);
+    --muted: oklch(0.25 0.04 295);
+    --muted-foreground: oklch(0.7 0.03 290);
+    --accent: oklch(0.32 0.08 320);
+    --accent-foreground: oklch(0.98 0.005 300);
+    --border: oklch(1 0 0 / 12%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.7 0.25 295);
+  }
 }
 
 @layer utilities {
   .brand-gradient {
     background-image: linear-gradient(135deg, #7C3AED 0%, #EC4899 100%);
   }
+  .premium-gold-gradient {
+    background-image: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%);
+  }
+  .premium-gold-text {
+    background-image: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .premium-dark-card {
+    background: linear-gradient(135deg, rgba(30, 27, 75, 0.8) 0%, rgba(15, 15, 35, 0.9) 100%);
+    border: 1px solid rgba(251, 191, 36, 0.15);
+    backdrop-filter: blur(12px);
+  }
+  .premium-glow {
+    box-shadow: 0 0 30px rgba(251, 191, 36, 0.3);
+  }
   .brand-gradient-soft {
-    background-image: linear-gradient(135deg, #f5f3ff 0%, #fdf2f8 100%);
+    background-image: linear-gradient(135deg, #1e1b4b 0%, #0f0f23 100%);
   }
   .brand-gradient-text {
     background-image: linear-gradient(135deg, #7C3AED 0%, #EC4899 100%);
