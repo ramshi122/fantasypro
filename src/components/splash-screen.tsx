@@ -10,8 +10,16 @@ interface SplashScreenProps {
 }
 
 export function SplashScreen({ onFinish, duration = 3500 }: SplashScreenProps) {
+  // CRITICAL: Don't render during SSR — only render on client.
+  // This prevents hydration mismatch from Math.random / Date.now differences.
+  const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(true);
   const [progress, setProgress] = useState(0);
+
+  // Only mount on client (after hydration)
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     const startTime = Date.now();
@@ -31,6 +39,9 @@ export function SplashScreen({ onFinish, duration = 3500 }: SplashScreenProps) {
       clearInterval(interval);
     };
   }, [duration, onFinish]);
+
+  // Don't render during SSR — prevents hydration mismatch
+  if (!mounted) return null;
 
   return (
     <AnimatePresence>
