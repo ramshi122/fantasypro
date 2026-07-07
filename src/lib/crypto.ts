@@ -1,7 +1,7 @@
 import CryptoJS from "crypto-js";
 
 /**
- * AES encryption helper for FantasyPro API.
+ * AES encryption helper for Apna Cricket API.
  * All payloads to / responses from the backend are AES-encrypted using a shared key.
  */
 const SECRET_KEY = "coder_bobby_believer01_tg_software";

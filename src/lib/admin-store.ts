@@ -624,7 +624,7 @@ export const useAdmin = create<AdminState>()(
       },
     }),
     {
-      name: "fantasypro-admin",
+      name: "apna-cricket-admin",
       storage: createJSONStorage(() => localStorage),
       version: 7,
       // Migrate persisted state from any older version to current shape.
@@ -791,7 +791,7 @@ if (typeof window !== "undefined") {
 
 /* ---------- License Lock (client-side) ---------- */
 
-const LICENSE_STORAGE_KEY = "fantasypro-license";
+const LICENSE_STORAGE_KEY = "apna-cricket-license";
 
 export interface LicenseState {
   verified: boolean;
@@ -802,10 +802,10 @@ export interface LicenseState {
 
 export function getDeviceId(): string {
   if (typeof window === "undefined") return "server";
-  let id = localStorage.getItem("fantasypro-device-id");
+  let id = localStorage.getItem("apna-cricket-device-id");
   if (!id) {
     id = "dev_" + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
-    localStorage.setItem("fantasypro-device-id", id);
+    localStorage.setItem("apna-cricket-device-id", id);
   }
   return id;
 }

@@ -17,7 +17,7 @@ import { AdminPanel } from "@/components/admin/admin-panel";
 import { LicenseLockOverlay } from "@/components/admin/license-lock";
 import { AnimatePresence, motion } from "framer-motion";
 
-const SPLASH_KEY = "fantasypro-splash-shown";
+const SPLASH_KEY = "apna-cricket-splash-shown";
 
 export default function Home() {
   const isAuthenticated = useAuth((s) => s.isAuthenticated);
@@ -57,9 +57,9 @@ export default function Home() {
       <div className="min-h-screen brand-gradient flex items-center justify-center">
         <div className="text-center text-white">
           <div className="w-16 h-16 mx-auto rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center mb-3">
-            <span className="text-3xl font-black">F</span>
+            <span className="text-2xl font-black">AC</span>
           </div>
-          <p className="text-sm font-semibold">Loading FantasyPro...</p>
+          <p className="text-sm font-semibold">Loading Apna Cricket...</p>
         </div>
       </div>
     );

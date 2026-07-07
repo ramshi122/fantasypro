@@ -73,14 +73,18 @@ export function SplashScreen({ onFinish, duration = 2200 }: SplashScreenProps) {
             }}
             className="relative z-10"
           >
-            <div className="w-44 h-44 rounded-3xl overflow-hidden shadow-2xl shadow-violet-900/50 ring-4 ring-white/30 backdrop-blur-sm">
+            <div className="w-44 h-44 rounded-3xl overflow-hidden shadow-2xl shadow-violet-900/50 ring-4 ring-white/30 backdrop-blur-sm flex items-center justify-center bg-white/10">
               <img
-                src="/logo-full.png"
-                alt="FantasyPro"
-                className="w-full h-full object-contain"
+                src="/logo-square.png"
+                alt="Apna Cricket"
+                className="w-full h-full object-cover"
                 onError={(e) => {
-                  // Fallback to square logo
-                  (e.currentTarget as HTMLImageElement).src = "/logo-square.png";
+                  // Fallback: hide image, show AC text
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                  const parent = (e.currentTarget as HTMLImageElement).parentElement;
+                  if (parent) {
+                    parent.innerHTML = `<span style="font-size: 72px; font-weight: 900; color: white; line-height: 1;">AC</span>`;
+                  }
                 }}
               />
             </div>
@@ -102,9 +106,9 @@ export function SplashScreen({ onFinish, duration = 2200 }: SplashScreenProps) {
             className="relative z-10 mt-8 text-center"
           >
             <h1 className="text-5xl font-black text-white tracking-tight drop-shadow-lg">
-              Fantasy
+              Apna
               <span className="bg-gradient-to-r from-amber-300 to-pink-300 bg-clip-text text-transparent">
-                Pro
+                {" "}Cricket
               </span>
             </h1>
             <motion.p
@@ -113,7 +117,7 @@ export function SplashScreen({ onFinish, duration = 2200 }: SplashScreenProps) {
               transition={{ delay: 1 }}
               className="text-xs text-white/80 mt-2 font-medium tracking-[0.3em] uppercase"
             >
-              AI Team Generator
+              Fantasy Team Generator
             </motion.p>
           </motion.div>
 
@@ -149,7 +153,7 @@ export function SplashScreen({ onFinish, duration = 2200 }: SplashScreenProps) {
             transition={{ delay: 1.5 }}
             className="absolute bottom-8 text-[10px] text-white/50 font-medium tracking-wider"
           >
-            © 2026 FantasyPro · v1.0.0
+            © 2026 Apna Cricket · v1.0.0
           </motion.p>
 
           {/* Top shimmer line */}

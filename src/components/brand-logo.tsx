@@ -16,7 +16,7 @@ export function BrandLogo({
   useImage = true,
 }: BrandLogoProps) {
   // When useImage is true, render the actual uploaded logo image inside a
-  // rounded container. Otherwise fall back to the gradient "F" mark.
+  // rounded container. Otherwise fall back to the gradient "AC" mark.
   if (useImage) {
     return (
       <div className={cn("flex items-center gap-2", className)}>
@@ -26,7 +26,7 @@ export function BrandLogo({
         >
           <img
             src="/logo-square.png"
-            alt="FantasyPro"
+            alt="Apna Cricket"
             className="w-full h-full object-cover"
             onError={(e) => {
               // Fallback to gradient mark if image fails to load
@@ -34,7 +34,7 @@ export function BrandLogo({
               const parent = (e.currentTarget as HTMLImageElement).parentElement;
               if (parent) {
                 parent.className = "brand-gradient rounded-xl flex items-center justify-center shadow-lg shadow-violet-500/30";
-                parent.innerHTML = `<span style="font-size: ${size * 0.5}" class="font-black text-white leading-none">F</span>`;
+                parent.innerHTML = `<span style="font-size: ${size * 0.4}" class="font-black text-white leading-none">AC</span>`;
               }
             }}
           />
@@ -47,10 +47,10 @@ export function BrandLogo({
                 textClassName
               )}
             >
-              FantasyPro
+              Apna Cricket
             </span>
             <span className="text-[10px] text-muted-foreground font-medium tracking-wider uppercase">
-              AI Team Generator
+              Fantasy Team
             </span>
           </div>
         )}
@@ -67,9 +67,9 @@ export function BrandLogo({
       >
         <span
           className="font-black text-white leading-none"
-          style={{ fontSize: size * 0.5 }}
+          style={{ fontSize: size * 0.4 }}
         >
-          F
+          AC
         </span>
       </div>
       {withText && (
@@ -80,10 +80,10 @@ export function BrandLogo({
               textClassName
             )}
           >
-            FantasyPro
+            Apna Cricket
           </span>
           <span className="text-[10px] text-muted-foreground font-medium tracking-wider uppercase">
-            AI Team Generator
+            Fantasy Team
           </span>
         </div>
       )}

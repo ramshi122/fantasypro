@@ -313,7 +313,7 @@ export function BulkTransferModal({
   // Mark successfully transferred teams in localStorage so they show "Sent" badge
   function markTeamsTransferred() {
     try {
-      const all = JSON.parse(localStorage.getItem("fantasypro-local-teams") || "{}");
+      const all = JSON.parse(localStorage.getItem("apna-cricket-local-teams") || "{}");
       const key = String(matchNumericId);
       const list = all[key] || [];
       for (const t of list) {
@@ -321,7 +321,7 @@ export function BulkTransferModal({
         t.transferStatus = "transferred";
       }
       all[key] = list;
-      localStorage.setItem("fantasypro-local-teams", JSON.stringify(all));
+      localStorage.setItem("apna-cricket-local-teams", JSON.stringify(all));
     } catch {}
   }
 

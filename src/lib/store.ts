@@ -28,7 +28,7 @@ export const useAuth = create<AuthState>()(
       token: null,
       user: null,
       isAuthenticated: false,
-      // Auto-login as guest on first load — bypasses FantasyPro login
+      // Auto-login as guest on first load — bypasses Apna Cricket login
       // entirely so all features work without any external tokens.
       isGuest: true,
       setAuth: (token, user) =>
@@ -49,7 +49,7 @@ export const useAuth = create<AuthState>()(
         }),
     }),
     {
-      name: "fantasypro-auth",
+      name: "apna-cricket-auth",
       storage: createJSONStorage(() => localStorage),
     }
   )
@@ -116,7 +116,7 @@ export const useApp = create<AppState>()(
       },
     }),
     {
-      name: "fantasypro-app",
+      name: "apna-cricket-app",
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
         savedMatches: s.savedMatches,

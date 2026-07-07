@@ -50,7 +50,7 @@ export function TopHeader({ onAdminTrigger }: { onAdminTrigger?: () => void }) {
               <SheetHeader className="p-4 brand-gradient">
                 <SheetTitle className="text-white flex items-center gap-2">
                   <BrandLogo size={28} />
-                  <span>FantasyPro</span>
+                  <span>Apna Cricket</span>
                 </SheetTitle>
               </SheetHeader>
               <nav className="p-2 overflow-y-auto h-[calc(100vh-72px)]">

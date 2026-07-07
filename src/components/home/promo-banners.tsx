@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 
 const BANNERS = [
   {
-    title: "Join FantasyPro Group",
+    title: "Join Apna Cricket Group",
     subtitle: "Instant alerts & expert tips",
     cta: "Join now",
     gradient: "from-violet-600 via-purple-600 to-fuchsia-600",

@@ -213,7 +213,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   // Auto-replace non-playing players in the given teams
   function handleAutoReplaceAll(teamsToFix: TeamRow[]) {
     try {
-      const all = JSON.parse(localStorage.getItem("fantasypro-local-teams") || "{}");
+      const all = JSON.parse(localStorage.getItem("apna-cricket-local-teams") || "{}");
       const list = all[matchId] || [];
       let totalReplaced = 0;
 
@@ -233,7 +233,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
       }
 
       all[matchId] = list;
-      localStorage.setItem("fantasypro-local-teams", JSON.stringify(all));
+      localStorage.setItem("apna-cricket-local-teams", JSON.stringify(all));
 
       if (totalReplaced > 0) {
         toast.success(`Replaced ${totalReplaced} non-playing player(s) across ${teamsToFix.length} team(s)`);

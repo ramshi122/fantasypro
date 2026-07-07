@@ -37,7 +37,7 @@ export function LoginScreen() {
           name: "Premium User",
           plan: "Premium",
         });
-        toast.success("Welcome to FantasyPro! 🎉");
+        toast.success("Welcome to Apna Cricket! 🎉");
       } else {
         toast.error(res?.message || "Invalid token. Please check and try again.");
       }
@@ -81,7 +81,7 @@ export function LoginScreen() {
             <div className="w-28 h-28 rounded-2xl overflow-hidden shadow-2xl bg-white/10 backdrop-blur-sm">
               <img
                 src="/logo-full.png"
-                alt="FantasyPro"
+                alt="Apna Cricket"
                 className="w-full h-full object-contain"
                 onError={(e) => {
                   (e.currentTarget as HTMLImageElement).style.display = "none";
@@ -211,7 +211,7 @@ export function LoginScreen() {
           className="mt-auto pt-8 text-center"
         >
           <p className="text-white/60 text-[11px]">
-            🔒 End-to-end AES encrypted · Developed by FantasyPro
+            🔒 End-to-end AES encrypted · Developed by Apna Cricket
           </p>
         </motion.div>
       </div>

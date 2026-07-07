@@ -7,16 +7,16 @@ import { motion } from "framer-motion";
 import { ExternalLink, Flame, Gift, Send, Sparkles, Tag, Trophy, Users, Youtube } from "lucide-react";
 
 // Rebrand mapping — replace ALL old "Team Generation" / "TG" / "Believer01" labels
-// with FantasyPro equivalents. Old API labels are never shown to the user.
+// with Apna Cricket equivalents. Old API labels are never shown to the user.
 function rebrand(label?: string): string {
-  if (!label) return "FantasyPro";
+  if (!label) return "Apna Cricket";
   const l = label.toLowerCase();
-  if (l.includes("tg group")) return "FantasyPro Community";
-  if (l.includes("tg believer") || l.includes("believer01")) return "FantasyPro Community";
-  if (l.includes("team generation")) return "FantasyPro";
+  if (l.includes("tg group")) return "Apna Cricket Community";
+  if (l.includes("tg believer") || l.includes("believer01")) return "Apna Cricket Community";
+  if (l.includes("team generation")) return "Apna Cricket";
   if (l.includes("transfer") && l.includes("dream11")) return "Transfer to Dream11";
-  if (l.includes("subscribe") && l.includes("channel")) return "Subscribe to FantasyPro";
-  if (l.includes("subscribe")) return "Subscribe to FantasyPro";
+  if (l.includes("subscribe") && l.includes("channel")) return "Subscribe to Apna Cricket";
+  if (l.includes("subscribe")) return "Subscribe to Apna Cricket";
   if (l.includes("myfab11")) return "Play on MyFab11";
   if (l.includes("d11") || l.includes("rules")) return "Dream11 New Rules 2026";
   // Already rebranded
@@ -25,15 +25,15 @@ function rebrand(label?: string): string {
 
 // Rebuild the description — never reuse the API's old copy
 function rebuildDescription(label?: string): string {
-  if (!label) return "Tap to explore exclusive FantasyPro benefits.";
+  if (!label) return "Tap to explore exclusive Apna Cricket benefits.";
   const l = label.toLowerCase();
-  if (l.includes("tg group") || l.includes("believer")) return "Join 50,000+ FantasyPro players. Get instant match alerts, prime teams & expert tips.";
+  if (l.includes("tg group") || l.includes("believer")) return "Join 50,000+ Apna Cricket players. Get instant match alerts, prime teams & expert tips.";
   if (l.includes("transfer") && l.includes("dream11")) return "One-tap direct team transfer to your Dream11 account. No manual selection needed.";
   if (l.includes("subscribe") && l.includes("telegram")) return "Free prime teams, expert predictions & GL teams delivered daily to your Telegram.";
-  if (l.includes("subscribe") && l.includes("channel")) return "Subscribe to FantasyPro YouTube for team breakdowns, match analysis & winning strategies.";
+  if (l.includes("subscribe") && l.includes("channel")) return "Subscribe to Apna Cricket YouTube for team breakdowns, match analysis & winning strategies.";
   if (l.includes("d11") || l.includes("rules")) return "Updated Dream11 rules for 2026 season — new scoring, new credits, new captain rules.";
-  if (l.includes("myfab11")) return "Play fantasy cricket on MyFab11 with exclusive FantasyPro referral bonus.";
-  return "Tap to explore exclusive FantasyPro benefits.";
+  if (l.includes("myfab11")) return "Play fantasy cricket on MyFab11 with exclusive Apna Cricket referral bonus.";
+  return "Tap to explore exclusive Apna Cricket benefits.";
 }
 
 // Pick an icon based on the promo content
@@ -51,7 +51,7 @@ function pickIcon(label?: string, type?: string) {
   return Gift;
 }
 
-// Sexy gradient palette — FantasyPro brand colors (violet → pink → amber family)
+// Sexy gradient palette — Apna Cricket brand colors (violet → pink → amber family)
 const GRADIENTS = [
   "from-violet-600 via-purple-600 to-fuchsia-600",
   "from-pink-600 via-rose-600 to-red-600",
@@ -128,7 +128,7 @@ export function PromotionsScreen() {
           </div>
           <div>
             <h1 className="text-lg font-extrabold tracking-tight">Promotions</h1>
-            <p className="text-[11px] text-white/80">Exclusive FantasyPro offers & deals</p>
+            <p className="text-[11px] text-white/80">Exclusive Apna Cricket offers & deals</p>
           </div>
         </div>
       </motion.div>
@@ -153,7 +153,7 @@ export function PromotionsScreen() {
         <div className="space-y-3">
           {items.map((p, i) => {
             // IMPORTANT: We completely ignore p.image (old TG banner URLs) and
-            // render ONLY new FantasyPro-branded gradient banners. No old
+            // render ONLY new Apna Cricket-branded gradient banners. No old
             // images are ever shown to the user.
             const gradient = GRADIENTS[i % GRADIENTS.length];
             const glow = GLOWS[i % GLOWS.length];
@@ -190,7 +190,7 @@ export function PromotionsScreen() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-[10px] text-white/80 font-semibold uppercase tracking-wider">
-                      FantasyPro Offer
+                      Apna Cricket Offer
                     </p>
                     <p className="text-base font-extrabold leading-tight mt-0.5 drop-shadow-sm">
                       {title}

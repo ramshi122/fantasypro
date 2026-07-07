@@ -16,10 +16,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FantasyPro — AI Fantasy Team Generator",
-  description: "Generate high-quality fantasy teams, transfer to Dream11/My11Circle, and win more. Modern fantasy sports companion.",
-  keywords: ["FantasyPro", "fantasy cricket", "fantasy football", "Dream11", "team generator", "fantasy sports"],
-  authors: [{ name: "FantasyPro" }],
+  title: "Apna Cricket — AI Fantasy Team Generator",
+  description: "Generate high-quality fantasy teams, transfer to Dream11/My11Circle, and win more. Apna Cricket — your fantasy sports companion.",
+  keywords: ["Apna Cricket", "fantasy cricket", "fantasy football", "Dream11", "My11Circle", "team generator", "fantasy sports"],
+  authors: [{ name: "Apna Cricket" }],
   icons: {
     icon: [
       { url: "/logo.png", type: "image/png", sizes: "64x64" },
@@ -29,14 +29,14 @@ export const metadata: Metadata = {
   },
   manifest: "/manifest.json",
   openGraph: {
-    title: "FantasyPro — AI Fantasy Team Generator",
+    title: "Apna Cricket — AI Fantasy Team Generator",
     description: "Generate high-quality fantasy teams, transfer to Dream11/My11Circle, and win more.",
-    siteName: "FantasyPro",
+    siteName: "Apna Cricket",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "FantasyPro",
+    title: "Apna Cricket",
     description: "AI Fantasy Team Generator",
   },
 };

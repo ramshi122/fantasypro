@@ -95,7 +95,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
                 </div>
                 <div>
                   <h2 className="font-black text-base flex items-center gap-2">
-                    FANTASYPRO ADMIN
+                    APNA CRICKET ADMIN
                     <span className="text-[9px] bg-emerald-500 px-1.5 py-0.5 rounded-full font-bold">LIVE</span>
                   </h2>
                   <p className="text-[10px] text-white/70">Hidden admin mode · {admin.adminUsername}</p>
@@ -218,7 +218,7 @@ function AdminLoginModal({ open, onClose }: { open: boolean; onClose: () => void
               >
                 <Shield className="w-7 h-7" />
               </motion.div>
-              <h2 className="font-black text-lg">FANTASYPRO ADMIN</h2>
+              <h2 className="font-black text-lg">APNA CRICKET ADMIN</h2>
               <p className="text-[11px] text-white/70 mt-0.5">Restricted access · Password protected</p>
             </div>
 

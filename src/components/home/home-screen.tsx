@@ -138,9 +138,9 @@ export function HomeScreen() {
       {/* Footer disclaimer */}
       <div className="pt-4 pb-2 text-center">
         <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
-          © 2026 FantasyPro · All Rights Reserved
+          © 2026 Apna Cricket · All Rights Reserved
           <br />
-          Developed by FantasyPro Team
+          Developed by Apna Cricket Team
         </p>
       </div>
     </div>

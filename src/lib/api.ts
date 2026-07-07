@@ -1,7 +1,7 @@
 import { encrypt, decrypt } from "./crypto";
 
 /**
- * FantasyPro API client — patched to match the actual FantasyPro backend.
+ * Apna Cricket API client — patched to match the actual Apna Cricket backend.
  *
  * Architecture (verified by inspecting teamgeneration.in (reference) + live API):
  *
@@ -20,7 +20,7 @@ import { encrypt, decrypt } from "./crypto";
  *    - POST /api/dream11/contest/join-contest  body: {authToken, matchId, contestId, teamIds}
  *                                                resp: {status, joinResults, summary}
  *
- * 3. FantasyPro user auth (Bearer JWT in header — obtained via Google OAuth):
+ * 3. Apna Cricket user auth (Bearer JWT in header — obtained via Google OAuth):
  *    Used only for admin / premium features. We BYPASS this in guest mode.
  *
  * 4. Local fallback (guest mode):
@@ -654,8 +654,8 @@ export async function listFantasyTeams(params: {
 
 /* ---------- Local team store (guest mode) ---------- */
 
-const LOCAL_TEAMS_KEY = "fantasypro-local-teams";
-const LOCAL_FANTASY_TOKENS_KEY = "fantasypro-fantasy-tokens";
+const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
+const LOCAL_FANTASY_TOKENS_KEY = "apna-cricket-fantasy-tokens";
 
 function readLocalTeams(): Record<string, TeamRow[]>;
 function readLocalTeams(matchId: string): TeamRow[];
@@ -825,7 +825,7 @@ export async function addTeam(
 ): Promise<TeamRow | { success: boolean; offline: boolean }> {
   // Always persist to localStorage so guest mode works seamlessly.
   // If a real backend token is available, we'd also POST to /api/fantasy/add-team,
-  // but the actual FantasyPro backend uses /api/dream11/teams/{matchId} for
+  // but the actual Apna Cricket backend uses /api/dream11/teams/{matchId} for
   // real team creation — which requires a real Dream11 auth token. In guest mode
   // we mock the success response.
   const all = readLocalTeams();

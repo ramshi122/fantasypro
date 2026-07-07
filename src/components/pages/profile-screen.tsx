@@ -105,7 +105,7 @@ export function ProfileScreen({ onAdminTrigger }: { onAdminTrigger?: () => void 
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-base font-bold truncate">
-              {user?.name || "FantasyPro User"}
+              {user?.name || "Apna Cricket User"}
             </p>
             <p className="text-xs text-white/80 truncate">
               {user?.email || user?.mobile || "Premium Member"}
@@ -248,7 +248,7 @@ export function ProfileScreen({ onAdminTrigger }: { onAdminTrigger?: () => void 
           className="text-[10px] text-muted-foreground mb-3 cursor-pointer select-none"
           onClick={() => versionTrigger.registerTap()}
         >
-          FantasyPro v1.0.0 · © 2026
+          Apna Cricket v1.0.0 · © 2026
         </p>
         <Button
           variant="outline"
