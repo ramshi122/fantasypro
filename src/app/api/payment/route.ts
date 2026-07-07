@@ -1,21 +1,20 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
 import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { withSecurity } from "@/lib/security-wrapper";
 
 /**
  * Payment API — handles license key purchase
+ * PROTECTED: Rate limited to 5 requests/minute per IP
  *
  * Flow:
  *   1. POST /api/payment — create payment order
- *      Body: { mobile, plan, amount }
- *      Returns: { orderId, paymentUrl }
+ *      Body: { action: "create-order", mobile, plan }
+ *      Returns: { orderId, amount, plan, keyType }
  *
  *   2. POST /api/payment — verify payment + activate key
- *      Body: { orderId, paymentId, status }
- *      Returns: { success, licenseKey, keyType, expiresAt }
- *
- * In production, this would integrate with Razorpay/PhonePe/Stripe.
- * Demo mode: auto-approves payment, generates + activates key immediately.
+ *      Body: { action: "verify", orderId, paymentId, status }
+ *      Returns: { licenseKey, keyType, expiresAt }
  */
 
 const PLAN_CONFIG: Record<string, { amount: number; keyType: string; label: string }> = {
@@ -51,7 +50,8 @@ function getExpiry(keyType: string): number | null {
   }
 }
 
-export async function POST(request: Request) {
+// Protected POST handler — rate limited to 5 requests/minute
+export const POST = withSecurity(async (request: Request) => {
   try {
     const body = await request.json();
     const { action, mobile, plan, orderId, paymentId, status } = body;
@@ -220,4 +220,4 @@ export async function POST(request: Request) {
       message: "Server error",
     }, { status: 200 });
   }
-}
+}, { rateLimit: 5 }); // 5 requests per minute for payment

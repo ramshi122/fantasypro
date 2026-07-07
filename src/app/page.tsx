@@ -28,6 +28,15 @@ export default function Home() {
   const [showSplash, setShowSplash] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
 
+  // Initialize anti-tampering security on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    // Dynamic import to avoid SSR
+    import("@/lib/security").then(({ initAntiTampering }) => {
+      initAntiTampering();
+    });
+  }, []);
+
   // Show splash on first load of each session (not on every navigation)
   useEffect(() => {
     if (typeof window === "undefined") return;
