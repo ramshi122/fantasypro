@@ -1,0 +1,17 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // License keys collection — allow read/write for app to function
+    match /license_keys/{keyId} {
+      allow read: if true;
+      allow write: if true;
+      allow update: if true;
+      allow delete: if true;
+    }
+
+    // Default — deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

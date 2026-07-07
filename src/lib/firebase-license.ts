@@ -3,16 +3,16 @@
  * ================================
  * Handles license key storage in Firebase Firestore for cross-device sync.
  *
+ * Uses the hardcoded Firebase config from src/lib/firebase.ts
+ * (project: revofixer-81a1c)
+ *
  * Firestore collection: `license_keys`
  * Document ID: license key string (e.g. "CRICB-ABCD-EFGH-IJKL")
  * Fields: key, type, status, createdAt, expiresAt, deviceIds[], userName, verifications
- *
- * Falls back to localStorage if Firebase is not configured or offline.
  */
 
-import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
+import { db } from "./firebase";
 import {
-  getFirestore,
   doc,
   setDoc,
   getDoc,
@@ -23,56 +23,30 @@ import {
   query,
   where,
   serverTimestamp,
-  type Firestore,
 } from "firebase/firestore";
 import type { KeyType, KeyStatus, LicenseKey } from "./admin-store";
 
-let app: FirebaseApp | null = null;
-let db: Firestore | null = null;
-let initialized = false;
+let initialized = db !== undefined;
+let dbInstance = db;
 
 const COLLECTION = "license_keys";
 
 /**
- * Initialize Firebase with the given config.
- * Returns true if successful, false otherwise.
+ * Initialize Firebase — already done in firebase.ts, this is a no-op for compatibility.
+ * Returns true if Firebase is ready.
  */
-export function initFirebase(config: string): boolean {
-  if (initialized) return db !== null;
-  initialized = true;
-
-  if (!config || !config.trim()) {
-    console.log("[Firebase] No config provided — using localStorage only");
-    return false;
-  }
-
-  try {
-    const parsed = JSON.parse(config);
-    if (!parsed.apiKey || !parsed.projectId) {
-      console.error("[Firebase] Invalid config — missing apiKey or projectId");
-      return false;
-    }
-
-    // Use existing app if already initialized
-    if (getApps().length > 0) {
-      app = getApps()[0];
-    } else {
-      app = initializeApp(parsed);
-    }
-    db = getFirestore(app);
-    console.log("[Firebase] Initialized successfully — project:", parsed.projectId);
-    return true;
-  } catch (err) {
-    console.error("[Firebase] Init failed:", err);
-    return false;
-  }
+export function initFirebase(_config?: string): boolean {
+  if (initialized && dbInstance) return true;
+  // Firebase is initialized at import time in firebase.ts
+  initialized = dbInstance !== undefined;
+  return initialized;
 }
 
 /**
  * Check if Firebase is ready (initialized + has db).
  */
 export function isFirebaseReady(): boolean {
-  return db !== null;
+  return dbInstance !== undefined && dbInstance !== null;
 }
 
 /**
@@ -80,9 +54,9 @@ export function isFirebaseReady(): boolean {
  * Creates or updates the document.
  */
 export async function syncKeyToFirestore(key: LicenseKey): Promise<boolean> {
-  if (!db) return false;
+  if (!dbInstance) return false;
   try {
-    await setDoc(doc(db, COLLECTION, key.key), {
+    await setDoc(doc(dbInstance, COLLECTION, key.key), {
       ...key,
       updatedAt: serverTimestamp(),
     });
@@ -97,9 +71,9 @@ export async function syncKeyToFirestore(key: LicenseKey): Promise<boolean> {
  * Fetch a license key from Firestore by key string.
  */
 export async function fetchKeyFromFirestore(keyStr: string): Promise<LicenseKey | null> {
-  if (!db) return null;
+  if (!dbInstance) return null;
   try {
-    const snap = await getDoc(doc(db, COLLECTION, keyStr));
+    const snap = await getDoc(doc(dbInstance, COLLECTION, keyStr));
     if (!snap.exists()) return null;
     const data = snap.data();
     return {
@@ -123,9 +97,9 @@ export async function fetchKeyFromFirestore(keyStr: string): Promise<LicenseKey 
  * Fetch ALL license keys from Firestore.
  */
 export async function fetchAllKeysFromFirestore(): Promise<LicenseKey[]> {
-  if (!db) return [];
+  if (!dbInstance) return [];
   try {
-    const snap = await getDocs(collection(db, COLLECTION));
+    const snap = await getDocs(collection(dbInstance, COLLECTION));
     const keys: LicenseKey[] = [];
     snap.forEach((doc) => {
       const data = doc.data();
@@ -155,9 +129,9 @@ export async function updateKeyStatusInFirestore(
   keyStr: string,
   status: KeyStatus
 ): Promise<boolean> {
-  if (!db) return false;
+  if (!dbInstance) return false;
   try {
-    await updateDoc(doc(db, COLLECTION, keyStr), { status, updatedAt: serverTimestamp() });
+    await updateDoc(doc(dbInstance, COLLECTION, keyStr), { status, updatedAt: serverTimestamp() });
     return true;
   } catch (err) {
     console.error("[Firebase] updateKeyStatusInFirestore failed:", err);
@@ -169,9 +143,9 @@ export async function updateKeyStatusInFirestore(
  * Delete a key from Firestore.
  */
 export async function deleteKeyFromFirestore(keyStr: string): Promise<boolean> {
-  if (!db) return false;
+  if (!dbInstance) return false;
   try {
-    await deleteDoc(doc(db, COLLECTION, keyStr));
+    await deleteDoc(doc(dbInstance, COLLECTION, keyStr));
     return true;
   } catch (err) {
     console.error("[Firebase] deleteKeyFromFirestore failed:", err);
@@ -188,7 +162,7 @@ export async function verifyKeyInFirestore(
   keyStr: string,
   deviceId: string
 ): Promise<{ valid: boolean; message: string; keyType?: KeyType; key?: LicenseKey }> {
-  if (!db) {
+  if (!dbInstance) {
     return { valid: false, message: "Firebase not initialized" };
   }
 
@@ -216,7 +190,7 @@ export async function verifyKeyInFirestore(
       ? key.deviceIds
       : [...key.deviceIds, deviceId];
 
-    await updateDoc(doc(db, COLLECTION, keyStr), {
+    await updateDoc(doc(dbInstance, COLLECTION, keyStr), {
       deviceIds: updatedDeviceIds,
       lastVerified: Date.now(),
       verifications: (key.verifications || 0) + 1,
@@ -244,7 +218,7 @@ export async function bulkSyncKeysToFirestore(keys: LicenseKey[]): Promise<{
   synced: number;
   failed: number;
 }> {
-  if (!db) return { synced: 0, failed: keys.length };
+  if (!dbInstance) return { synced: 0, failed: keys.length };
 
   let synced = 0;
   let failed = 0;
@@ -265,7 +239,7 @@ export async function suspendAllKeysInFirestore(): Promise<{
   suspended: number;
   failed: number;
 }> {
-  if (!db) return { suspended: 0, failed: 0 };
+  if (!dbInstance) return { suspended: 0, failed: 0 };
 
   try {
     const keys = await fetchAllKeysFromFirestore();
@@ -286,3 +260,4 @@ export async function suspendAllKeysInFirestore(): Promise<{
     return { suspended: 0, failed: 1 };
   }
 }
+

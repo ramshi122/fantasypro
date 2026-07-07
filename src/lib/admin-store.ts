@@ -190,7 +190,15 @@ function uid(): string {
 const DEFAULT_SETTINGS: AdminSettings = {
   adminPassword: "8950888988",
   apiUrl: "https://tgsoftware-api.online",
-  firebaseConfig: "",
+  firebaseConfig: JSON.stringify({
+    apiKey: "AIzaSyDbaFKRqrD976syNij_fSSuIBSPRtR9vbo",
+    authDomain: "revofixer-81a1c.firebaseapp.com",
+    projectId: "revofixer-81a1c",
+    storageBucket: "revofixer-81a1c.firebasestorage.app",
+    messagingSenderId: "1049094387124",
+    appId: "1:1049094387124:web:864be9cd7ed7c2455caee1",
+    measurementId: "G-HYF2T2VQ8K",
+  }),
   licensePrefix: LICENSE_PREFIX_DEFAULT,
   teamGenerator: {
     enabled: true,
