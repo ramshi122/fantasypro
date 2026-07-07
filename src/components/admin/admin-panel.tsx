@@ -333,7 +333,7 @@ function LicensesTab() {
       k.userName?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const keyTypes: KeyType[] = ["trial", "weekly", "monthly", "elite", "lifetime"];
+  const keyTypes: KeyType[] = ["trial", "match_basic", "match_full", "weekly", "monthly", "elite", "lifetime"];
   const statusColors: Record<KeyStatus, string> = {
     active: "bg-emerald-500",
     used: "bg-sky-500",

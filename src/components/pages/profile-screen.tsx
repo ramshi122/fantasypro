@@ -6,6 +6,7 @@ import { BrandLogo } from "@/components/brand-logo";
 import { Button } from "@/components/ui/button";
 import {
   Bell,
+  CheckCircle2,
   ChevronRight,
   Crown,
   HelpCircle,
@@ -239,6 +240,12 @@ export function ProfileScreen({ onAdminTrigger }: { onAdminTrigger?: () => void 
         </div>
       ))}
 
+      {/* Referral Program Section */}
+      <ReferralSection />
+
+      {/* License Plans Section */}
+      <LicensePlansSection />
+
       {/* Brand + Logout */}
       <div className="text-center py-4">
         <div className="flex justify-center mb-3">
@@ -284,6 +291,213 @@ function StatCard({
       <Icon className="w-4 h-4 text-violet-500 mx-auto mb-1" />
       <p className="text-sm font-black text-foreground">{value}</p>
       <p className="text-[10px] text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
+/* ============== Referral Section ============== */
+
+function ReferralSection() {
+  const [referralCode, setReferralCode] = useState("");
+  const [stats, setStats] = useState({ totalReferrals: 0, activeReferrals: 0, rewardsEarned: 0 });
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    // Lazy import to avoid SSR issues
+    import("@/lib/referral").then(({ getReferralStats }) => {
+      const s = getReferralStats();
+      setReferralCode(s.referralCode);
+      setStats({
+        totalReferrals: s.totalReferrals,
+        activeReferrals: s.activeReferrals,
+        rewardsEarned: s.rewardsEarned,
+      });
+    });
+  }, []);
+
+  function handleCopyCode() {
+    if (!referralCode) return;
+    navigator.clipboard.writeText(referralCode);
+    setCopied(true);
+    toast.success("Referral code copied!");
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  function handleShareWhatsApp() {
+    import("@/lib/referral").then(({ getReferralStats }) => {
+      const s = getReferralStats();
+      const text = encodeURIComponent(s.shareText);
+      window.open(`https://wa.me/?text=${text}`, "_blank");
+    });
+  }
+
+  function handleShareTelegram() {
+    import("@/lib/referral").then(({ getReferralStats }) => {
+      const s = getReferralStats();
+      const text = encodeURIComponent(s.shareText);
+      const url = encodeURIComponent(s.shareUrl);
+      window.open(`https://t.me/share/url?url=${url}&text=${text}`, "_blank");
+    });
+  }
+
+  return (
+    <div className="bg-gradient-to-br from-violet-600 to-fuchsia-600 rounded-2xl p-4 text-white shadow-lg">
+      <div className="flex items-center gap-2 mb-3">
+        <Users className="w-5 h-5" />
+        <h3 className="font-bold text-sm">Refer & Earn</h3>
+      </div>
+      <p className="text-[11px] text-white/80 mb-3">
+        Share your referral code with friends. When they activate a license, you get <b>7 days bonus</b> and they get <b>1 day bonus</b>!
+      </p>
+
+      {/* Referral code display */}
+      <div className="bg-white/15 backdrop-blur-sm rounded-xl p-3 mb-3">
+        <p className="text-[10px] text-white/70 mb-1">Your Referral Code</p>
+        <div className="flex items-center justify-between">
+          <code className="text-lg font-black tracking-wider">{referralCode || "Loading..."}</code>
+          <button
+            onClick={handleCopyCode}
+            className="text-[10px] bg-white/20 hover:bg-white/30 px-2 py-1 rounded-md font-bold flex items-center gap-1"
+          >
+            {copied ? <CheckCircle2 className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+            {copied ? "Copied!" : "Copy"}
+          </button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <div className="bg-white/15 rounded-lg p-2 text-center">
+          <p className="text-lg font-black">{stats.totalReferrals}</p>
+          <p className="text-[9px] text-white/70">Total Referrals</p>
+        </div>
+        <div className="bg-white/15 rounded-lg p-2 text-center">
+          <p className="text-lg font-black">{stats.activeReferrals}</p>
+          <p className="text-[9px] text-white/70">Active</p>
+        </div>
+        <div className="bg-white/15 rounded-lg p-2 text-center">
+          <p className="text-lg font-black">{stats.rewardsEarned}</p>
+          <p className="text-[9px] text-white/70">Days Earned</p>
+        </div>
+      </div>
+
+      {/* Share buttons */}
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          size="sm"
+          className="bg-emerald-500 hover:bg-emerald-600 text-white h-9 text-xs"
+          onClick={handleShareWhatsApp}
+        >
+          <Bell className="w-3 h-3 mr-1" />
+          Share WhatsApp
+        </Button>
+        <Button
+          size="sm"
+          className="bg-sky-500 hover:bg-sky-600 text-white h-9 text-xs"
+          onClick={handleShareTelegram}
+        >
+          <Link2 className="w-3 h-3 mr-1" />
+          Share Telegram
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/* ============== License Plans Section ============== */
+
+function LicensePlansSection() {
+  const plans = [
+    {
+      name: "Trial",
+      price: "FREE",
+      duration: "1 Day",
+      tagline: "Try It. Love It.",
+      color: "from-emerald-500 to-green-600",
+      features: ["Team Generation: FREE", "Single Transfer: 3/day max", "Bulk Add: BLOCKED", "My11Circle: NOT AVAILABLE"],
+    },
+    {
+      name: "Pro",
+      price: "₹299",
+      duration: "30 Days",
+      tagline: "Play More. Win More.",
+      color: "from-sky-500 to-blue-600",
+      features: ["Team Generation: FREE", "Single Transfer: UNLIMITED", "Bulk Add: UP TO 11 TEAMS", "My11Circle: DREAM11 ONLY"],
+    },
+    {
+      name: "Elite",
+      price: "₹999",
+      duration: "90 Days",
+      tagline: "Dominate. Always.",
+      color: "from-violet-500 to-purple-600",
+      badge: "BEST VALUE",
+      features: ["Team Generation: FREE", "Single Transfer: UNLIMITED", "Bulk Add: UP TO 40 TEAMS", "My11Circle: UNLOCKED", "Elite AI: UNLOCKED"],
+    },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 px-1">
+        <Crown className="w-4 h-4 text-amber-500" />
+        <h3 className="font-bold text-sm text-foreground">Choose Your Power</h3>
+      </div>
+
+      {/* Plan cards */}
+      <div className="grid grid-cols-1 gap-2">
+        {plans.map((plan) => (
+          <div
+            key={plan.name}
+            className={cn(
+              "rounded-2xl p-4 text-white shadow-lg relative overflow-hidden bg-gradient-to-br",
+              plan.color
+            )}
+          >
+            {plan.badge && (
+              <span className="absolute top-2 right-2 bg-amber-400 text-amber-950 text-[8px] font-black px-1.5 py-0.5 rounded-full">
+                {plan.badge}
+              </span>
+            )}
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <p className="text-lg font-black">{plan.name}</p>
+                <p className="text-[10px] text-white/80">{plan.tagline}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xl font-black">{plan.price}</p>
+                <p className="text-[10px] text-white/80">{plan.duration}</p>
+              </div>
+            </div>
+            <div className="space-y-1">
+              {plan.features.map((f, i) => (
+                <p key={i} className="text-[10px] text-white/90 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
+                  {f}
+                </p>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 1 Match + 24 Hour keys */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl p-3 text-white text-center">
+          <p className="text-xs font-black">1 Match Key</p>
+          <p className="text-[9px] text-white/80 mt-0.5">Single match access</p>
+          <p className="text-lg font-black mt-1">₹49</p>
+          <p className="text-[9px] text-white/80">6 hours</p>
+        </div>
+        <div className="bg-gradient-to-br from-rose-500 to-pink-600 rounded-2xl p-3 text-white text-center">
+          <p className="text-xs font-black">24 Hour Key</p>
+          <p className="text-[9px] text-white/80 mt-0.5">Full access 24h</p>
+          <p className="text-lg font-black mt-1">₹99</p>
+          <p className="text-[9px] text-white/80">1 day</p>
+        </div>
+      </div>
+
+      <p className="text-center text-[10px] text-muted-foreground">
+        Contact admin to purchase license keys
+      </p>
     </div>
   );
 }

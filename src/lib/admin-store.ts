@@ -13,7 +13,15 @@ import { persist, createJSONStorage } from "zustand/middleware";
 
 /* ---------- Types ---------- */
 
-export type KeyType = "trial" | "weekly" | "monthly" | "lifetime" | "elite";
+// License key tiers:
+//   trial       — 1 day free (Trial)
+//   match_basic — 1 match active (single match access)
+//   match_full  — 24 hour active (full access for 24h)
+//   weekly      — 7 days (legacy)
+//   monthly     — 30 days (Pro — ₹299)
+//   elite       — 90 days (Elite — ₹999)
+//   lifetime    — forever (full access)
+export type KeyType = "trial" | "match_basic" | "match_full" | "weekly" | "monthly" | "elite" | "lifetime";
 export type KeyStatus = "active" | "used" | "expired" | "suspended";
 
 export interface LicenseKey {
@@ -172,12 +180,15 @@ function generateLicenseKey(prefix: string = LICENSE_PREFIX_DEFAULT): string {
 function getExpiryForType(type: KeyType): number | null {
   const now = Date.now();
   const day = 86400000;
+  const hour = 3600000;
   switch (type) {
-    case "trial": return now + 1 * day;
-    case "weekly": return now + 7 * day;
-    case "monthly": return now + 30 * day;
-    case "elite": return now + 90 * day; // Elite = 90 days
-    case "lifetime": return null;
+    case "trial": return now + 1 * day;        // 1 day free
+    case "match_basic": return now + 6 * hour; // 1 match = 6 hours
+    case "match_full": return now + 1 * day;   // 24 hour active
+    case "weekly": return now + 7 * day;       // 7 days
+    case "monthly": return now + 30 * day;     // 30 days (Pro ₹299)
+    case "elite": return now + 90 * day;       // 90 days (Elite ₹999)
+    case "lifetime": return null;              // forever
   }
 }
 
