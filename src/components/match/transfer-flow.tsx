@@ -406,11 +406,20 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               {existingTeams.length} team{existingTeams.length !== 1 ? "s" : ""} saved
             </p>
             <div className="flex gap-1.5 flex-wrap">
-              {/* Transfer to Dream11 — always show */}
+              {/* Transfer to Dream11 — trial users limited to 3/day */}
               <Button
                 size="sm"
                 onClick={() => {
                   if (!license.requireLicense()) return;
+                  // Trial users: limit to 3 transfers per day
+                  if (license.licenseKeyType === "trial") {
+                    const today = new Date().toDateString();
+                    const transferCount = parseInt(localStorage.getItem(`apna-cricket-transfers-${today}`) || "0");
+                    if (transferCount >= 3) {
+                      toast.error("Trial limit: 3 transfers per day. Upgrade to Pro (₹299) for unlimited transfers.");
+                      return;
+                    }
+                  }
                   setSelectedTransferApp("dream11");
                   setShowBulkTransfer(true);
                 }}
@@ -423,11 +432,17 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 {license.isLicensed ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
                 {license.isLicensed ? "🏏 Dream11" : "Dream11 🔒"}
               </Button>
-              {/* Transfer to My11Circle — always show */}
+              {/* Transfer to My11Circle — requires match_full or higher (NOT trial/match_basic) */}
               <Button
                 size="sm"
                 onClick={() => {
                   if (!license.requireLicense()) return;
+                  // My11Circle requires match_full, weekly, monthly, elite, or lifetime
+                  const my11Tiers = ["match_full", "weekly", "monthly", "elite", "lifetime"];
+                  if (!license.licenseKeyType || !my11Tiers.includes(license.licenseKeyType)) {
+                    toast.error("My11Circle transfer requires 24 Hour key (₹99) or higher. Trial/1-Match users can only use Dream11.");
+                    return;
+                  }
                   setSelectedTransferApp("my11circle");
                   setShowBulkTransfer(true);
                 }}
@@ -442,7 +457,19 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               </Button>
               <Button
                 size="sm"
-                onClick={() => license.requireLicense() && setShowFreeContests(true)}
+                onClick={() => {
+                  // Free Contests: requires at least match_basic or higher (NOT trial)
+                  if (!license.isLicensed) {
+                    license.requireLicense();
+                    return;
+                  }
+                  const contestTiers = ["match_basic", "match_full", "weekly", "monthly", "elite", "lifetime"];
+                  if (!license.licenseKeyType || !contestTiers.includes(license.licenseKeyType)) {
+                    toast.error("Free Contests requires at least 1 Match key (₹49) or higher. Trial users cannot join contests.");
+                    return;
+                  }
+                  setShowFreeContests(true);
+                }}
                 className={cn(
                   license.isLicensed ? "bg-amber-500 hover:bg-amber-600 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
                 )}
