@@ -207,20 +207,53 @@ function pickTeamByType(
   team2Name: string,
   rng: () => number
 ): MatchPlayer[] | null {
-  // Determine role counts based on type (must sum to 11, follow rules)
-  // Cricket: 1 WK, 3-6 BAT, 1-4 AR, 3-6 BOWL
-  const roleConfigs = [
-    // [WK, BAT, AR, BOWL]
-    { WK: 1, BAT: 4, AR: 2, BOWL: 4 }, // balanced
-    { WK: 1, BAT: 5, AR: 1, BOWL: 4 }, // bat-heavy
-    { WK: 1, BAT: 3, AR: 3, BOWL: 4 }, // ar-heavy
-    { WK: 1, BAT: 4, AR: 3, BOWL: 3 }, // bowl-light
-    { WK: 1, BAT: 5, AR: 2, BOWL: 3 }, // aggressive bat
-    { WK: 1, BAT: 3, AR: 2, BOWL: 5 }, // bowl-heavy
-    { WK: 1, BAT: 4, AR: 1, BOWL: 5 }, // defensive
-    { WK: 1, BAT: 6, AR: 1, BOWL: 3 }, // top-order blast
-  ];
-  const cfg = roleConfigs[Math.floor(rng() * roleConfigs.length)];
+  // Check available players per role
+  const availWK = pool.WK.length;
+  const availBAT = pool.BAT.length;
+  const availAR = pool.AR.length;
+  const availBOWL = pool.BOWL.length;
+
+  // If any role has < 1 player, can't build a team
+  if (availWK < 1 || availBAT < 1 || availAR < 1 || availBOWL < 1) {
+    console.log("[pickTeamByType] Insufficient players:", { WK: availWK, BAT: availBAT, AR: availAR, BOWL: availBOWL });
+    return null;
+  }
+
+  // Dynamically build role config based on available players
+  // Target: WK=1, BAT=2-5, AR=1-4, BOWL=2-5, total=11
+  // Adjust based on what's available
+  let wk = 1;
+  let ar = Math.min(availAR, Math.max(1, Math.floor(rng() * 3) + 1)); // 1-3
+  let remaining = 11 - wk - ar;
+
+  // Split remaining between BAT and BOWL, respecting availability
+  let bat = Math.min(availBAT, Math.max(2, Math.floor(remaining / 2) + Math.floor(rng() * 2) - 1));
+  let bowl = remaining - bat;
+
+  // Clamp to available players
+  if (bat > availBAT) { bowl += bat - availBAT; bat = availBAT; }
+  if (bowl > availBOWL) { bat += bowl - availBOWL; bowl = availBOWL; }
+  if (bat < 1) { bat = 1; bowl = remaining - 1; }
+  if (bowl < 1) { bowl = 1; bat = remaining - 1; }
+
+  // Final safety check — if we still can't make 11, try WK=2
+  if (wk + bat + ar + bowl !== 11 && availWK >= 2) {
+    wk = 2;
+    ar = Math.min(availAR, Math.max(1, Math.floor(rng() * 3) + 1));
+    remaining = 11 - wk - ar;
+    bat = Math.min(availBAT, Math.max(2, Math.floor(remaining / 2)));
+    bowl = remaining - bat;
+    if (bat > availBAT) { bowl += bat - availBAT; bat = availBAT; }
+    if (bowl > availBOWL) { bat += bowl - availBOWL; bowl = availBOWL; }
+  }
+
+  const cfg = { WK: wk, BAT: bat, AR: ar, BOWL: bowl };
+
+  // Verify we have enough players for each role
+  if (cfg.WK > availWK || cfg.BAT > availBAT || cfg.AR > availAR || cfg.BOWL > availBOWL) {
+    console.log("[pickTeamByType] Config exceeds available:", cfg, { availWK, availBAT, availAR, availBOWL });
+    return null;
+  }
 
   // Weights based on team type
   const weightFn = (idx: number, total: number, type: TeamType): number => {
