@@ -723,6 +723,10 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                   handleBulkAddTeams(teams);
                   setShowSweepGenerator(false);
                 }}
+                onEliteAI={() => {
+                  setShowSweepGenerator(false);
+                  setShowEliteAI(true);
+                }}
               />
             </motion.div>
           </motion.div>

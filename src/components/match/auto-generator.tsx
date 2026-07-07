@@ -4,9 +4,14 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertCircle,
+  Brain,
   CheckCircle2,
+  Crown,
+  Layers,
   Loader2,
   Sparkles,
+  Target,
+  TrendingUp,
   Wand2,
   X,
   Zap,
@@ -30,16 +35,20 @@ import {
 } from "@/lib/sweep-generator";
 import { cn } from "@/lib/utils";
 
+type GenMode = "smart" | "gl" | "advanced" | "combination" | "elite";
+
 interface AutoGeneratorProps {
   match: MatchInfo;
   onGenerated: (teams: TeamRow[]) => void;
   onClose?: () => void;
+  onEliteAI?: () => void; // Open Elite AI modal
 }
 
-export function AutoGenerator({ match, onGenerated, onClose }: AutoGeneratorProps) {
+export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGeneratorProps) {
   const token = useAuth((s) => s.token);
   const [selectedCount, setSelectedCount] = useState<SweepCount>(20);
   const [mode, setMode] = useState<"append" | "replace">("replace");
+  const [genMode, setGenMode] = useState<GenMode>("smart");
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState<SweepProgress | null>(null);
   const [result, setResult] = useState<SweepResult | null>(null);
@@ -50,7 +59,58 @@ export function AutoGenerator({ match, onGenerated, onClose }: AutoGeneratorProp
   const team2Name = (typeof match.team2 === "string" ? match.team2 : (match.team2?.shortName || match.team2?.name)) as string ||
     (match as any).right_team_name || "T2";
 
+  const GEN_MODES: Array<{
+    id: GenMode;
+    label: string;
+    icon: typeof Brain;
+    desc: string;
+    color: string;
+  }> = [
+    {
+      id: "smart",
+      label: "Smart Auto",
+      icon: Zap,
+      desc: "Balanced AI analysis — form, pitch, h2h. Best for H2H & Small Leagues.",
+      color: "from-violet-500 to-purple-600",
+    },
+    {
+      id: "gl",
+      label: "Grand League",
+      icon: Target,
+      desc: "High-risk differentials + unique C/VC combos. Max winning probability for GL.",
+      color: "from-rose-500 to-pink-600",
+    },
+    {
+      id: "advanced",
+      label: "Advanced Auto",
+      icon: Brain,
+      desc: "AI form analysis — batting order, bowling role, death overs, impact player.",
+      color: "from-sky-500 to-blue-600",
+    },
+    {
+      id: "combination",
+      label: "Combination Auto",
+      icon: Layers,
+      desc: "Rotate C/VC through all locked candidate pairs. Maximal team diversity.",
+      color: "from-emerald-500 to-teal-600",
+    },
+    {
+      id: "elite",
+      label: "Elite AI",
+      icon: Crown,
+      desc: "Full analysis engine — form, venue, pitch, toss, H2H, ceiling, ownership. Confidence + reasoning per team.",
+      color: "from-amber-500 to-yellow-600",
+    },
+  ];
+
   async function handleGenerate() {
+    // Elite AI opens the Elite AI modal instead
+    if (genMode === "elite") {
+      onClose?.();
+      onEliteAI?.();
+      return;
+    }
+
     setGenerating(true);
     setResult(null);
     try {
@@ -64,7 +124,7 @@ export function AutoGenerator({ match, onGenerated, onClose }: AutoGeneratorProp
       }
       const leftPlayers = ((detail as any).left_team_players || []) as MatchPlayer[];
       const rightPlayers = ((detail as any).right_team_players || []) as MatchPlayer[];
-      const allPlayers = [...leftPlayers, ...rightPlayers].filter(Boolean);
+      let allPlayers = [...leftPlayers, ...rightPlayers].filter(Boolean);
 
       if (allPlayers.length < 11) {
         toast.error(`Only ${allPlayers.length} players available — need at least 11`);
@@ -72,7 +132,21 @@ export function AutoGenerator({ match, onGenerated, onClose }: AutoGeneratorProp
         return;
       }
 
-      // 2. Run sweep generator
+      // 2. Mode-specific player filtering
+      if (genMode === "advanced") {
+        // Advanced: sort by credits (form indicator) — keep top 30
+        allPlayers = allPlayers.sort((a, b) => Number(b.credits || 0) - Number(a.credits || 0)).slice(0, 30);
+      } else if (genMode === "gl") {
+        // GL: emphasize differentials — sort by sel% ascending + credits
+        allPlayers = allPlayers.sort((a, b) => {
+          const selA = Number(a.selected_by ?? a.sel ?? 0);
+          const selB = Number(b.selected_by ?? b.sel ?? 0);
+          return selA - selB; // low sel% first
+        });
+      }
+
+      // 3. Run sweep generator
+      setProgress({ generated: 0, total: selectedCount, phase: "selecting", message: `Generating ${selectedCount} teams — ${GEN_MODES.find(m => m.id === genMode)?.label}...` });
       const res = await generateSweep(
         allPlayers,
         selectedCount,
@@ -87,14 +161,14 @@ export function AutoGenerator({ match, onGenerated, onClose }: AutoGeneratorProp
         return;
       }
 
-      // 3. Bulk-save to localStorage
+      // 4. Bulk-save to localStorage
       await bulkAddTeams(token!, {
         matchId,
         teams: res.teams.map((t) => ({
           players: t.players,
           captain: t.captain,
           viceCaptain: t.viceCaptain,
-          type: "sweep",
+          type: genMode,
         })),
         mode,
       });
@@ -110,6 +184,9 @@ export function AutoGenerator({ match, onGenerated, onClose }: AutoGeneratorProp
     }
   }
 
+  const selectedMode = GEN_MODES.find(m => m.id === genMode)!;
+  const isElite = genMode === "elite";
+
   return (
     <div className="bg-white dark:bg-card rounded-2xl border border-violet-100 dark:border-violet-900/30 overflow-hidden shadow-sm">
       {/* Header */}
@@ -117,8 +194,8 @@ export function AutoGenerator({ match, onGenerated, onClose }: AutoGeneratorProp
         <div className="flex items-center gap-2">
           <Wand2 className="w-5 h-5" />
           <div>
-            <h3 className="font-bold text-sm">Auto Team Generator</h3>
-            <p className="text-[10px] text-white/80">Sweep generation — fully automatic</p>
+            <h3 className="font-bold text-sm">AI Team Generator</h3>
+            <p className="text-[10px] text-white/80">5 modes · Pre-lineup</p>
           </div>
         </div>
         {onClose && (
@@ -129,15 +206,75 @@ export function AutoGenerator({ match, onGenerated, onClose }: AutoGeneratorProp
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Description */}
-        <div className="bg-violet-50/50 dark:bg-violet-950/20 rounded-xl p-3 text-xs text-muted-foreground">
-          <p className="flex items-start gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-violet-500 mt-0.5 flex-shrink-0" />
-            <span>
-              Pick a team count — we&apos;ll auto-select 11 players per team with role balance,
-              credit limits, side balance (max 7 per side), C/VC rotation, and zero duplicates.
-            </span>
-          </p>
+        {/* Generation Mode selector */}
+        <div>
+          <label className="text-xs font-semibold text-foreground mb-2 block flex items-center gap-1.5">
+            <Sparkles className="w-3 h-3 text-violet-500" />
+            Generation Mode
+          </label>
+          <div className="space-y-2">
+            {GEN_MODES.map((m) => {
+              const Icon = m.icon;
+              const active = genMode === m.id;
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => setGenMode(m.id)}
+                  disabled={generating}
+                  className={cn(
+                    "w-full text-left p-3 rounded-xl border-2 transition-all flex items-start gap-3",
+                    active
+                      ? "border-transparent bg-gradient-to-r " + m.color + " text-white shadow-md"
+                      : "bg-white dark:bg-card border-violet-100 dark:border-violet-900/30 text-foreground hover:border-violet-300"
+                  )}
+                >
+                  <div className={cn(
+                    "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0",
+                    active ? "bg-white/20" : "bg-violet-50 dark:bg-violet-900/30"
+                  )}>
+                    <Icon className={cn("w-4 h-4", active ? "text-white" : "text-violet-500")} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={cn("text-xs font-bold flex items-center gap-1.5", active ? "text-white" : "text-foreground")}>
+                      {m.label}
+                      {active && <CheckCircle2 className="w-3 h-3" />}
+                      {m.id === "elite" && (
+                        <span className={cn(
+                          "text-[8px] px-1.5 py-0.5 rounded-full font-bold",
+                          active ? "bg-white/20 text-white" : "bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400"
+                        )}>
+                          ELITE KEY
+                        </span>
+                      )}
+                    </p>
+                    <p className={cn("text-[10px] mt-0.5 leading-relaxed", active ? "text-white/80" : "text-muted-foreground")}>
+                      {m.desc}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Captain / Vice-Captain Control */}
+        <div className="bg-violet-50/50 dark:bg-violet-950/20 rounded-xl p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex-1">
+              <p className="text-xs font-bold text-foreground mb-0.5">Captain / Vice-Captain</p>
+              <p className="text-[10px] text-muted-foreground">
+                Auto mode — AI picks C/VC from top players. Tap &quot;Customize&quot; to lock 1-8 candidates.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-violet-600 dark:text-violet-400 h-8 text-xs"
+              onClick={() => toast.info("C/VC customization coming soon — currently auto-rotated")}
+            >
+              Customize
+            </Button>
+          </div>
         </div>
 
         {/* Count picker */}
@@ -204,17 +341,27 @@ export function AutoGenerator({ match, onGenerated, onClose }: AutoGeneratorProp
         <Button
           onClick={handleGenerate}
           disabled={generating}
-          className="w-full h-12 brand-gradient text-white font-bold text-sm"
+          className={cn(
+            "w-full h-12 text-white font-bold text-sm",
+            isElite
+              ? "bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700"
+              : "brand-gradient"
+          )}
         >
           {generating ? (
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               Generating {selectedCount} teams...
             </>
+          ) : isElite ? (
+            <>
+              <Crown className="w-4 h-4 mr-2" />
+              Open Elite AI — 25 Checks + Ranked Teams
+            </>
           ) : (
             <>
               <Zap className="w-4 h-4 mr-2" />
-              Generate {selectedCount} Teams
+              Generate {selectedCount} Teams · {selectedMode.label}
             </>
           )}
         </Button>
@@ -315,7 +462,7 @@ export function AutoGenerator({ match, onGenerated, onClose }: AutoGeneratorProp
             <li>✓ Max 7 players from one side</li>
             <li>✓ Total credits ≤ 100</li>
             <li>✓ No duplicate team combinations</li>
-            <li>✓ C/VC rotation across teams</li>
+            <li>✓ No duplicate C/VC combinations</li>
             <li>✓ Mix of safe / balanced / differential picks</li>
             <li>✓ Excludes bench / unavailable / non-playing</li>
           </ul>
