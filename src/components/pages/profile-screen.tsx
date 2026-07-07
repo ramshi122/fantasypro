@@ -9,6 +9,7 @@ import {
   Bell,
   CheckCircle2,
   ChevronRight,
+  CreditCard,
   Crown,
   HelpCircle,
   Link2,
@@ -418,33 +419,93 @@ function ReferralSection() {
 /* ============== License Plans Section ============== */
 
 function LicensePlansSection() {
+  const [paymentPlan, setPaymentPlan] = useState<any>(null);
+  const [userMobile, setUserMobile] = useState("");
+
+  useEffect(() => {
+    import("@/lib/user-auth").then(({ getCurrentUser }) => {
+      const user = getCurrentUser();
+      if (user) setUserMobile(user.mobile);
+    });
+  }, []);
+
   const plans = [
     {
-      name: "Trial",
-      price: "FREE",
-      duration: "1 Day",
-      tagline: "Try It. Love It.",
-      color: "from-emerald-500 to-green-600",
-      features: ["Team Generation: FREE", "Single Transfer: 3/day max", "Bulk Add: BLOCKED", "My11Circle: NOT AVAILABLE"],
+      id: "1-match",
+      name: "1 Match",
+      price: 49,
+      priceDisplay: "₹49",
+      duration: "6 Hours",
+      tagline: "Single match access",
+      color: "from-amber-500 to-orange-600",
+      keyType: "match_basic",
+      features: ["Team Generation: FREE", "Single Transfer: UNLIMITED", "Bulk Add: UP TO 11 TEAMS", "Contest Join: YES"],
     },
     {
+      id: "24-hour",
+      name: "24 Hour",
+      price: 99,
+      priceDisplay: "₹99",
+      duration: "24 Hours",
+      tagline: "Full access 24h",
+      color: "from-rose-500 to-pink-600",
+      keyType: "match_full",
+      features: ["Team Generation: FREE", "Single Transfer: UNLIMITED", "Bulk Add: UP TO 11 TEAMS", "My11Circle: UNLOCKED"],
+    },
+    {
+      id: "pro",
       name: "Pro",
-      price: "₹299",
+      price: 299,
+      priceDisplay: "₹299",
       duration: "30 Days",
       tagline: "Play More. Win More.",
       color: "from-sky-500 to-blue-600",
-      features: ["Team Generation: FREE", "Single Transfer: UNLIMITED", "Bulk Add: UP TO 11 TEAMS", "My11Circle: DREAM11 ONLY"],
+      keyType: "monthly",
+      features: ["Team Generation: FREE", "Single Transfer: UNLIMITED", "Bulk Add: UP TO 40 TEAMS", "Multi-Account: YES"],
     },
     {
+      id: "elite",
       name: "Elite",
-      price: "₹999",
+      price: 999,
+      priceDisplay: "₹999",
       duration: "90 Days",
       tagline: "Dominate. Always.",
       color: "from-violet-500 to-purple-600",
+      keyType: "elite",
       badge: "BEST VALUE",
-      features: ["Team Generation: FREE", "Single Transfer: UNLIMITED", "Bulk Add: UP TO 40 TEAMS", "My11Circle: UNLOCKED", "Elite AI: UNLOCKED"],
+      features: ["Team Generation: FREE", "Bulk Add: UP TO 40 TEAMS", "My11Circle: UNLOCKED", "Elite AI: UNLOCKED"],
+    },
+    {
+      id: "lifetime",
+      name: "Lifetime",
+      price: 4999,
+      priceDisplay: "₹4999",
+      duration: "Forever",
+      tagline: "Forever access",
+      color: "from-amber-500 to-yellow-600",
+      keyType: "lifetime",
+      features: ["Everything in Elite", "Lifetime access", "All future features", "Priority support"],
     },
   ];
+
+  function handleBuy(plan: any) {
+    if (!userMobile) {
+      toast.error("Please login with mobile number first");
+      return;
+    }
+    setPaymentPlan(plan);
+  }
+
+  async function handlePaymentSuccess(licenseKey: string, keyType: string, expiresAt: number | null) {
+    // Auto-activate the key
+    import("@/lib/admin-store").then(({ setLicenseVerified }) => {
+      setLicenseVerified(licenseKey, keyType as any);
+      toast.success("License auto-activated! All features unlocked.");
+      // Reload page to update UI
+      setTimeout(() => window.location.reload(), 1000);
+    });
+    setPaymentPlan(null);
+  }
 
   return (
     <div className="space-y-3">
@@ -453,11 +514,11 @@ function LicensePlansSection() {
         <h3 className="font-bold text-sm text-foreground">Choose Your Power</h3>
       </div>
 
-      {/* Plan cards */}
+      {/* Plan cards with Buy buttons */}
       <div className="grid grid-cols-1 gap-2">
         {plans.map((plan) => (
           <div
-            key={plan.name}
+            key={plan.id}
             className={cn(
               "rounded-2xl p-4 text-white shadow-lg relative overflow-hidden bg-gradient-to-br",
               plan.color
@@ -474,11 +535,11 @@ function LicensePlansSection() {
                 <p className="text-[10px] text-white/80">{plan.tagline}</p>
               </div>
               <div className="text-right">
-                <p className="text-xl font-black">{plan.price}</p>
+                <p className="text-xl font-black">{plan.priceDisplay}</p>
                 <p className="text-[10px] text-white/80">{plan.duration}</p>
               </div>
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1 mb-3">
               {plan.features.map((f, i) => (
                 <p key={i} className="text-[10px] text-white/90 flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
@@ -486,30 +547,64 @@ function LicensePlansSection() {
                 </p>
               ))}
             </div>
+            <Button
+              className="w-full bg-white text-violet-700 hover:bg-white/90 font-bold h-9 text-xs"
+              onClick={() => handleBuy(plan)}
+            >
+              <CreditCard className="w-3 h-3 mr-1" />
+              Buy Now · {plan.priceDisplay}
+            </Button>
           </div>
         ))}
       </div>
 
-      {/* 1 Match + 24 Hour keys */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl p-3 text-white text-center">
-          <p className="text-xs font-black">1 Match Key</p>
-          <p className="text-[9px] text-white/80 mt-0.5">Single match access</p>
-          <p className="text-lg font-black mt-1">₹49</p>
-          <p className="text-[9px] text-white/80">6 hours</p>
-        </div>
-        <div className="bg-gradient-to-br from-rose-500 to-pink-600 rounded-2xl p-3 text-white text-center">
-          <p className="text-xs font-black">24 Hour Key</p>
-          <p className="text-[9px] text-white/80 mt-0.5">Full access 24h</p>
-          <p className="text-lg font-black mt-1">₹99</p>
-          <p className="text-[9px] text-white/80">1 day</p>
-        </div>
-      </div>
-
       <p className="text-center text-[10px] text-muted-foreground">
-        Contact admin to purchase license keys
+        🔒 Secure payment · Key auto-activates after payment confirmation
       </p>
+
+      {/* Payment Modal */}
+      {paymentPlan && (
+        <PaymentModalLazy
+          plan={paymentPlan}
+          mobile={userMobile}
+          onClose={() => setPaymentPlan(null)}
+          onPaymentSuccess={handlePaymentSuccess}
+        />
+      )}
     </div>
+  );
+}
+
+/* Payment Modal lazy load */
+function PaymentModalLazy({
+  plan,
+  mobile,
+  onClose,
+  onPaymentSuccess,
+}: {
+  plan: any;
+  mobile: string;
+  onClose: () => void;
+  onPaymentSuccess: (licenseKey: string, keyType: string, expiresAt: number | null) => void;
+}) {
+  const [Modal, setModal] = useState<any>(null);
+
+  useEffect(() => {
+    import("@/components/payment/payment-modal").then((mod) => {
+      setModal(() => mod.PaymentModal);
+    });
+  }, []);
+
+  if (!Modal) return null;
+
+  return (
+    <Modal
+      open={true}
+      plan={plan}
+      mobile={mobile}
+      onClose={onClose}
+      onPaymentSuccess={onPaymentSuccess}
+    />
   );
 }
 
