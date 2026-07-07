@@ -61,22 +61,30 @@ export function HomeScreen() {
 
   return (
     <div className="px-4 py-4 space-y-4 pb-24">
-      {/* Apna Cricket Premium Branding Video Banner */}
+      {/* Apna Cricket Cinematic Video Banner — Ken Burns slideshow with logo overlay */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="block w-full rounded-2xl overflow-hidden shadow-xl relative bg-gradient-to-br from-slate-950 via-violet-950 to-slate-950 border border-amber-600/30"
+        className="block w-full rounded-2xl overflow-hidden shadow-xl relative bg-slate-950 border border-amber-600/30"
+        style={{ aspectRatio: "16/9" }}
       >
-        <div className="relative aspect-video flex items-center justify-center">
-          {/* Logo with 3D-style glow */}
-          <div className="relative z-10 text-center">
+        {/* Cinematic cricket slideshow — Ken Burns effect (video-like) */}
+        <CricketVideoBanner />
+
+        {/* Apna Cricket logo overlay — always visible on top of video */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+          <motion.div
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ duration: 1, ease: "backOut", delay: 0.3 }}
+            className="text-center"
+          >
             <motion.div
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ duration: 0.8, ease: "backOut" }}
-              className="w-28 h-28 mx-auto mb-3 rounded-2xl overflow-hidden shadow-2xl ring-2 ring-amber-400/50"
-              style={{ boxShadow: "0 0 40px rgba(251, 191, 36, 0.4)" }}
+              animate={{ y: [0, -6, 0] }}
+              transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+              className="w-24 h-24 mx-auto mb-2 rounded-2xl overflow-hidden shadow-2xl ring-2 ring-amber-400/60"
+              style={{ boxShadow: "0 0 50px rgba(251, 191, 36, 0.6)" }}
             >
               <img
                 src="/logo-square.png"
@@ -84,24 +92,30 @@ export function HomeScreen() {
                 className="w-full h-full object-cover"
               />
             </motion.div>
-            <h2 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 drop-shadow-lg">
-              APNA CRICKET
+            <h2 className="text-2xl font-black drop-shadow-2xl">
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-yellow-400 to-amber-600">
+                APNA CRICKET
+              </span>
             </h2>
-            <p className="text-[10px] text-amber-200/80 font-bold tracking-[0.3em] uppercase mt-1">
-              Fantasy Team
+            <p className="text-[9px] text-amber-200/90 font-bold tracking-[0.3em] uppercase mt-1 drop-shadow-lg">
+              ⭐ Fantasy Team ⭐
             </p>
-            <p className="text-[9px] text-slate-400 mt-2 font-medium">
-              Pick • Strategize • Win
-            </p>
-          </div>
+          </motion.div>
+        </div>
 
-          {/* Animated shimmer overlay */}
-          <motion.div
-            className="absolute inset-0 bg-gradient-to-r from-transparent via-amber-400/10 to-transparent"
-            initial={{ x: "-100%" }}
-            animate={{ x: "100%" }}
-            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-          />
+        {/* Bottom gradient overlay for text legibility */}
+        <div className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-black/80 to-transparent z-10" />
+
+        {/* Bottom tagline */}
+        <div className="absolute bottom-3 left-0 right-0 text-center z-20">
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 1 }}
+            className="text-[10px] text-amber-300/90 font-bold tracking-[0.2em] uppercase"
+          >
+            Pick • Strategize • Win
+          </motion.p>
         </div>
       </motion.div>
 
@@ -178,6 +192,63 @@ function StatCard({ label, value, gradient }: { label: string; value: string; gr
     <div className={`rounded-2xl bg-gradient-to-br ${gradient} p-3 text-white shadow-md`}>
       <p className="text-[10px] font-medium text-white/80">{label}</p>
       <p className="text-base font-black mt-0.5 leading-tight">{value}</p>
+    </div>
+  );
+}
+
+/**
+ * CricketVideoBanner — Cinematic Ken Burns slideshow that loops like a video.
+ * Cycles through 3 cricket scene images with smooth pan/zoom transitions.
+ * Real cricket photography + Apna Cricket logo overlay = branded video ad.
+ */
+function CricketVideoBanner() {
+  const scenes = [
+    "/cricket-video-bg.png",
+    "/cricket-video-bg2.png",
+    "/cricket-video-bg3.png",
+  ];
+  const [current, setCurrent] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrent((prev) => (prev + 1) % scenes.length);
+    }, 4000); // 4 seconds per scene
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="absolute inset-0 overflow-hidden">
+      {scenes.map((src, i) => (
+        <motion.div
+          key={i}
+          className="absolute inset-0"
+          initial={{ opacity: 0, scale: 1.0 }}
+          animate={{
+            opacity: i === current ? 1 : 0,
+            scale: i === current ? 1.15 : 1.0, // Ken Burns zoom on active scene
+          }}
+          transition={{
+            opacity: { duration: 1.2, ease: "easeInOut" },
+            scale: { duration: 4, ease: "easeOut" },
+          }}
+          style={{
+            backgroundImage: `url(${src})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+          }}
+        />
+      ))}
+      {/* Dark cinematic vignette */}
+      <div className="absolute inset-0 bg-gradient-to-br from-black/40 via-transparent to-black/60" />
+      {/* Animated golden light rays */}
+      <motion.div
+        className="absolute inset-0"
+        style={{
+          background: "radial-gradient(ellipse at top, rgba(251, 191, 36, 0.15) 0%, transparent 50%)",
+        }}
+        animate={{ opacity: [0.3, 0.6, 0.3] }}
+        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+      />
     </div>
   );
 }
