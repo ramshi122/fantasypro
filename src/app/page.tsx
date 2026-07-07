@@ -48,7 +48,7 @@ export default function Home() {
 
   // Splash screen takes priority — it has its own animated exit
   if (showSplash) {
-    return <SplashScreen onFinish={() => setShowSplash(false)} duration={2200} />;
+    return <SplashScreen onFinish={() => setShowSplash(false)} duration={3500} />;
   }
 
   // While the auto-guest effect is running, show a tiny splash
