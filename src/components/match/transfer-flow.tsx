@@ -465,16 +465,24 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               </Button>
               <Button
                 size="sm"
-                onClick={() => license.requireLicense() && setShowEliteAI(true)}
+                onClick={() => {
+                  if (!license.requireElite()) {
+                    if (license.isLicensed) {
+                      toast.error("Elite AI requires an Elite or Lifetime license key");
+                    }
+                    return;
+                  }
+                  setShowEliteAI(true);
+                }}
                 disabled={players.length < 11}
                 className={cn(
-                  license.isLicensed
+                  license.isElite
                     ? "bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white"
                     : "bg-slate-300 text-slate-500 dark:bg-slate-700"
                 )}
               >
-                {license.isLicensed ? <Crown className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
-                {license.isLicensed ? "Elite AI" : "Elite AI 🔒"}
+                {license.isElite ? <Crown className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                {license.isElite ? "Elite AI" : license.isLicensed ? "Elite AI 🔒" : "Elite AI 🔒"}
               </Button>
               <Button
                 size="sm"

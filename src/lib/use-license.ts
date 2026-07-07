@@ -7,6 +7,7 @@ import {
   clearLicense,
   getDeviceId,
   useAdmin,
+  type KeyType,
 } from "./admin-store";
 
 /**
@@ -14,11 +15,19 @@ import {
  * ----------------
  * Tracks license verification status across the app.
  * When NOT verified: all team generation features are LOCKED.
- * When verified: all features unlocked.
+ * When verified: features unlocked based on key tier.
+ *
+ * Key Tiers:
+ *   trial    — basic access (1 day)
+ *   weekly   — basic access (7 days)
+ *   monthly  — pro access (30 days)
+ *   elite    — FULL access including Elite AI (90 days)
+ *   lifetime — FULL access including Elite AI (forever)
  *
  * Persists in localStorage:
  *   licenseVerified=true
  *   licenseKey=CRICB-XXXX-XXXX-XXXX
+ *   licenseKeyType=elite
  *   deviceId=unique-device-id
  */
 
@@ -36,7 +45,12 @@ export function useLicense() {
       if (!result.valid) {
         clearLicense();
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        setLicenseState({ verified: false, key: null, deviceId: getDeviceId() });
+        setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
+      } else if (result.keyType && result.keyType !== licenseState.keyType) {
+        // Update stored key type if it changed
+        setLicenseVerified(licenseState.key, result.keyType);
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setLicenseState({ verified: true, key: licenseState.key, deviceId: licenseState.deviceId, keyType: result.keyType });
       }
     }
   }, []);
@@ -55,8 +69,8 @@ export function useLicense() {
         console.log("[useLicense] Verify result:", JSON.stringify(result));
         setVerifying(false);
         if (result.valid) {
-          setLicenseVerified(cleanKey);
-          setLicenseState({ verified: true, key: cleanKey, deviceId });
+          setLicenseVerified(cleanKey, result.keyType);
+          setLicenseState({ verified: true, key: cleanKey, deviceId, keyType: result.keyType || null });
           setShowActivate(false);
           setKeyInput("");
           resolve({ success: true, message: result.message || "✅ License Key Verified Successfully" });
@@ -69,7 +83,7 @@ export function useLicense() {
 
   const deactivate = useCallback(() => {
     clearLicense();
-    setLicenseState({ verified: false, key: null, deviceId: getDeviceId() });
+    setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
   }, []);
 
   /**
@@ -82,10 +96,39 @@ export function useLicense() {
     return false;
   }, [licenseState.verified]);
 
+  /**
+   * Call this when user tries to use an ELITE-only feature.
+   * Returns true if the user has an elite or lifetime key.
+   * Returns false (and opens activate modal) if not.
+   */
+  const requireElite = useCallback((): boolean => {
+    if (!licenseState.verified) {
+      setShowActivate(true);
+      return false;
+    }
+    const kt = licenseState.keyType;
+    if (kt === "elite" || kt === "lifetime") return true;
+    return false;
+  }, [licenseState.verified, licenseState.keyType]);
+
+  // Derived flags
+  const isElite = licenseState.verified && (licenseState.keyType === "elite" || licenseState.keyType === "lifetime");
+  const isPro = licenseState.verified && (isElite || licenseState.keyType === "monthly");
+  const isTrial = licenseState.verified && (licenseState.keyType === "trial" || licenseState.keyType === "weekly");
+
   return {
     isLicensed: licenseState.verified,
     licenseKey: licenseState.key,
+    licenseKeyType: licenseState.keyType,
     deviceId: licenseState.deviceId,
+    // Tier flags
+    isElite,
+    isPro,
+    isTrial,
+    // Access checks
+    requireLicense,
+    requireElite,
+    // Modal state
     showActivate,
     setShowActivate,
     keyInput,
@@ -93,6 +136,5 @@ export function useLicense() {
     verifying,
     activate,
     deactivate,
-    requireLicense,
   };
 }

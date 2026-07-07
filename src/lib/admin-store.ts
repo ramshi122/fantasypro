@@ -13,7 +13,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 
 /* ---------- Types ---------- */
 
-export type KeyType = "trial" | "weekly" | "monthly" | "lifetime";
+export type KeyType = "trial" | "weekly" | "monthly" | "lifetime" | "elite";
 export type KeyStatus = "active" | "used" | "expired" | "suspended";
 
 export interface LicenseKey {
@@ -111,7 +111,7 @@ interface AdminState {
   deleteKey: (key: string) => void;
   extendExpiry: (key: string, days: number) => void;
   resetDevice: (key: string) => void;
-  verifyLicense: (key: string, deviceId: string) => { valid: boolean; message: string };
+  verifyLicense: (key: string, deviceId: string) => { valid: boolean; message: string; keyType?: KeyType };
   /** Re-activate ALL keys — fixes any expired/suspended key by extending expiry
    *  and setting status to "active". Returns count of fixed keys. */
   validateAllKeys: () => number;
@@ -176,6 +176,7 @@ function getExpiryForType(type: KeyType): number | null {
     case "trial": return now + 1 * day;
     case "weekly": return now + 7 * day;
     case "monthly": return now + 30 * day;
+    case "elite": return now + 90 * day; // Elite = 90 days
     case "lifetime": return null;
   }
 }
@@ -218,10 +219,11 @@ function getInitialData() {
     { key: "CRICB-DEMO-TEST-KEY3", type: "lifetime", status: "active", createdAt: now - 30 * day, expiresAt: null, deviceIds: ["dev_003"], userName: "Premium User", lastVerified: now - 7200000, verifications: 45 },
     { key: "CRICB-DEMO-TEST-KEY4", type: "trial", status: "active", createdAt: now - 8 * day, expiresAt: now + 1 * day, deviceIds: [], verifications: 0 },
     { key: "CRICB-DEMO-TEST-KEY5", type: "monthly", status: "active", createdAt: now - 15 * day, expiresAt: now + 15 * day, deviceIds: ["dev_004"], userName: "Demo User 5", verifications: 3 },
+    { key: "CRICB-ELITE-DEMO-KEY1", type: "elite", status: "active", createdAt: now - 5 * day, expiresAt: now + 85 * day, deviceIds: [], userName: "Elite Demo User", verifications: 0 },
   );
 
   // Generate 500 ready-to-use keys (mix of types)
-  const types: KeyType[] = ["trial", "weekly", "monthly", "monthly", "monthly", "lifetime"];
+  const types: KeyType[] = ["trial", "weekly", "monthly", "monthly", "monthly", "elite", "lifetime"];
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   for (let i = 0; i < 500; i++) {
     let seg1 = "", seg2 = "", seg3 = "";
@@ -491,8 +493,8 @@ export const useAdmin = create<AdminState>()(
         }
 
         get().addLog("key_verification", `Key ${cleanKey} verified on ${deviceId} | Type: ${k.type} | Status: ${k.status}`);
-        console.log("[License Verify] ✅ SUCCESS: License verified");
-        return { valid: true, message: "✅ License Key Verified Successfully" };
+        console.log("[License Verify] ✅ SUCCESS: License verified, type:", k.type);
+        return { valid: true, message: "✅ License Key Verified Successfully", keyType: k.type };
       },
 
       unbindDevice: (deviceId) => {
@@ -744,7 +746,7 @@ if (typeof window !== "undefined") {
     } else if (currentKeys.length < 500) {
       // Top up to 500+ keys (preserve existing keys, append fresh ones)
       const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-      const types: KeyType[] = ["trial", "weekly", "monthly", "monthly", "monthly", "lifetime"];
+      const types: KeyType[] = ["trial", "weekly", "monthly", "monthly", "monthly", "elite", "lifetime"];
       const now = Date.now();
       const day = 86400000;
       const needed = 500 - currentKeys.length;
@@ -795,6 +797,7 @@ export interface LicenseState {
   verified: boolean;
   key: string | null;
   deviceId: string;
+  keyType?: KeyType | null; // "trial" | "weekly" | "monthly" | "elite" | "lifetime"
 }
 
 export function getDeviceId(): string {
@@ -808,20 +811,21 @@ export function getDeviceId(): string {
 }
 
 export function getLicenseState(): LicenseState {
-  if (typeof window === "undefined") return { verified: false, key: null, deviceId: "server" };
+  if (typeof window === "undefined") return { verified: false, key: null, deviceId: "server", keyType: null };
   try {
     const data = JSON.parse(localStorage.getItem(LICENSE_STORAGE_KEY) || "{}");
     return {
       verified: !!data.verified,
       key: data.key || null,
       deviceId: getDeviceId(),
+      keyType: data.keyType || null,
     };
   } catch {
-    return { verified: false, key: null, deviceId: getDeviceId() };
+    return { verified: false, key: null, deviceId: getDeviceId(), keyType: null };
   }
 }
 
-export function setLicenseVerified(key: string) {
+export function setLicenseVerified(key: string, keyType?: KeyType | null) {
   if (typeof window === "undefined") return;
   localStorage.setItem(
     LICENSE_STORAGE_KEY,
@@ -829,6 +833,7 @@ export function setLicenseVerified(key: string) {
       verified: true,
       key,
       deviceId: getDeviceId(),
+      keyType: keyType || null,
     })
   );
 }
