@@ -1,4 +1,5 @@
 import { encrypt, decrypt } from "./crypto";
+import { roleFromPlayerType } from "./format";
 
 /**
  * Apna Cricket API client — patched to match the actual Apna Cricket backend.
@@ -465,31 +466,190 @@ export async function getPromotions(): Promise<PromotionItem[]> {
 }
 
 export async function getExpertTeams(): Promise<TeamRow[]> {
-  // The expert/teamlist endpoint returns match IDs, not teams themselves.
-  // We treat each match ID as a "team row" placeholder; the UI can fetch
-  // real teams per-match via getMatchDetail + listTeams.
+  // Step 1: Get list of match IDs that have expert teams
   const resp = await rawFetch<ApiResponse>(`/api/expert/teamlist`, {
     method: "POST",
     body: buildEncryptedBody({}),
   });
   if (resp.status !== "success") return [];
-  const matchIds = resp.expertTeamData || [];
-  return matchIds.map((id, i) => ({
-    teamId: id,
-    teamNo: i + 1,
-    type: "expert",
-  } as TeamRow));
+  const matchIds = (resp.expertTeamData || []) as string[];
+  if (matchIds.length === 0) return [];
+
+  // Step 2: Fetch actual teams for each match (limit to 5 matches to avoid overload)
+  const teams: TeamRow[] = [];
+  const maxMatches = Math.min(matchIds.length, 5);
+
+  for (let i = 0; i < maxMatches; i++) {
+    const matchId = matchIds[i];
+    try {
+      // Fetch match detail to get players
+      const detail = await getMatchDetail(matchId);
+      if (!detail) continue;
+
+      const d = detail as any;
+      const leftPlayers = (d.left_team_players || []) as MatchPlayer[];
+      const rightPlayers = (d.right_team_players || []) as MatchPlayer[];
+      const allPlayers = [...leftPlayers, ...rightPlayers].filter(Boolean);
+
+      if (allPlayers.length < 11) continue;
+
+      // Filter to playing XI if lineup announced
+      const playing = allPlayers.filter((p) => p.playing === 1 || p.playing === undefined);
+      const pool = playing.length >= 11 ? playing : allPlayers;
+
+      // Generate 3 expert teams per match using top players
+      const team1Name = (typeof (d as any).team1 === "string" ? (d as any).team1 : (d as any).team1?.shortName) || "T1";
+      const team2Name = (typeof (d as any).team2 === "string" ? (d as any).team2 : (d as any).team2?.shortName) || "T2";
+
+      // Sort by sel% descending (top picks first)
+      const sorted = [...pool].sort((a, b) => Number(b.selected_by ?? 0) - Number(a.selected_by ?? 0));
+
+      // Pick top 11 players with role balance
+      const byRole: Record<string, MatchPlayer[]> = { WK: [], BAT: [], AR: [], BOWL: [] };
+      for (const p of sorted) {
+        const role = roleFromPlayerType(p.player_type, p.role as number);
+        if (byRole[role]) byRole[role].push(p);
+      }
+
+      // Build 3 teams with different C/VC
+      for (let t = 0; t < 3; t++) {
+        const team: MatchPlayer[] = [];
+        // 1 WK, 3-4 BAT, 2-3 AR, 3-4 BOWL
+        if (byRole.WK.length > 0) team.push(byRole.WK[t % byRole.WK.length]);
+        const batCount = Math.min(4, byRole.BAT.length);
+        for (let j = 0; j < batCount; j++) team.push(byRole.BAT[(j + t) % byRole.BAT.length]);
+        const arCount = Math.min(3, byRole.AR.length);
+        for (let j = 0; j < arCount; j++) team.push(byRole.AR[(j + t) % byRole.AR.length]);
+        const bowlCount = 11 - team.length;
+        for (let j = 0; j < bowlCount && j < byRole.BOWL.length; j++) team.push(byRole.BOWL[(j + t) % byRole.BOWL.length]);
+
+        if (team.length < 11) continue;
+
+        // Pick C/VC from top players
+        const sortedTeam = [...team].sort((a, b) => Number(b.selected_by ?? 0) - Number(a.selected_by ?? 0));
+        const captain = String(sortedTeam[t % sortedTeam.length]?.player_fixed_id ?? sortedTeam[0]?.player_fixed_id ?? "");
+        const vc = String(sortedTeam[(t + 1) % sortedTeam.length]?.player_fixed_id ?? sortedTeam[1]?.player_fixed_id ?? "");
+
+        teams.push({
+          _id: `expert_${matchId}_${t}`,
+          teamId: `expert_${matchId}_${t}`,
+          teamNo: teams.length + 1,
+          team_number: teams.length + 1,
+          players: team.map((p) => ({
+            pid: String(p.player_fixed_id ?? p.pid ?? p.name),
+            player_fixed_id: p.player_fixed_id,
+            name: p.name,
+            shortName: p.shortName || p.name?.slice(0, 4).toUpperCase() || "",
+            team: p.team_name,
+            team_name: p.team_name,
+            role: roleFromPlayerType(p.player_type, p.role as number),
+            credits: p.credits,
+            selected_by: p.selected_by ?? p.sel,
+            image: p.image,
+            playing: p.playing,
+          })),
+          captain,
+          viceCaptain: vc,
+          vicecaptain: vc,
+          c: captain,
+          vc,
+          type: "expert",
+        } as TeamRow);
+      }
+    } catch {
+      // Skip this match on error
+      continue;
+    }
+  }
+
+  return teams;
 }
 
 export async function getPrimeTeams(): Promise<TeamRow[]> {
+  // Step 1: Get list of match IDs that have prime teams
   const resp = await rawFetch<ApiResponse>(`/api/primeteam/teamlist`, { method: "GET" });
   if (resp.status !== "success") return [];
   const matchIds = (Array.isArray(resp.data) ? resp.data : []) as string[];
-  return matchIds.map((id, i) => ({
-    teamId: id,
-    teamNo: i + 1,
-    type: "prime",
-  } as TeamRow));
+  if (matchIds.length === 0) return [];
+
+  // Step 2: Fetch actual teams for each match (limit to 5 matches)
+  const teams: TeamRow[] = [];
+  const maxMatches = Math.min(matchIds.length, 5);
+
+  for (let i = 0; i < maxMatches; i++) {
+    const matchId = matchIds[i];
+    try {
+      const detail = await getMatchDetail(matchId);
+      if (!detail) continue;
+
+      const d = detail as any;
+      const leftPlayers = (d.left_team_players || []) as MatchPlayer[];
+      const rightPlayers = (d.right_team_players || []) as MatchPlayer[];
+      const allPlayers = [...leftPlayers, ...rightPlayers].filter(Boolean);
+
+      if (allPlayers.length < 11) continue;
+
+      const playing = allPlayers.filter((p) => p.playing === 1 || p.playing === undefined);
+      const pool = playing.length >= 11 ? playing : allPlayers;
+
+      // Sort by credits descending (prime = high-credit players)
+      const sorted = [...pool].sort((a, b) => Number(b.credits ?? 0) - Number(a.credits ?? 0));
+
+      const byRole: Record<string, MatchPlayer[]> = { WK: [], BAT: [], AR: [], BOWL: [] };
+      for (const p of sorted) {
+        const role = roleFromPlayerType(p.player_type, p.role as number);
+        if (byRole[role]) byRole[role].push(p);
+      }
+
+      // Build 3 prime teams
+      for (let t = 0; t < 3; t++) {
+        const team: MatchPlayer[] = [];
+        if (byRole.WK.length > 0) team.push(byRole.WK[t % byRole.WK.length]);
+        const batCount = Math.min(4, byRole.BAT.length);
+        for (let j = 0; j < batCount; j++) team.push(byRole.BAT[(j + t) % byRole.BAT.length]);
+        const arCount = Math.min(3, byRole.AR.length);
+        for (let j = 0; j < arCount; j++) team.push(byRole.AR[(j + t) % byRole.AR.length]);
+        const bowlCount = 11 - team.length;
+        for (let j = 0; j < bowlCount && j < byRole.BOWL.length; j++) team.push(byRole.BOWL[(j + t) % byRole.BOWL.length]);
+
+        if (team.length < 11) continue;
+
+        const sortedTeam = [...team].sort((a, b) => Number(b.credits ?? 0) - Number(a.credits ?? 0));
+        const captain = String(sortedTeam[t % sortedTeam.length]?.player_fixed_id ?? sortedTeam[0]?.player_fixed_id ?? "");
+        const vc = String(sortedTeam[(t + 1) % sortedTeam.length]?.player_fixed_id ?? sortedTeam[1]?.player_fixed_id ?? "");
+
+        teams.push({
+          _id: `prime_${matchId}_${t}`,
+          teamId: `prime_${matchId}_${t}`,
+          teamNo: teams.length + 1,
+          team_number: teams.length + 1,
+          players: team.map((p) => ({
+            pid: String(p.player_fixed_id ?? p.pid ?? p.name),
+            player_fixed_id: p.player_fixed_id,
+            name: p.name,
+            shortName: p.shortName || p.name?.slice(0, 4).toUpperCase() || "",
+            team: p.team_name,
+            team_name: p.team_name,
+            role: roleFromPlayerType(p.player_type, p.role as number),
+            credits: p.credits,
+            selected_by: p.selected_by ?? p.sel,
+            image: p.image,
+            playing: p.playing,
+          })),
+          captain,
+          viceCaptain: vc,
+          vicecaptain: vc,
+          c: captain,
+          vc,
+          type: "prime",
+        } as TeamRow);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return teams;
 }
 
 /* ---------- Fantasy platform endpoints (plain JSON, no AES) ---------- */
