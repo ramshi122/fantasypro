@@ -468,7 +468,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 onClick={() => {
                   if (!license.requireElite()) {
                     if (license.isLicensed) {
-                      toast.error("Elite AI requires an Elite or Lifetime license key");
+                      toast.error("Elite AI requires an Elite or Lifetime license key. Upgrade to unlock.");
                     }
                     return;
                   }
@@ -476,13 +476,13 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 }}
                 disabled={players.length < 11}
                 className={cn(
-                  license.isElite
-                    ? "bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white"
-                    : "bg-slate-300 text-slate-500 dark:bg-slate-700"
+                  "bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white",
+                  !license.isElite && "opacity-60"
                 )}
               >
-                {license.isElite ? <Crown className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
-                {license.isElite ? "Elite AI" : license.isLicensed ? "Elite AI 🔒" : "Elite AI 🔒"}
+                <Crown className="w-3.5 h-3.5 mr-1" />
+                Elite AI
+                {!license.isElite && <Lock className="w-3 h-3 ml-1" />}
               </Button>
               <Button
                 size="sm"
