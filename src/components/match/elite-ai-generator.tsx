@@ -9,6 +9,7 @@ import {
   Clock,
   Cpu,
   Crown,
+  Layers,
   Loader2,
   Shield,
   Sparkles,
@@ -50,6 +51,7 @@ export function EliteAIGenerator({
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ check: 0, total: 25, message: "" });
   const [result, setResult] = useState<EliteGenerateResult | null>(null);
+  const [selectedCount, setSelectedCount] = useState<number>(20);
 
   const matchId = (match.matchId ?? match.id ?? "") as string;
 
@@ -68,7 +70,8 @@ export function EliteAIGenerator({
         team1Name,
         team2Name,
         lineupAnnounced,
-        (check, total, message) => setProgress({ check, total, message })
+        (check, total, message) => setProgress({ check, total, message }),
+        selectedCount
       );
 
       if (res.rankedTeams.length === 0) {
@@ -125,9 +128,9 @@ export function EliteAIGenerator({
             <div>
               <h3 className="font-black text-base flex items-center gap-2">
                 Elite AI Team Generator
-                <span className="text-[9px] bg-amber-400 text-amber-950 px-1.5 py-0.5 rounded-full font-bold">RANK 1-10</span>
+                <span className="text-[9px] bg-amber-400 text-amber-950 px-1.5 py-0.5 rounded-full font-bold">RANK 1-{selectedCount}</span>
               </h3>
-              <p className="text-[10px] text-white/70">25-check AI research · Ranked by EFV score</p>
+              <p className="text-[10px] text-white/70">25-check AI research · {selectedCount} ranked teams by EFV score</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20">
@@ -157,7 +160,7 @@ export function EliteAIGenerator({
                 <p className="text-[11px] text-muted-foreground mb-3 max-w-md mx-auto">
                   Elite AI runs 25 in-depth analysis checks on the player pool — covering captain certainty,
                   role balance, form trends, differential opportunity, venue suitability, risk-reward ratio
-                  and more. Then generates 10 ranked teams (Rank 1 = best EFV score).
+                  and more. Then generates {selectedCount} ranked teams (Rank 1 = best EFV score).
                 </p>
                 <div className="grid grid-cols-2 gap-2 text-[10px] mb-4">
                   <div className="bg-white/60 dark:bg-card/60 rounded-lg p-2">
@@ -165,17 +168,59 @@ export function EliteAIGenerator({
                     <p className="text-muted-foreground">Deep AI analysis</p>
                   </div>
                   <div className="bg-white/60 dark:bg-card/60 rounded-lg p-2">
-                    <p className="font-bold text-amber-600 dark:text-amber-400">10 Ranked Teams</p>
-                    <p className="text-muted-foreground">Rank 1 to Rank 10</p>
+                    <p className="font-bold text-amber-600 dark:text-amber-400">{selectedCount} Ranked Teams</p>
+                    <p className="text-muted-foreground">Rank 1 to Rank {selectedCount}</p>
                   </div>
                 </div>
+
+                {/* Team count selector — 1 to 40 */}
+                <div className="mb-4 text-left">
+                  <label className="text-[11px] font-bold text-foreground mb-2 block flex items-center gap-1">
+                    <Layers className="w-3 h-3 text-amber-500" />
+                    Team Count (1 to 40)
+                  </label>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {[1, 5, 10, 15, 20, 25, 30, 35, 40].map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => setSelectedCount(n)}
+                        className={cn(
+                          "h-9 rounded-lg font-bold text-xs transition-all border-2",
+                          selectedCount === n
+                            ? "bg-gradient-to-r from-amber-600 to-yellow-600 text-white border-transparent shadow-md"
+                            : "bg-white dark:bg-card border-amber-200 dark:border-amber-900/30 text-foreground hover:border-amber-400"
+                        )}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Custom slider for 1-40 */}
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={1}
+                      max={40}
+                      value={selectedCount}
+                      onChange={(e) => setSelectedCount(parseInt(e.target.value))}
+                      className="flex-1 h-2 bg-amber-100 dark:bg-amber-900/30 rounded-full appearance-none cursor-pointer accent-amber-600"
+                    />
+                    <span className="text-xs font-black text-amber-700 dark:text-amber-300 tabular-nums w-8 text-center">
+                      {selectedCount}
+                    </span>
+                  </div>
+                  <p className="text-[9px] text-muted-foreground mt-1">
+                    Strategy split: ~25% Safe · ~30% Balanced · ~25% Differential · ~20% Grand-League
+                  </p>
+                </div>
+
                 <Button
                   className="w-full h-12 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white font-bold"
                   onClick={handleRun}
                   disabled={players.length < 11}
                 >
                   <Brain className="w-5 h-5 mr-2" />
-                  Run Elite AI Research
+                  Run Elite AI Research — Generate {selectedCount} Teams
                 </Button>
                 {players.length < 11 && (
                   <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-2">
@@ -376,7 +421,7 @@ function EliteAIResult({
       <div>
         <p className="text-xs font-bold text-foreground mb-2 flex items-center gap-1.5">
           <Trophy className="w-3.5 h-3.5 text-amber-500" />
-          10 Ranked Teams — Rank 1 (Best) to Rank 10 (Most Differential)
+          {rankedTeams.length} Ranked Teams — Rank 1 (Best) to Rank {rankedTeams.length} (Most Differential)
         </p>
         <div className="space-y-2">
           {rankedTeams.map((rt) => (
@@ -402,7 +447,7 @@ function EliteAIResult({
           onClick={onSaveAll}
         >
           <CheckCircle2 className="w-4 h-4 mr-1.5" />
-          Save All 10 Teams
+          Save All {rankedTeams.length} Teams
         </Button>
       </div>
     </div>
@@ -428,7 +473,19 @@ function RankedTeamCard({
     rank === 1 ? "from-amber-400 to-yellow-500" :
     rank === 2 ? "from-slate-300 to-slate-400" :
     rank === 3 ? "from-orange-400 to-amber-600" :
-    "from-violet-400 to-violet-500";
+    rank <= 10 ? "from-violet-500 to-purple-600" :
+    rank <= 20 ? "from-sky-500 to-blue-600" :
+    rank <= 30 ? "from-emerald-500 to-teal-600" :
+    "from-rose-500 to-pink-600";
+
+  const rankLabel =
+    rank === 1 ? "RANK 1 — BEST PICK" :
+    rank === 2 ? "RANK 2 — RUNNER-UP" :
+    rank === 3 ? "RANK 3 — PODIUM" :
+    rank <= 10 ? `RANK ${rank} — TOP 10` :
+    rank <= 20 ? `RANK ${rank} — MID TIER` :
+    rank <= 30 ? `RANK ${rank} — DIFFERENTIAL` :
+    `RANK ${rank} — CONTRARIAN`;
 
   const riskColor =
     riskLevel === "low" ? "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30" :
@@ -458,7 +515,7 @@ function RankedTeamCard({
           </div>
           <div>
             <p className="text-xs font-black text-white">
-              {rank === 1 ? "RANK 1 — BEST PICK" : rank === 2 ? "RANK 2 — RUNNER-UP" : rank === 3 ? "RANK 3 — PODIUM" : `RANK ${rank}`}
+              {rankLabel}
             </p>
             <p className="text-[10px] text-white/80 uppercase">{strategy} · {riskLevel} risk</p>
           </div>

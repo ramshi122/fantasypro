@@ -562,27 +562,37 @@ export function runEliteAnalysis(
   };
 }
 
-/* ============== Elite Team Generator (10 Ranked Teams) ============== */
+/* ============== Elite Team Generator (0-40 Ranked Teams) ============== */
 
 /**
- * Generate 10 ranked teams using EFV scoring.
+ * Generate N ranked teams (1-40) using EFV scoring.
  *
- * Strategy:
- *   Rank 1-3:  Safe picks (high EFV, high sel%) — best for small leagues
- *   Rank 4-6:  Balanced (mix of safe + differential) — best for mid leagues
- *   Rank 7-9:  Differential (low sel% GL picks) — best for grand leagues
- *   Rank 10:   Contrarian (opposite of public) — max GL upside
+ * Strategy distribution is PROPORTIONAL to the requested count:
+ *   ~25% Safe           — high EFV, high sel% (best for small leagues)
+ *   ~30% Balanced        — mix of safe + differential (best for mid leagues)
+ *   ~25% Differential    — low-sel% GL picks (best for grand leagues)
+ *   ~20% Grand-League    — contrarian (max GL upside)
+ *
+ * For count=10: 3 safe + 3 balanced + 2 diff + 2 GL
+ * For count=20: 5 safe + 6 balanced + 5 diff + 4 GL
+ * For count=40: 10 safe + 12 balanced + 10 diff + 8 GL
  *
  * Each team is built deterministically — NO Math.random.
+ * Teams are sorted by EFV descending (Rank 1 = highest EFV = best).
  */
 export function generateEliteTeams(
   players: MatchPlayer[],
   team1Name: string,
   team2Name: string,
   analysis: EliteAnalysisResult,
-  lineupAnnounced: boolean = false
+  lineupAnnounced: boolean = false,
+  count: number = 10
 ): EliteRankedTeam[] {
   const startTime = Date.now();
+
+  // Clamp count to 1-40
+  const teamCount = Math.max(1, Math.min(40, Math.floor(count)));
+
   const pool = players.filter((p) => p.name && credits(p) > 0);
 
   // If lineup announced, filter to playing XI only
@@ -592,7 +602,7 @@ export function generateEliteTeams(
 
   if (effectivePool.length < 11) return [];
 
-  // Group by role
+  // Group by role (sorted by EFV descending)
   const byRole = {
     WK: effectivePool.filter((p) => roleOf(p) === "WK").sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)),
     BAT: effectivePool.filter((p) => roleOf(p) === "BAT").sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)),
@@ -600,29 +610,60 @@ export function generateEliteTeams(
     BOWL: effectivePool.filter((p) => roleOf(p) === "BOWL").sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)),
   };
 
-  // Role compositions for 10 teams (deterministic — no random)
-  // Each row = [WK, BAT, AR, BOWL] summing to 11
-  const roleCompositions: Array<{ WK: number; BAT: number; AR: number; BOWL: number; strategy: EliteRankedTeam["strategy"]; label: string }> = [
-    { WK: 1, BAT: 4, AR: 3, BOWL: 3, strategy: "safe",          label: "Safe — BAT-heavy core" },
-    { WK: 1, BAT: 5, AR: 2, BOWL: 3, strategy: "safe",          label: "Safe — Top-order blast" },
-    { WK: 1, BAT: 3, AR: 3, BOWL: 4, strategy: "safe",          label: "Safe — Bowl-strong" },
-    { WK: 1, BAT: 4, AR: 2, BOWL: 4, strategy: "balanced",      label: "Balanced — Classic 4-2-4" },
-    { WK: 1, BAT: 5, AR: 1, BOWL: 4, strategy: "balanced",      label: "Balanced — BAT-AR split" },
-    { WK: 1, BAT: 3, AR: 2, BOWL: 5, strategy: "balanced",      label: "Balanced — Bowl-heavy" },
-    { WK: 1, BAT: 4, AR: 3, BOWL: 3, strategy: "differential",  label: "Differential — AR-heavy" },
-    { WK: 1, BAT: 3, AR: 4, BOWL: 3, strategy: "differential",  label: "Differential — Max AR" },
-    { WK: 1, BAT: 5, AR: 2, BOWL: 3, strategy: "grand-league", label: "GL — Contrarian BAT" },
-    { WK: 1, BAT: 3, AR: 3, BOWL: 4, strategy: "grand-league", label: "GL — Contrarian BOWL" },
+  // === Generate role compositions proportional to count ===
+  // Strategy split: 25% safe, 30% balanced, 25% differential, 20% grand-league
+  const safeCount = Math.max(1, Math.round(teamCount * 0.25));
+  const balancedCount = Math.max(1, Math.round(teamCount * 0.30));
+  const diffCount = Math.max(1, Math.round(teamCount * 0.25));
+  const glCount = Math.max(0, teamCount - safeCount - balancedCount - diffCount);
+
+  // Role composition templates per strategy (WK, BAT, AR, BOWL — sums to 11)
+  const safeTemplates = [
+    { WK: 1, BAT: 4, AR: 3, BOWL: 3, label: "Safe — BAT-heavy core" },
+    { WK: 1, BAT: 5, AR: 2, BOWL: 3, label: "Safe — Top-order blast" },
+    { WK: 1, BAT: 3, AR: 3, BOWL: 4, label: "Safe — Bowl-strong" },
+    { WK: 1, BAT: 4, AR: 2, BOWL: 4, label: "Safe — Classic 4-2-4" },
+    { WK: 1, BAT: 5, AR: 1, BOWL: 4, label: "Safe — BAT-dominant" },
   ];
+  const balancedTemplates = [
+    { WK: 1, BAT: 4, AR: 2, BOWL: 4, label: "Balanced — Classic 4-2-4" },
+    { WK: 1, BAT: 5, AR: 1, BOWL: 4, label: "Balanced — BAT-AR split" },
+    { WK: 1, BAT: 3, AR: 2, BOWL: 5, label: "Balanced — Bowl-heavy" },
+    { WK: 1, BAT: 4, AR: 3, BOWL: 3, label: "Balanced — AR-heavy" },
+    { WK: 1, BAT: 3, AR: 3, BOWL: 4, label: "Balanced — Even spread" },
+    { WK: 1, BAT: 5, AR: 2, BOWL: 3, label: "Balanced — Aggressive BAT" },
+  ];
+  const diffTemplates = [
+    { WK: 1, BAT: 4, AR: 3, BOWL: 3, label: "Differential — AR-heavy" },
+    { WK: 1, BAT: 3, AR: 4, BOWL: 3, label: "Differential — Max AR" },
+    { WK: 1, BAT: 5, AR: 2, BOWL: 3, label: "Differential — BAT blast" },
+    { WK: 1, BAT: 3, AR: 3, BOWL: 4, label: "Differential — Bowl-strong" },
+    { WK: 1, BAT: 4, AR: 2, BOWL: 4, label: "Differential — Even mix" },
+  ];
+  const glTemplates = [
+    { WK: 1, BAT: 5, AR: 2, BOWL: 3, label: "GL — Contrarian BAT" },
+    { WK: 1, BAT: 3, AR: 3, BOWL: 4, label: "GL — Contrarian BOWL" },
+    { WK: 1, BAT: 4, AR: 3, BOWL: 3, label: "GL — Contrarian AR" },
+    { WK: 1, BAT: 3, AR: 4, BOWL: 3, label: "GL — Max AR contrarian" },
+  ];
+
+  // Build the full composition list for this run
+  const roleCompositions: Array<{ WK: number; BAT: number; AR: number; BOWL: number; strategy: EliteRankedTeam["strategy"]; label: string }> = [];
+  for (let i = 0; i < safeCount; i++) roleCompositions.push({ ...safeTemplates[i % safeTemplates.length], strategy: "safe" });
+  for (let i = 0; i < balancedCount; i++) roleCompositions.push({ ...balancedTemplates[i % balancedTemplates.length], strategy: "balanced" });
+  for (let i = 0; i < diffCount; i++) roleCompositions.push({ ...diffTemplates[i % diffTemplates.length], strategy: "differential" });
+  for (let i = 0; i < glCount; i++) roleCompositions.push({ ...glTemplates[i % glTemplates.length], strategy: "grand-league" });
 
   const rankedTeams: EliteRankedTeam[] = [];
   const usedTeamKeys = new Set<string>();
   const usedCVPairs = new Set<string>();
 
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < roleCompositions.length; i++) {
     const cfg = roleCompositions[i];
-    const rank = i + 1;
-    const seed = rank * 1337 + 42;
+    // Use a rotation offset so teams with the same template don't pick
+    // the exact same players every time. Offset shifts the slice start.
+    const rotationOffset = Math.floor(i / 4); // shifts every 4 teams
+    const seed = (i + 1) * 1337 + 42 + rotationOffset * 7919;
     const rng = mulberry32(seed);
 
     // Pick players per role
@@ -635,15 +676,23 @@ export function generateEliteTeams(
       if (poolForRole.length < need) break;
 
       if (cfg.strategy === "safe") {
-        // Pick top EFV players
-        team.push(...poolForRole.slice(0, need));
+        // Pick top EFV players, rotated by offset for variety
+        const start = rotationOffset % Math.max(1, poolForRole.length - need);
+        team.push(...poolForRole.slice(start, start + need));
+        // If not enough (due to rotation), fill from start
+        if (team.length < need) {
+          const remaining = need - team.length;
+          team.push(...poolForRole.slice(0, remaining));
+        }
       } else if (cfg.strategy === "balanced") {
-        // Mix: 60% top EFV + 40% mid EFV
+        // Mix: 60% top EFV + 40% mid EFV (rotated)
         const topCount = Math.ceil(need * 0.6);
         const midCount = need - topCount;
-        team.push(...poolForRole.slice(0, topCount));
+        const startTop = rotationOffset % Math.max(1, poolForRole.length - topCount);
+        team.push(...poolForRole.slice(startTop, startTop + topCount));
+        if (team.length < topCount) team.push(...poolForRole.slice(0, topCount - team.length));
         const midStart = topCount;
-        const midPool = poolForRole.slice(midStart, midStart + midCount * 2);
+        const midPool = poolForRole.slice(midStart, midStart + midCount * 3);
         // Deterministic pick from mid pool
         for (let j = 0; j < midCount && midPool.length > 0; j++) {
           const idx = Math.floor(rng() * midPool.length);
@@ -651,23 +700,27 @@ export function generateEliteTeams(
           midPool.splice(idx, 1);
         }
       } else if (cfg.strategy === "differential") {
-        // Mix: 40% top + 60% low-sel differentials
+        // Mix: 40% top + 60% low-sel differentials (rotated)
         const topCount = Math.ceil(need * 0.4);
-        const diffCount = need - topCount;
-        team.push(...poolForRole.slice(0, topCount));
+        const diffCountNeed = need - topCount;
+        const startTop = rotationOffset % Math.max(1, poolForRole.length - topCount);
+        team.push(...poolForRole.slice(startTop, startTop + topCount));
+        if (team.length < topCount) team.push(...poolForRole.slice(0, topCount - team.length));
         // Pick from bottom of pool (low sel%)
-        const diffPool = poolForRole.slice().reverse().slice(0, diffCount * 2);
-        for (let j = 0; j < diffCount && diffPool.length > 0; j++) {
+        const diffPool = poolForRole.slice().reverse().slice(0, diffCountNeed * 3);
+        for (let j = 0; j < diffCountNeed && diffPool.length > 0; j++) {
           const idx = Math.floor(rng() * diffPool.length);
           team.push(diffPool[idx]);
           diffPool.splice(idx, 1);
         }
       } else {
-        // grand-league: 30% top + 70% contrarian
+        // grand-league: 30% top + 70% contrarian (rotated)
         const topCount = Math.ceil(need * 0.3);
         const contraCount = need - topCount;
-        team.push(...poolForRole.slice(0, topCount));
-        const contraPool = poolForRole.slice().reverse().slice(0, contraCount * 2);
+        const startTop = rotationOffset % Math.max(1, poolForRole.length - topCount);
+        team.push(...poolForRole.slice(startTop, startTop + topCount));
+        if (team.length < topCount) team.push(...poolForRole.slice(0, topCount - team.length));
+        const contraPool = poolForRole.slice().reverse().slice(0, contraCount * 3);
         for (let j = 0; j < contraCount && contraPool.length > 0; j++) {
           const idx = Math.floor(rng() * contraPool.length);
           team.push(contraPool[idx]);
@@ -715,16 +768,24 @@ export function generateEliteTeams(
       }
     }
 
-    // Dedup check
-    const teamKey = team.map(playerId).sort().join("|");
-    if (usedTeamKeys.has(teamKey)) {
-      // Force a swap to make unique
-      const role = roleOf(team[0]);
-      const alt = byRole[role].find((p) => !team.find((x) => playerId(x) === playerId(p)));
-      if (alt) team[0] = alt;
+    // Dedup check — try multiple swaps to make unique
+    let teamKey = team.map(playerId).sort().join("|");
+    let dedupAttempts = 0;
+    while (usedTeamKeys.has(teamKey) && dedupAttempts < 10) {
+      // Force a swap to make unique — try swapping different roles each time
+      const roleToSwap = ["WK", "BAT", "AR", "BOWL"][dedupAttempts % 4] as "WK" | "BAT" | "AR" | "BOWL";
+      const swapIdx = team.findIndex((p) => roleOf(p) === roleToSwap);
+      if (swapIdx >= 0) {
+        const alt = byRole[roleToSwap].find(
+          (p) => !team.find((x) => playerId(x) === playerId(p))
+        );
+        if (alt) team[swapIdx] = alt;
+      }
+      teamKey = team.map(playerId).sort().join("|");
+      dedupAttempts++;
     }
-    const finalKey = team.map(playerId).sort().join("|");
-    usedTeamKeys.add(finalKey);
+    if (usedTeamKeys.has(teamKey)) continue; // skip if still duplicate
+    usedTeamKeys.add(teamKey);
 
     // Pick C/VC based on strategy
     let captain: MatchPlayer;
@@ -776,12 +837,12 @@ export function generateEliteTeams(
     const riskLevel: EliteRankedTeam["riskLevel"] =
       cfg.strategy === "safe" ? "low" : cfg.strategy === "balanced" ? "medium" : "high";
 
-    // Build TeamRow
+    // Build TeamRow (rank assigned later after sort)
     const teamRow: TeamRow = {
-      _id: `elite_${rank}_${Date.now().toString(36)}`,
-      teamId: `elite_${rank}`,
-      teamNo: rank,
-      team_number: rank,
+      _id: `elite_${i}_${Date.now().toString(36)}`,
+      teamId: `elite_${i + 1}`,
+      teamNo: i + 1,
+      team_number: i + 1,
       players: team.map((p) => ({
         pid: playerId(p),
         player_fixed_id: p.player_fixed_id,
@@ -807,8 +868,8 @@ export function generateEliteTeams(
       type: "elite-ai",
     };
 
-    // Reasoning
-    const reasoning = `Rank ${rank} — ${cfg.label}. Team EFV: ${teamEFV.toFixed(1)}. ` +
+    // Reasoning (rank assigned later, use placeholder)
+    const reasoning = `${cfg.label}. Team EFV: ${teamEFV.toFixed(1)}. ` +
       `Avg sel%: ${teamSelAvg.toFixed(1)}%. Strategy: ${cfg.strategy.toUpperCase()}. ` +
       `${riskLevel === "low" ? "Best for small leagues." : riskLevel === "medium" ? "Best for mid leagues." : "Best for grand leagues."}`;
 
@@ -819,7 +880,7 @@ export function generateEliteTeams(
       `${cfg.strategy === "safe" ? "Safe VC — high floor." : cfg.strategy === "balanced" ? "Diversified VC." : "Differential VC — max upside."}`;
 
     rankedTeams.push({
-      rank,
+      rank: i + 1, // temporary, will be reassigned after sort
       team: teamRow,
       efv: teamEFV,
       aiScore,
@@ -831,7 +892,7 @@ export function generateEliteTeams(
     });
   }
 
-  // Sort by EFV descending (Rank 1 = highest EFV)
+  // Sort by EFV descending (Rank 1 = highest EFV = best team)
   rankedTeams.sort((a, b) => b.efv - a.efv);
 
   // Re-assign ranks after sort
@@ -839,9 +900,12 @@ export function generateEliteTeams(
     t.rank = i + 1;
     t.team.teamNo = i + 1;
     t.team.team_number = i + 1;
+    // Update reasoning with final rank
+    t.reasoning = `Rank ${t.rank} — ` + t.reasoning;
   });
 
-  return rankedTeams;
+  // Trim to requested count (in case we generated extra for dedup safety)
+  return rankedTeams.slice(0, teamCount);
 }
 
 /* ============== Main Entry Point ============== */
@@ -851,7 +915,8 @@ export async function runEliteAI(
   team1Name: string,
   team2Name: string,
   lineupAnnounced: boolean = false,
-  onProgress?: (check: number, total: number, message: string) => void
+  onProgress?: (check: number, total: number, message: string) => void,
+  teamCount: number = 10
 ): Promise<EliteGenerateResult> {
   const startTime = Date.now();
 
@@ -863,11 +928,11 @@ export async function runEliteAI(
   }
 
   const analysis = runEliteAnalysis(players, team1Name, team2Name, lineupAnnounced);
-  onProgress?.(25, 25, "Analysis complete. Generating ranked teams...");
+  onProgress?.(25, 25, `Analysis complete. Generating ${teamCount} ranked teams...`);
 
-  // Generate 10 ranked teams
+  // Generate N ranked teams
   await new Promise((r) => setTimeout(r, 100));
-  const rankedTeams = generateEliteTeams(players, team1Name, team2Name, analysis, lineupAnnounced);
+  const rankedTeams = generateEliteTeams(players, team1Name, team2Name, analysis, lineupAnnounced, teamCount);
 
   onProgress?.(25, 25, `Generated ${rankedTeams.length} ranked teams`);
 
