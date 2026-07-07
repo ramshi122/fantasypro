@@ -13,6 +13,7 @@ import { ProfileScreen } from "@/components/pages/profile-screen";
 import { PromotionsScreen } from "@/components/pages/promotions-screen";
 import { TeamListScreen } from "@/components/pages/team-list-screen";
 import { ContactScreen } from "@/components/pages/contact-screen";
+import { LineupAlertManager } from "@/components/alerts/lineup-alert-manager";
 import { SplashScreen } from "@/components/splash-screen";
 import { AdminPanel } from "@/components/admin/admin-panel";
 import { LicenseLockOverlay } from "@/components/admin/license-lock";
@@ -105,6 +106,9 @@ export default function Home() {
 
       {/* License Lock Overlay — blocks team generator features until verified */}
       <LicenseLockOverlay />
+
+      {/* Lineup Alert Manager — monitors matches for lineup announcements */}
+      <LineupAlertManager />
     </div>
   );
 }
