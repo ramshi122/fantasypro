@@ -667,6 +667,15 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               handleBulkAddTeams(teams);
               setShowEliteAI(false);
             }}
+            onTransfer={(teams, app) => {
+              // Save teams first, then open transfer modal with those teams
+              handleBulkAddTeams(teams);
+              setSelectedTransferApp(app);
+              // Small delay so teams are in state before modal opens
+              setTimeout(() => {
+                setShowBulkTransfer(true);
+              }, 200);
+            }}
           />
         )}
       </AnimatePresence>

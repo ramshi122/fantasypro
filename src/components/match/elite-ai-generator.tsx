@@ -37,6 +37,7 @@ interface EliteAIGeneratorProps {
   lineupAnnounced: boolean;
   onClose: () => void;
   onGenerated: (teams: TeamRow[]) => void;
+  onTransfer?: (teams: TeamRow[], app: "dream11" | "my11circle") => void;
 }
 
 export function EliteAIGenerator({
@@ -47,6 +48,7 @@ export function EliteAIGenerator({
   lineupAnnounced,
   onClose,
   onGenerated,
+  onTransfer,
 }: EliteAIGeneratorProps) {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ check: 0, total: 25, message: "" });
@@ -101,6 +103,25 @@ export function EliteAIGenerator({
     const t = result.rankedTeams.find((r) => r.rank === rank);
     if (!t) return;
     onGenerated([t.team]);
+    onClose();
+  }
+
+  // Transfer ALL ranked teams to Dream11 or My11Circle
+  function handleTransferAll(app: "dream11" | "my11circle") {
+    if (!result || !onTransfer) return;
+    const teams = result.rankedTeams.map((r) => r.team);
+    onGenerated(teams); // save to localStorage first
+    onTransfer(teams, app);
+    onClose();
+  }
+
+  // Transfer a SINGLE ranked team to Dream11 or My11Circle
+  function handleTransferOne(rank: number, app: "dream11" | "my11circle") {
+    if (!result || !onTransfer) return;
+    const t = result.rankedTeams.find((r) => r.rank === rank);
+    if (!t) return;
+    onGenerated([t.team]); // save to localStorage first
+    onTransfer([t.team], app);
     onClose();
   }
 
@@ -292,6 +313,8 @@ export function EliteAIGenerator({
               onSaveAll={handleSaveAll}
               onSaveOne={handleSaveOne}
               onRerun={handleRun}
+              onTransferAll={onTransfer ? handleTransferAll : undefined}
+              onTransferOne={onTransfer ? handleTransferOne : undefined}
             />
           )}
         </div>
@@ -307,11 +330,15 @@ function EliteAIResult({
   onSaveAll,
   onSaveOne,
   onRerun,
+  onTransferAll,
+  onTransferOne,
 }: {
   result: EliteGenerateResult;
   onSaveAll: () => void;
   onSaveOne: (rank: number) => void;
   onRerun: () => void;
+  onTransferAll?: (app: "dream11" | "my11circle") => void;
+  onTransferOne?: (rank: number, app: "dream11" | "my11circle") => void;
 }) {
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [selectedRank, setSelectedRank] = useState<number | null>(null);
@@ -417,7 +444,7 @@ function EliteAIResult({
         </div>
       </div>
 
-      {/* Ranked teams — Rank 1 to 10 */}
+      {/* Ranked teams — Rank 1 to N */}
       <div>
         <p className="text-xs font-bold text-foreground mb-2 flex items-center gap-1.5">
           <Trophy className="w-3.5 h-3.5 text-amber-500" />
@@ -431,24 +458,52 @@ function EliteAIResult({
               expanded={selectedRank === rt.rank}
               onToggle={() => setSelectedRank(selectedRank === rt.rank ? null : rt.rank)}
               onSave={() => onSaveOne(rt.rank)}
+              onTransferOne={onTransferOne}
             />
           ))}
         </div>
       </div>
 
       {/* Actions */}
-      <div className="flex gap-2 sticky bottom-0 bg-background pt-2 pb-1">
-        <Button variant="outline" className="flex-1" onClick={onRerun}>
-          <Brain className="w-4 h-4 mr-1.5" />
-          Re-run AI
-        </Button>
-        <Button
-          className="flex-1 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white font-bold"
-          onClick={onSaveAll}
-        >
-          <CheckCircle2 className="w-4 h-4 mr-1.5" />
-          Save All {rankedTeams.length} Teams
-        </Button>
+      <div className="space-y-2 sticky bottom-0 bg-background pt-2 pb-1">
+        {/* Save + Transfer All — bulk */}
+        {onTransferAll && (
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              className="bg-red-600 hover:bg-red-700 text-white font-bold h-11"
+              onClick={() => onTransferAll("dream11")}
+            >
+              <Send className="w-4 h-4 mr-1.5" />
+              Transfer All → Dream11
+            </Button>
+            <Button
+              className="bg-sky-600 hover:bg-sky-700 text-white font-bold h-11"
+              onClick={() => onTransferAll("my11circle")}
+            >
+              <Send className="w-4 h-4 mr-1.5" />
+              Transfer All → My11Circle
+            </Button>
+          </div>
+        )}
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1" onClick={onRerun}>
+            <Brain className="w-4 h-4 mr-1.5" />
+            Re-run AI
+          </Button>
+          <Button
+            className="flex-1 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white font-bold"
+            onClick={onSaveAll}
+          >
+            <CheckCircle2 className="w-4 h-4 mr-1.5" />
+            Save All {rankedTeams.length} Teams
+          </Button>
+        </div>
+        {onTransferAll && (
+          <p className="text-[9px] text-center text-muted-foreground">
+            💡 Transfer All saves teams first, then opens the transfer modal —
+            supports bulk + single, replace existing, and join contest check.
+          </p>
+        )}
       </div>
     </div>
   );
@@ -461,11 +516,13 @@ function RankedTeamCard({
   expanded,
   onToggle,
   onSave,
+  onTransferOne,
 }: {
   rankedTeam: EliteRankedTeam;
   expanded: boolean;
   onToggle: () => void;
   onSave: () => void;
+  onTransferOne?: (rank: number, app: "dream11" | "my11circle") => void;
 }) {
   const { rank, team, efv, aiScore, riskLevel, strategy, reasoning, captainReason, vcReason } = rankedTeam;
 
@@ -573,6 +630,27 @@ function RankedTeamCard({
               <CheckCircle2 className="w-3 h-3 mr-1" />
               Save Rank {rank} Team
             </Button>
+            {/* Single team transfer buttons */}
+            {onTransferOne && (
+              <div className="grid grid-cols-2 gap-1.5">
+                <Button
+                  size="sm"
+                  className="h-8 bg-red-600 hover:bg-red-700 text-white text-[10px]"
+                  onClick={() => onTransferOne(rank, "dream11")}
+                >
+                  <Send className="w-3 h-3 mr-1" />
+                  → Dream11
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-8 bg-sky-600 hover:bg-sky-700 text-white text-[10px]"
+                  onClick={() => onTransferOne(rank, "my11circle")}
+                >
+                  <Send className="w-3 h-3 mr-1" />
+                  → My11Circle
+                </Button>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
