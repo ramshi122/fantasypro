@@ -1,8 +1,8 @@
-// FantasyPro - Service Worker v1.0
+// Apna Cricket - Service Worker v1.0
 // Enables PWA install, offline support, and caching
 // Based on the original teamgeneration.in service worker pattern.
 
-const CACHE_NAME = 'fantasypro-v1.0';
+const CACHE_NAME = 'apna-cricket-v1.0';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',

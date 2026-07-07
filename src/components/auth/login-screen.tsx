@@ -107,17 +107,17 @@ export function LoginScreen() {
           transition={{ delay: 0.3, duration: 0.5 }}
           className="grid grid-cols-3 gap-2 mb-8"
         >
-          <div className="glass-card rounded-2xl p-3 text-center">
+          <div className="premium-dark-card rounded-2xl p-3 text-center">
             <Shield className="w-5 h-5 text-white mx-auto mb-1" />
             <p className="text-[10px] text-white font-semibold">Secure & Safe</p>
             <p className="text-[9px] text-white/70">Protected</p>
           </div>
-          <div className="glass-card rounded-2xl p-3 text-center">
+          <div className="premium-dark-card rounded-2xl p-3 text-center">
             <Zap className="w-5 h-5 text-white mx-auto mb-1" />
             <p className="text-[10px] text-white font-semibold">Fast & Reliable</p>
             <p className="text-[9px] text-white/70">Instant teams</p>
           </div>
-          <div className="glass-card rounded-2xl p-3 text-center">
+          <div className="premium-dark-card rounded-2xl p-3 text-center">
             <Sparkles className="w-5 h-5 text-white mx-auto mb-1" />
             <p className="text-[10px] text-white font-semibold">Smart Teams</p>
             <p className="text-[9px] text-white/70">AI-powered</p>
@@ -130,7 +130,7 @@ export function LoginScreen() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4, duration: 0.5 }}
-          className="glass-card rounded-3xl p-6 shadow-2xl"
+          className="premium-dark-card rounded-3xl p-6 shadow-2xl"
         >
           <h2 className="text-white text-lg font-bold mb-1">Sign in to continue</h2>
           <p className="text-white/70 text-xs mb-5">
