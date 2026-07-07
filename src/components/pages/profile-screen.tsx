@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useApp, useAuth } from "@/lib/store";
 import { BrandLogo } from "@/components/brand-logo";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Bell,
   CheckCircle2,
@@ -125,6 +126,9 @@ export function ProfileScreen({ onAdminTrigger }: { onAdminTrigger?: () => void 
         <StatCard label="Plan" value={user?.plan || "Free"} icon={Crown} />
         <StatCard label="Status" value="Active" icon={Shield} />
       </div>
+
+      {/* License Activation + Countdown */}
+      <LicenseActivationCard />
 
       {/* Linked Fantasy Accounts */}
       <div className="space-y-2">
@@ -498,6 +502,230 @@ function LicensePlansSection() {
       <p className="text-center text-[10px] text-muted-foreground">
         Contact admin to purchase license keys
       </p>
+    </div>
+  );
+}
+
+/* ============== License Activation Card with Countdown ============== */
+
+function LicenseActivationCard() {
+  const [keyInput, setKeyInput] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [licenseInfo, setLicenseInfo] = useState<{
+    key: string;
+    keyType: string;
+    verified: boolean;
+    expiresAt: number | null;
+  } | null>(null);
+  const [countdown, setCountdown] = useState({ days: 0, hours: 0, mins: 0, secs: 0, expired: false });
+
+  // Load license state on mount
+  useEffect(() => {
+    import("@/lib/admin-store").then(({ getLicenseState }) => {
+      const state = getLicenseState();
+      if (state.verified && state.key) {
+        // Get key type from admin store
+        import("@/lib/admin-store").then(({ useAdmin }) => {
+          const admin = useAdmin.getState();
+          const keyObj = admin.keys.find((k) => k.key === state.key);
+          setLicenseInfo({
+            key: state.key,
+            keyType: keyObj?.type || "unknown",
+            verified: true,
+            expiresAt: keyObj?.expiresAt ?? null,
+          });
+        });
+      }
+    });
+  }, []);
+
+  // Countdown timer
+  useEffect(() => {
+    if (!licenseInfo?.expiresAt) return;
+
+    const updateCountdown = () => {
+      const now = Date.now();
+      const diff = licenseInfo.expiresAt! - now;
+
+      if (diff <= 0) {
+        setCountdown({ days: 0, hours: 0, mins: 0, secs: 0, expired: true });
+        return;
+      }
+
+      const days = Math.floor(diff / 86400000);
+      const hours = Math.floor((diff % 86400000) / 3600000);
+      const mins = Math.floor((diff % 3600000) / 60000);
+      const secs = Math.floor((diff % 60000) / 1000);
+
+      setCountdown({ days, hours, mins, secs, expired: false });
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [licenseInfo]);
+
+  async function handleActivate() {
+    if (!keyInput.trim()) {
+      toast.error("Enter license key");
+      return;
+    }
+    setVerifying(true);
+    try {
+      const { useLicense } = await import("@/lib/use-license");
+      // Create a temporary hook instance is not possible, so use admin store directly
+      const { useAdmin, setLicenseVerified } = await import("@/lib/admin-store");
+      const admin = useAdmin.getState();
+      const { getDeviceId } = await import("@/lib/admin-store");
+      const deviceId = getDeviceId();
+      const result = admin.verifyLicense(keyInput.trim().toUpperCase(), deviceId);
+
+      if (result.valid) {
+        setLicenseVerified(keyInput.trim().toUpperCase(), result.keyType);
+        const keyObj = admin.keys.find((k) => k.key === keyInput.trim().toUpperCase());
+        setLicenseInfo({
+          key: keyInput.trim().toUpperCase(),
+          keyType: result.keyType || keyObj?.type || "unknown",
+          verified: true,
+          expiresAt: keyObj?.expiresAt ?? null,
+        });
+        toast.success("License activated successfully!");
+        setKeyInput("");
+      } else {
+        toast.error(result.message || "Activation failed");
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Activation error");
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  function handleDeactivate() {
+    import("@/lib/admin-store").then(({ clearLicense }) => {
+      clearLicense();
+      setLicenseInfo(null);
+      setCountdown({ days: 0, hours: 0, mins: 0, secs: 0, expired: false });
+      toast.info("License deactivated");
+    });
+  }
+
+  // License tier info
+  const tierInfo: Record<string, { label: string; color: string; emoji: string }> = {
+    trial: { label: "Trial (1 Day Free)", color: "from-emerald-500 to-green-600", emoji: "🆓" },
+    match_basic: { label: "1 Match Access (6h)", color: "from-amber-500 to-orange-600", emoji: "🏏" },
+    match_full: { label: "24 Hour Access", color: "from-rose-500 to-pink-600", emoji: "⏰" },
+    weekly: { label: "Weekly (7 Days)", color: "from-sky-500 to-blue-600", emoji: "📅" },
+    monthly: { label: "Pro (30 Days)", color: "from-sky-500 to-blue-600", emoji: "💎" },
+    elite: { label: "Elite (90 Days)", color: "from-violet-500 to-purple-600", emoji: "👑" },
+    lifetime: { label: "Lifetime Access", color: "from-amber-500 to-yellow-600", emoji: "♾️" },
+  };
+
+  const tier = licenseInfo ? tierInfo[licenseInfo.keyType] || tierInfo.trial : null;
+
+  return (
+    <div className="space-y-3">
+      {licenseInfo && licenseInfo.verified ? (
+        // Active License Card
+        <div className={cn("rounded-2xl p-4 text-white shadow-lg bg-gradient-to-br", tier?.color || "from-violet-500 to-purple-600")}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">{tier?.emoji}</span>
+              <div>
+                <p className="text-[10px] text-white/70 uppercase tracking-wider">License Active</p>
+                <p className="text-sm font-black">{tier?.label || "Active"}</p>
+              </div>
+            </div>
+            <CheckCircle2 className="w-5 h-5 text-white" />
+          </div>
+
+          {/* Key display */}
+          <div className="bg-white/15 backdrop-blur-sm rounded-lg p-2 mb-3">
+            <p className="text-[9px] text-white/70 mb-0.5">License Key</p>
+            <code className="text-xs font-mono font-bold tracking-wider">{licenseInfo.key}</code>
+          </div>
+
+          {/* Countdown timer */}
+          {licenseInfo.expiresAt && !countdown.expired ? (
+            <div className="bg-white/15 backdrop-blur-sm rounded-xl p-3">
+              <p className="text-[10px] text-white/70 mb-2 text-center uppercase tracking-wider">⏳ Expires In</p>
+              <div className="grid grid-cols-4 gap-2">
+                <div className="text-center bg-white/15 rounded-lg p-1.5">
+                  <p className="text-lg font-black tabular-nums">{countdown.days}</p>
+                  <p className="text-[8px] text-white/70 uppercase">Days</p>
+                </div>
+                <div className="text-center bg-white/15 rounded-lg p-1.5">
+                  <p className="text-lg font-black tabular-nums">{countdown.hours}</p>
+                  <p className="text-[8px] text-white/70 uppercase">Hrs</p>
+                </div>
+                <div className="text-center bg-white/15 rounded-lg p-1.5">
+                  <p className="text-lg font-black tabular-nums">{countdown.mins}</p>
+                  <p className="text-[8px] text-white/70 uppercase">Min</p>
+                </div>
+                <div className="text-center bg-white/15 rounded-lg p-1.5">
+                  <p className="text-lg font-black tabular-nums animate-pulse">{countdown.secs}</p>
+                  <p className="text-[8px] text-white/70 uppercase">Sec</p>
+                </div>
+              </div>
+            </div>
+          ) : countdown.expired ? (
+            <div className="bg-red-500/30 backdrop-blur-sm rounded-xl p-3 text-center">
+              <p className="text-sm font-bold">⚠ License Expired</p>
+              <p className="text-[10px] text-white/80 mt-1">Activate a new key to continue</p>
+            </div>
+          ) : (
+            <div className="bg-white/15 backdrop-blur-sm rounded-xl p-3 text-center">
+              <p className="text-2xl font-black">♾️ Lifetime</p>
+              <p className="text-[10px] text-white/80 mt-1">Never expires</p>
+            </div>
+          )}
+
+          {/* Deactivate button */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full mt-3 bg-white/10 border-white/30 text-white hover:bg-white/20 h-8 text-xs"
+            onClick={handleDeactivate}
+          >
+            <Trash2 className="w-3 h-3 mr-1" />
+            Deactivate
+          </Button>
+        </div>
+      ) : (
+        // Activation form
+        <div className="bg-white dark:bg-card rounded-2xl border border-violet-100 dark:border-violet-900/30 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Crown className="w-5 h-5 text-amber-500" />
+            <h3 className="font-bold text-sm text-foreground">Activate License Key</h3>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Enter your license key to unlock all features. Get keys from admin via WhatsApp.
+          </p>
+          <Input
+            value={keyInput}
+            onChange={(e) => setKeyInput(e.target.value.toUpperCase())}
+            placeholder="CRICB-XXXX-XXXX-XXXX"
+            className="bg-violet-50 dark:bg-violet-950/30 border-violet-200 dark:border-violet-800 h-11 text-sm font-mono font-bold tracking-wider"
+          />
+          <Button
+            className="w-full h-11 brand-gradient text-white font-bold text-sm"
+            onClick={handleActivate}
+            disabled={verifying}
+          >
+            {verifying ? (
+              <>
+                <div className="w-4 h-4 mr-2 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Activating...
+              </>
+            ) : (
+              <>
+                <Shield className="w-4 h-4 mr-2" />
+                Activate License
+              </>
+            )}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
