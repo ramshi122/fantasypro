@@ -10,7 +10,6 @@ import {
   Shield,
   Smartphone,
   X,
-  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -35,7 +34,7 @@ type Phase = "review" | "payment-method" | "processing" | "success" | "failed";
 
 export function PaymentModal({ open, onClose, plan, mobile, onPaymentSuccess }: PaymentModalProps) {
   const [phase, setPhase] = useState<Phase>("review");
-  const [paymentMethod, setPaymentMethod] = useState<"upi" | "card" | "netbanking">("upi");
+  const [paymentMethod] = useState<"upi">("upi");
   const [orderId, setOrderId] = useState<string | null>(null);
   const [licenseKey, setLicenseKey] = useState<string | null>(null);
 
@@ -194,63 +193,65 @@ export function PaymentModal({ open, onClose, plan, mobile, onPaymentSuccess }: 
               </>
             )}
 
-            {/* Payment method phase */}
+            {/* Payment method phase — UPI only */}
             {phase === "payment-method" && (
               <>
                 <div>
-                  <p className="text-xs font-bold text-foreground mb-2">Select Payment Method</p>
-                  <div className="space-y-2">
-                    <button
-                      onClick={() => setPaymentMethod("upi")}
-                      className={cn(
-                        "w-full p-3 rounded-xl border-2 flex items-center gap-3 transition-all",
-                        paymentMethod === "upi"
-                          ? "border-violet-500 bg-violet-50 dark:bg-violet-950/30"
-                          : "border-violet-100 dark:border-violet-900/30"
-                      )}
-                    >
-                      <Smartphone className="w-5 h-5 text-violet-600" />
-                      <div className="flex-1 text-left">
-                        <p className="text-xs font-bold text-foreground">UPI</p>
-                        <p className="text-[10px] text-muted-foreground">GPay, PhonePe, Paytm</p>
-                      </div>
-                      {paymentMethod === "upi" && <CheckCircle2 className="w-4 h-4 text-violet-600" />}
-                    </button>
+                  <p className="text-xs font-bold text-foreground mb-2">Pay via UPI</p>
 
-                    <button
-                      onClick={() => setPaymentMethod("card")}
-                      className={cn(
-                        "w-full p-3 rounded-xl border-2 flex items-center gap-3 transition-all",
-                        paymentMethod === "card"
-                          ? "border-violet-500 bg-violet-50 dark:bg-violet-950/30"
-                          : "border-violet-100 dark:border-violet-900/30"
-                      )}
-                    >
-                      <CreditCard className="w-5 h-5 text-violet-600" />
-                      <div className="flex-1 text-left">
-                        <p className="text-xs font-bold text-foreground">Card</p>
-                        <p className="text-[10px] text-muted-foreground">Debit / Credit Card</p>
+                  {/* UPI payment info */}
+                  <div className="bg-violet-50 dark:bg-violet-950/30 rounded-xl p-4 border-2 border-violet-200 dark:border-violet-800">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-12 h-12 rounded-xl bg-violet-600 flex items-center justify-center">
+                        <Smartphone className="w-6 h-6 text-white" />
                       </div>
-                      {paymentMethod === "card" && <CheckCircle2 className="w-4 h-4 text-violet-600" />}
-                    </button>
+                      <div>
+                        <p className="text-xs font-bold text-foreground">UPI Payment</p>
+                        <p className="text-[10px] text-muted-foreground">Pay to: gostr3248@okhdfcbank</p>
+                      </div>
+                    </div>
 
-                    <button
-                      onClick={() => setPaymentMethod("netbanking")}
-                      className={cn(
-                        "w-full p-3 rounded-xl border-2 flex items-center gap-3 transition-all",
-                        paymentMethod === "netbanking"
-                          ? "border-violet-500 bg-violet-50 dark:bg-violet-950/30"
-                          : "border-violet-100 dark:border-violet-900/30"
-                      )}
-                    >
-                      <Lock className="w-5 h-5 text-violet-600" />
-                      <div className="flex-1 text-left">
-                        <p className="text-xs font-bold text-foreground">Net Banking</p>
-                        <p className="text-[10px] text-muted-foreground">All major banks</p>
+                    {/* UPI ID display + copy */}
+                    <div className="bg-white dark:bg-card rounded-lg p-2.5 border border-violet-200 dark:border-violet-800">
+                      <p className="text-[10px] text-muted-foreground mb-1">UPI ID</p>
+                      <div className="flex items-center justify-between">
+                        <code className="text-sm font-bold text-violet-600 dark:text-violet-400">gostr3248@okhdfcbank</code>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText("gostr3248@okhdfcbank");
+                            toast.success("UPI ID copied!");
+                          }}
+                          className="text-[10px] bg-violet-600 hover:bg-violet-700 text-white px-2 py-1 rounded-md font-bold"
+                        >
+                          Copy
+                        </button>
                       </div>
-                      {paymentMethod === "netbanking" && <CheckCircle2 className="w-4 h-4 text-violet-600" />}
-                    </button>
+                    </div>
+
+                    {/* Amount to pay */}
+                    <div className="mt-3 flex items-center justify-between bg-white dark:bg-card rounded-lg p-2.5 border border-violet-200 dark:border-violet-800">
+                      <span className="text-[11px] text-muted-foreground">Amount to Pay</span>
+                      <span className="text-lg font-black text-violet-600 dark:text-violet-400">₹{plan.price}</span>
+                    </div>
                   </div>
+
+                  {/* Open UPI app button */}
+                  <Button
+                    className="w-full h-11 bg-emerald-500 hover:bg-emerald-600 text-white font-bold mt-3"
+                    onClick={() => {
+                      // Open UPI app with pre-filled payment
+                      const upiUrl = `upi://pay?pa=gostr3248@okhdfcbank&pn=Apna%20Cricket&am=${plan.price}&cu=INR&tn=${plan.name} License`;
+                      window.open(upiUrl, "_blank");
+                      toast.info("Opening UPI app... After payment, click 'I've Paid' below");
+                    }}
+                  >
+                    <Smartphone className="w-4 h-4 mr-2" />
+                    Open UPI App & Pay ₹{plan.price}
+                  </Button>
+
+                  <p className="text-[10px] text-muted-foreground text-center mt-2">
+                    GPay · PhonePe · Paytm · BHIM — any UPI app
+                  </p>
                 </div>
 
                 <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl p-2.5">
@@ -258,7 +259,8 @@ export function PaymentModal({ open, onClose, plan, mobile, onPaymentSuccess }: 
                     ⚠️ Key activates ONLY after payment confirmation
                   </p>
                   <p className="text-[9px] text-amber-600 dark:text-amber-400 mt-0.5">
-                    If payment fails, no key will be generated. You won't be charged.
+                    Pay ₹{plan.price} to the UPI ID above, then click "I've Paid — Verify & Activate" below.
+                    If payment fails, no key will be generated.
                   </p>
                 </div>
 
@@ -266,8 +268,8 @@ export function PaymentModal({ open, onClose, plan, mobile, onPaymentSuccess }: 
                   className="w-full h-11 brand-gradient text-white font-bold"
                   onClick={handlePay}
                 >
-                  <Zap className="w-4 h-4 mr-2" />
-                  Pay ₹{plan.price} & Activate
+                  <CheckCircle2 className="w-4 h-4 mr-2" />
+                  I've Paid — Verify & Activate
                 </Button>
               </>
             )}
