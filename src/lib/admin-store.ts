@@ -317,6 +317,14 @@ export const useAdmin = create<AdminState>()(
         };
         set((s) => ({ keys: [newKey, ...s.keys] }));
         get().addLog("admin_action", `Generated ${type} key: ${key}`);
+        // Sync to Firebase (async, non-blocking)
+        import("./firebase-license").then(({ syncKeyToFirestore, initFirebase }) => {
+          initFirebase(get().settings.firebaseConfig);
+          syncKeyToFirestore(newKey).then((ok) => {
+            if (ok) console.log("[Firebase] Key synced:", key);
+            else console.log("[Firebase] Key sync failed (offline?) — saved locally only");
+          });
+        });
         return key;
       },
 
@@ -337,6 +345,13 @@ export const useAdmin = create<AdminState>()(
         }
         set((s) => ({ keys: [...newKeys, ...s.keys] }));
         get().addLog("admin_action", `Generated ${count} bulk ${type} keys`);
+        // Bulk sync to Firebase (async, non-blocking)
+        import("./firebase-license").then(({ bulkSyncKeysToFirestore, initFirebase }) => {
+          initFirebase(get().settings.firebaseConfig);
+          bulkSyncKeysToFirestore(newKeys).then((res) => {
+            console.log(`[Firebase] Bulk sync: ${res.synced}/${count} synced, ${res.failed} failed`);
+          });
+        });
         return newKeys.map((k) => k.key);
       },
 

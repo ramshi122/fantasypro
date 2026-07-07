@@ -398,6 +398,64 @@ function LicensesTab() {
             <CheckCircle2 className="w-3 h-3 mr-1" />
             Validate All
           </Button>
+          <Button
+            size="sm"
+            className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs"
+            onClick={async () => {
+              toast.info("Syncing keys to Firebase...");
+              try {
+                const { initFirebase, bulkSyncKeysToFirestore } = await import("@/lib/firebase-license");
+                initFirebase(admin.settings.firebaseConfig);
+                const res = await bulkSyncKeysToFirestore(admin.keys);
+                if (res.synced > 0) {
+                  toast.success(`✅ Synced ${res.synced}/${admin.keys.length} keys to Firebase`);
+                } else {
+                  toast.error("❌ Firebase not configured — add config in Settings tab");
+                }
+              } catch (err: any) {
+                toast.error(err?.message || "Sync failed");
+              }
+            }}
+            title="Upload all local keys to Firebase Firestore"
+          >
+            <ShieldCheck className="w-3 h-3 mr-1" />
+            Sync Firebase
+          </Button>
+          <Button
+            size="sm"
+            className="bg-red-600 hover:bg-red-700 text-white h-8 text-xs"
+            onClick={async () => {
+              if (!confirm("Suspend ALL active keys in Firebase? Users will be locked out immediately.")) return;
+              toast.info("Suspending all keys in Firebase...");
+              try {
+                const { initFirebase, suspendAllKeysInFirestore } = await import("@/lib/firebase-license");
+                initFirebase(admin.settings.firebaseConfig);
+                const res = await suspendAllKeysInFirestore();
+                if (res.suspended > 0) {
+                  toast.success(`🚫 Suspended ${res.suspended} keys in Firebase`);
+                } else {
+                  toast.error("❌ No keys suspended — Firebase not configured or no active keys");
+                }
+              } catch (err: any) {
+                toast.error(err?.message || "Suspend failed");
+              }
+            }}
+            title="Suspend ALL active keys in Firebase (emergency)"
+          >
+            <Ban className="w-3 h-3 mr-1" />
+            Ban All
+          </Button>
+        </div>
+
+        {/* Firebase status indicator */}
+        <div className="flex items-center gap-2 text-[10px] text-slate-400">
+          <span className={cn(
+            "w-2 h-2 rounded-full",
+            admin.settings.firebaseConfig ? "bg-emerald-500" : "bg-slate-600"
+          )} />
+          {admin.settings.firebaseConfig
+            ? "Firebase configured — keys sync on generate"
+            : "Firebase NOT configured — keys saved locally only. Add config in Settings."}
         </div>
       </div>
 
@@ -838,13 +896,27 @@ function SettingsTab() {
 
       {/* Firebase */}
       <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-2">
-        <p className="text-xs font-bold text-white">Firebase Config</p>
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-bold text-white">Firebase Config (Firestore)</p>
+          <span className={cn(
+            "text-[9px] px-2 py-0.5 rounded-full font-bold",
+            firebase.trim()
+              ? "bg-emerald-900/50 text-emerald-400 border border-emerald-700"
+              : "bg-slate-700 text-slate-400"
+          )}>
+            {firebase.trim() ? "✓ CONFIGURED" : "⚠ NOT SET"}
+          </span>
+        </div>
         <textarea
           value={firebase}
           onChange={(e) => setFirebase(e.target.value)}
-          placeholder="Paste Firebase config JSON..."
-          className="w-full min-h-[60px] bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-xs font-mono resize-none focus:outline-none"
+          placeholder={'{\n  "apiKey": "AIza...",\n  "authDomain": "xxx.firebaseapp.com",\n  "projectId": "xxx",\n  "storageBucket": "xxx.appspot.com",\n  "messagingSenderId": "123",\n  "appId": "1:123:web:abc"\n}'}
+          className="w-full min-h-[100px] bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-xs font-mono resize-none focus:outline-none"
         />
+        <p className="text-[10px] text-slate-400">
+          Paste your Firebase web config JSON. License keys will sync to Firestore collection <span className="font-mono text-violet-300">license_keys</span>.
+          Get this from Firebase Console → Project Settings → General → Web apps.
+        </p>
       </div>
 
       {/* License prefix */}
