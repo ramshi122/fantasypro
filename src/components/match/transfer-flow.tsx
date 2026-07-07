@@ -44,6 +44,7 @@ import { AutoGenerator } from "./auto-generator";
 import { ApnaTransferModal } from "./apna-transfer-modal";
 import { FreeContestsModal } from "./free-contests-modal";
 import { OtpLoginModal } from "@/components/auth/otp-login-modal";
+import { EliteAIGenerator } from "./elite-ai-generator";
 import {
   autoReplaceNonPlaying,
   buildPlayingPlayerSet,
@@ -69,6 +70,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   const [editingTeam, setEditingTeam] = useState<TeamRow | null>(null);
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [showSweepGenerator, setShowSweepGenerator] = useState(false);
+  const [showEliteAI, setShowEliteAI] = useState(false);
   const [showBulkTransfer, setShowBulkTransfer] = useState(false);
   const [selectedTransferApp, setSelectedTransferApp] = useState<FantasyApp>("dream11");
   const [showFreeContests, setShowFreeContests] = useState(false);
@@ -463,6 +465,19 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               </Button>
               <Button
                 size="sm"
+                onClick={() => license.requireLicense() && setShowEliteAI(true)}
+                disabled={players.length < 11}
+                className={cn(
+                  license.isLicensed
+                    ? "bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white"
+                    : "bg-slate-300 text-slate-500 dark:bg-slate-700"
+                )}
+              >
+                {license.isLicensed ? <Crown className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                {license.isLicensed ? "Elite AI" : "Elite AI 🔒"}
+              </Button>
+              <Button
+                size="sm"
                 onClick={() => license.requireLicense() && (() => {
                   setEditingTeam(null);
                   setShowEditor(true);
@@ -637,6 +652,24 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
           setShowOtpLogin(true);
         }}
       />
+
+      {/* Elite AI Generator modal */}
+      <AnimatePresence>
+        {showEliteAI && (
+          <EliteAIGenerator
+            match={match}
+            players={players}
+            team1Name={team1Name}
+            team2Name={team2Name}
+            lineupAnnounced={lineupAnnounced}
+            onClose={() => setShowEliteAI(false)}
+            onGenerated={(teams) => {
+              handleBulkAddTeams(teams);
+              setShowEliteAI(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Auto Team Generator (Sweep) modal */}
       <AnimatePresence>

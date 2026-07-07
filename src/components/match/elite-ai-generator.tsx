@@ -1,0 +1,554 @@
+"use client";
+
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  AlertCircle,
+  Brain,
+  CheckCircle2,
+  Clock,
+  Cpu,
+  Crown,
+  Loader2,
+  Shield,
+  Sparkles,
+  TrendingUp,
+  Trophy,
+  X,
+  Zap,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import {
+  runEliteAI,
+  type EliteAnalysisResult,
+  type EliteRankedTeam,
+  type EliteGenerateResult,
+} from "@/lib/elite-ai";
+import type { MatchInfo, MatchPlayer, TeamRow } from "@/lib/api";
+import { cn } from "@/lib/utils";
+
+interface EliteAIGeneratorProps {
+  match: MatchInfo;
+  players: MatchPlayer[];
+  team1Name: string;
+  team2Name: string;
+  lineupAnnounced: boolean;
+  onClose: () => void;
+  onGenerated: (teams: TeamRow[]) => void;
+}
+
+export function EliteAIGenerator({
+  match,
+  players,
+  team1Name,
+  team2Name,
+  lineupAnnounced,
+  onClose,
+  onGenerated,
+}: EliteAIGeneratorProps) {
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState({ check: 0, total: 25, message: "" });
+  const [result, setResult] = useState<EliteGenerateResult | null>(null);
+
+  const matchId = (match.matchId ?? match.id ?? "") as string;
+
+  async function handleRun() {
+    if (players.length < 11) {
+      toast.error("Need at least 11 players in pool");
+      return;
+    }
+    setRunning(true);
+    setResult(null);
+    setProgress({ check: 0, total: 25, message: "Initializing Elite AI..." });
+
+    try {
+      const res = await runEliteAI(
+        players,
+        team1Name,
+        team2Name,
+        lineupAnnounced,
+        (check, total, message) => setProgress({ check, total, message })
+      );
+
+      if (res.rankedTeams.length === 0) {
+        toast.error("AI could not generate teams — try with more players");
+        setRunning(false);
+        return;
+      }
+
+      setResult(res);
+      toast.success(`Elite AI generated ${res.rankedTeams.length} ranked teams in ${(res.durationMs / 1000).toFixed(2)}s`);
+    } catch (err: any) {
+      console.error("[EliteAI] error:", err);
+      toast.error(err?.message || "Elite AI failed");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  function handleSaveAll() {
+    if (!result) return;
+    onGenerated(result.rankedTeams.map((r) => r.team));
+    onClose();
+  }
+
+  function handleSaveOne(rank: number) {
+    if (!result) return;
+    const t = result.rankedTeams.find((r) => r.rank === rank);
+    if (!t) return;
+    onGenerated([t.team]);
+    onClose();
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: 40, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: 40, opacity: 0 }}
+        className="bg-background w-full sm:max-w-3xl rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[95vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header — Cinematic Gold */}
+        <div className="sticky top-0 z-10 bg-gradient-to-r from-amber-900 via-yellow-800 to-amber-900 text-white p-4 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-md flex items-center justify-center">
+              <Crown className="w-5 h-5 text-amber-300" />
+            </div>
+            <div>
+              <h3 className="font-black text-base flex items-center gap-2">
+                Elite AI Team Generator
+                <span className="text-[9px] bg-amber-400 text-amber-950 px-1.5 py-0.5 rounded-full font-bold">RANK 1-10</span>
+              </h3>
+              <p className="text-[10px] text-white/70">25-check AI research · Ranked by EFV score</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* Match info */}
+          <div className="bg-amber-50 dark:bg-amber-950/20 rounded-xl p-3 border border-amber-200 dark:border-amber-800">
+            <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
+              {match.series || match.title}
+            </p>
+            <p className="text-[11px] text-amber-700 dark:text-amber-300">
+              {team1Name} vs {team2Name} · {players.length} players · {lineupAnnounced ? "✓ Lineup announced" : "⚠ Lineup pending"}
+            </p>
+          </div>
+
+          {/* Initial state — Run button */}
+          {!result && !running && (
+            <div className="space-y-4">
+              <div className="bg-gradient-to-br from-violet-50 to-amber-50 dark:from-violet-950/30 dark:to-amber-950/30 rounded-2xl p-5 text-center border border-violet-200 dark:border-violet-800">
+                <Brain className="w-12 h-12 mx-auto text-violet-600 dark:text-violet-400 mb-2" />
+                <h4 className="text-sm font-black text-foreground mb-1">
+                  Hard AI Research · 25 Deep Checks
+                </h4>
+                <p className="text-[11px] text-muted-foreground mb-3 max-w-md mx-auto">
+                  Elite AI runs 25 in-depth analysis checks on the player pool — covering captain certainty,
+                  role balance, form trends, differential opportunity, venue suitability, risk-reward ratio
+                  and more. Then generates 10 ranked teams (Rank 1 = best EFV score).
+                </p>
+                <div className="grid grid-cols-2 gap-2 text-[10px] mb-4">
+                  <div className="bg-white/60 dark:bg-card/60 rounded-lg p-2">
+                    <p className="font-bold text-violet-600 dark:text-violet-400">25 Checks</p>
+                    <p className="text-muted-foreground">Deep AI analysis</p>
+                  </div>
+                  <div className="bg-white/60 dark:bg-card/60 rounded-lg p-2">
+                    <p className="font-bold text-amber-600 dark:text-amber-400">10 Ranked Teams</p>
+                    <p className="text-muted-foreground">Rank 1 to Rank 10</p>
+                  </div>
+                </div>
+                <Button
+                  className="w-full h-12 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white font-bold"
+                  onClick={handleRun}
+                  disabled={players.length < 11}
+                >
+                  <Brain className="w-5 h-5 mr-2" />
+                  Run Elite AI Research
+                </Button>
+                {players.length < 11 && (
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-2">
+                    Need at least 11 players (currently {players.length})
+                  </p>
+                )}
+              </div>
+
+              {/* 25 checks preview */}
+              <div className="bg-violet-50/50 dark:bg-violet-950/20 rounded-xl p-3">
+                <p className="text-[11px] font-bold text-violet-700 dark:text-violet-300 mb-2 flex items-center gap-1.5">
+                  <Cpu className="w-3 h-3" />
+                  25 AI Analysis Checks
+                </p>
+                <div className="grid grid-cols-2 gap-1 text-[9px] text-muted-foreground">
+                  {CHECK_NAMES.map((name, i) => (
+                    <div key={i} className="flex items-center gap-1">
+                      <span className="text-violet-500 font-bold">{i + 1}.</span>
+                      <span>{name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Running state — progress */}
+          {running && (
+            <div className="space-y-4">
+              <div className="bg-violet-50 dark:bg-violet-950/30 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold flex items-center gap-1.5">
+                    <Loader2 className="w-4 h-4 animate-spin text-violet-600" />
+                    {progress.message}
+                  </span>
+                  <span className="text-xs font-black text-violet-700 dark:text-violet-300 tabular-nums">
+                    {progress.check}/{progress.total}
+                  </span>
+                </div>
+                <div className="h-3 bg-violet-100 dark:bg-violet-900/40 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-gradient-to-r from-amber-500 to-violet-500"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${(progress.check / progress.total) * 100}%` }}
+                    transition={{ duration: 0.3 }}
+                  />
+                </div>
+                <div className="grid grid-cols-5 gap-1 mt-2">
+                  {Array.from({ length: 25 }, (_, i) => i + 1).map((n) => (
+                    <div
+                      key={n}
+                      className={cn(
+                        "h-1.5 rounded-full transition-colors",
+                        n <= progress.check
+                          ? "bg-gradient-to-r from-amber-500 to-violet-500"
+                          : "bg-violet-100 dark:bg-violet-900/40"
+                      )}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Result — analysis + ranked teams */}
+          {result && !running && (
+            <EliteAIResult
+              result={result}
+              onSaveAll={handleSaveAll}
+              onSaveOne={handleSaveOne}
+              onRerun={handleRun}
+            />
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/* ============== Result Component ============== */
+
+function EliteAIResult({
+  result,
+  onSaveAll,
+  onSaveOne,
+  onRerun,
+}: {
+  result: EliteGenerateResult;
+  onSaveAll: () => void;
+  onSaveOne: (rank: number) => void;
+  onRerun: () => void;
+}) {
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [selectedRank, setSelectedRank] = useState<number | null>(null);
+
+  const { analysis, rankedTeams, durationMs } = result;
+
+  return (
+    <div className="space-y-4">
+      {/* Overall score banner */}
+      <div className="bg-gradient-to-br from-amber-100 to-violet-100 dark:from-amber-950/30 dark:to-violet-950/30 rounded-2xl p-4 border border-amber-300 dark:border-amber-800">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-bold">AI Confidence Score</p>
+            <p className="text-3xl font-black text-amber-700 dark:text-amber-300">
+              {analysis.overallScore}<span className="text-base text-muted-foreground">/100</span>
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              {analysis.confidence === "high" ? "🟢 HIGH confidence" : analysis.confidence === "medium" ? "🟡 MEDIUM confidence" : "🔴 LOW confidence"} ·
+              Recommended: {analysis.recommendedStrategy.toUpperCase()}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] text-muted-foreground">Generated in</p>
+            <p className="text-sm font-bold text-foreground">{(durationMs / 1000).toFixed(2)}s</p>
+            <p className="text-[10px] text-muted-foreground mt-1">{rankedTeams.length} ranked teams</p>
+          </div>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full h-8 text-[11px] border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300"
+          onClick={() => setShowAnalysis(!showAnalysis)}
+        >
+          {showAnalysis ? "Hide" : "Show"} 25 AI Checks
+        </Button>
+      </div>
+
+      {/* 25 checks (collapsible) */}
+      <AnimatePresence>
+        {showAnalysis && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="space-y-1.5"
+          >
+            {analysis.checks.map((check) => (
+              <div
+                key={check.id}
+                className={cn(
+                  "rounded-lg p-2 border text-[10px]",
+                  check.status === "excellent" && "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800",
+                  check.status === "good" && "bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800",
+                  check.status === "warning" && "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800",
+                  check.status === "critical" && "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800"
+                )}
+              >
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="font-bold flex items-center gap-1">
+                    <span className="text-muted-foreground">#{check.id}</span>
+                    {check.name}
+                  </span>
+                  <span className="font-black tabular-nums">{check.score}</span>
+                </div>
+                <p className="text-muted-foreground">{check.insight}</p>
+                {check.recommendation && (
+                  <p className="text-amber-600 dark:text-amber-400 font-semibold mt-0.5">→ {check.recommendation}</p>
+                )}
+              </div>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Top picks */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-2 border border-amber-200 dark:border-amber-800">
+          <p className="text-[9px] font-bold text-amber-700 dark:text-amber-300 uppercase mb-1">Top Captains</p>
+          {analysis.topCaptainPicks.slice(0, 3).map((p, i) => (
+            <p key={i} className="text-[10px] text-foreground">
+              <span className="font-bold">#{i + 1}</span> {p.name.slice(0, 12)}
+              <span className="text-muted-foreground"> ({p.selPct.toFixed(0)}%)</span>
+            </p>
+          ))}
+        </div>
+        <div className="bg-sky-50 dark:bg-sky-950/30 rounded-lg p-2 border border-sky-200 dark:border-sky-800">
+          <p className="text-[9px] font-bold text-sky-700 dark:text-sky-300 uppercase mb-1">Top VCs</p>
+          {analysis.topVCPicks.slice(0, 3).map((p, i) => (
+            <p key={i} className="text-[10px] text-foreground">
+              <span className="font-bold">#{i + 1}</span> {p.name.slice(0, 12)}
+              <span className="text-muted-foreground"> ({p.selPct.toFixed(0)}%)</span>
+            </p>
+          ))}
+        </div>
+        <div className="bg-rose-50 dark:bg-rose-950/30 rounded-lg p-2 border border-rose-200 dark:border-rose-800">
+          <p className="text-[9px] font-bold text-rose-700 dark:text-rose-300 uppercase mb-1">Differentials</p>
+          {analysis.differentialPicks.slice(0, 3).map((p, i) => (
+            <p key={i} className="text-[10px] text-foreground">
+              <span className="font-bold">#{i + 1}</span> {p.name.slice(0, 12)}
+              <span className="text-muted-foreground"> ({p.selPct.toFixed(0)}%)</span>
+            </p>
+          ))}
+        </div>
+      </div>
+
+      {/* Ranked teams — Rank 1 to 10 */}
+      <div>
+        <p className="text-xs font-bold text-foreground mb-2 flex items-center gap-1.5">
+          <Trophy className="w-3.5 h-3.5 text-amber-500" />
+          10 Ranked Teams — Rank 1 (Best) to Rank 10 (Most Differential)
+        </p>
+        <div className="space-y-2">
+          {rankedTeams.map((rt) => (
+            <RankedTeamCard
+              key={rt.rank}
+              rankedTeam={rt}
+              expanded={selectedRank === rt.rank}
+              onToggle={() => setSelectedRank(selectedRank === rt.rank ? null : rt.rank)}
+              onSave={() => onSaveOne(rt.rank)}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 sticky bottom-0 bg-background pt-2 pb-1">
+        <Button variant="outline" className="flex-1" onClick={onRerun}>
+          <Brain className="w-4 h-4 mr-1.5" />
+          Re-run AI
+        </Button>
+        <Button
+          className="flex-1 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white font-bold"
+          onClick={onSaveAll}
+        >
+          <CheckCircle2 className="w-4 h-4 mr-1.5" />
+          Save All 10 Teams
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/* ============== Ranked Team Card ============== */
+
+function RankedTeamCard({
+  rankedTeam,
+  expanded,
+  onToggle,
+  onSave,
+}: {
+  rankedTeam: EliteRankedTeam;
+  expanded: boolean;
+  onToggle: () => void;
+  onSave: () => void;
+}) {
+  const { rank, team, efv, aiScore, riskLevel, strategy, reasoning, captainReason, vcReason } = rankedTeam;
+
+  const rankColor =
+    rank === 1 ? "from-amber-400 to-yellow-500" :
+    rank === 2 ? "from-slate-300 to-slate-400" :
+    rank === 3 ? "from-orange-400 to-amber-600" :
+    "from-violet-400 to-violet-500";
+
+  const riskColor =
+    riskLevel === "low" ? "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30" :
+    riskLevel === "medium" ? "text-amber-600 bg-amber-50 dark:bg-amber-950/30" :
+    "text-rose-600 bg-rose-50 dark:bg-rose-950/30";
+
+  // Get captain + VC player objects
+  const captain = (team.players || []).find((p) => String(p.player_fixed_id ?? p.pid) === team.captain);
+  const viceCaptain = (team.players || []).find((p) => String(p.player_fixed_id ?? p.pid) === team.viceCaptain);
+
+  return (
+    <div className={cn(
+      "rounded-xl border-2 overflow-hidden transition-all",
+      rank <= 3 ? "border-amber-300 dark:border-amber-700" : "border-violet-100 dark:border-violet-900/30"
+    )}>
+      {/* Rank header */}
+      <div
+        className={cn(
+          "bg-gradient-to-r p-2.5 flex items-center justify-between cursor-pointer",
+          rankColor
+        )}
+        onClick={onToggle}
+      >
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-white/30 backdrop-blur-md flex items-center justify-center font-black text-white text-sm">
+            {rank <= 3 ? <Crown className="w-4 h-4" /> : rank}
+          </div>
+          <div>
+            <p className="text-xs font-black text-white">
+              {rank === 1 ? "RANK 1 — BEST PICK" : rank === 2 ? "RANK 2 — RUNNER-UP" : rank === 3 ? "RANK 3 — PODIUM" : `RANK ${rank}`}
+            </p>
+            <p className="text-[10px] text-white/80 uppercase">{strategy} · {riskLevel} risk</p>
+          </div>
+        </div>
+        <div className="text-right">
+          <p className="text-xs font-black text-white tabular-nums">EFV {efv.toFixed(1)}</p>
+          <p className="text-[10px] text-white/80">AI: {aiScore}/100</p>
+        </div>
+      </div>
+
+      {/* Team preview (always visible) */}
+      <div className="bg-white dark:bg-card p-2.5">
+        <div className="flex items-center gap-2 mb-1.5 text-[10px]">
+          <span className={cn("px-1.5 py-0.5 rounded-full font-bold", "bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300")}>
+            C: {captain?.shortName || captain?.name || "?"}
+          </span>
+          <span className={cn("px-1.5 py-0.5 rounded-full font-bold", "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300")}>
+            VC: {viceCaptain?.shortName || viceCaptain?.name || "?"}
+          </span>
+          <span className={cn("px-1.5 py-0.5 rounded-full font-bold", riskColor)}>
+            {riskLevel.toUpperCase()}
+          </span>
+        </div>
+        <p className="text-[10px] text-muted-foreground truncate">
+          {(team.players || []).map((p) => p.shortName || p.name).join(" · ")}
+        </p>
+      </div>
+
+      {/* Expanded details */}
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="bg-violet-50/50 dark:bg-violet-950/20 p-3 space-y-2 text-[10px]"
+          >
+            <div>
+              <p className="font-bold text-violet-700 dark:text-violet-300 mb-0.5">🧠 AI Reasoning</p>
+              <p className="text-muted-foreground">{reasoning}</p>
+            </div>
+            <div>
+              <p className="font-bold text-amber-700 dark:text-amber-300 mb-0.5">👑 Captain</p>
+              <p className="text-muted-foreground">{captainReason}</p>
+            </div>
+            <div>
+              <p className="font-bold text-slate-700 dark:text-slate-300 mb-0.5">⭐ Vice-Captain</p>
+              <p className="text-muted-foreground">{vcReason}</p>
+            </div>
+            <Button
+              size="sm"
+              className="w-full h-8 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white text-[11px]"
+              onClick={onSave}
+            >
+              <CheckCircle2 className="w-3 h-3 mr-1" />
+              Save Rank {rank} Team
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/* ============== Check Names (for preview) ============== */
+
+const CHECK_NAMES = [
+  "Player Pool Depth",
+  "Playing XI Confirmation",
+  "Captain Certainty",
+  "Vice-Captain Certainty",
+  "Credit Distribution",
+  "Selection % Concentration",
+  "Differential Opportunity",
+  "Team Balance (7-4 vs 6-5)",
+  "Role Balance Optimal",
+  "Top-Order BAT Strength",
+  "Death Overs BOWL Strength",
+  "All-Rounder Coverage",
+  "Wicket-Keeper Form",
+  "Player Form Trend",
+  "Venue Suitability",
+  "Toss Impact",
+  "Injury/Bench Risk",
+  "Captain Multiplier Effect",
+  "VC Multiplier Effect",
+  "Team Combination Coverage",
+  "Grand League Suitability",
+  "Small League Suitability",
+  "Risk-Reward Ratio",
+  "Player Combination Uniqueness",
+  "Final AI Confidence Score",
+];

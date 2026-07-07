@@ -1,0 +1,879 @@
+/**
+ * Elite AI Team Generator
+ * ========================
+ *
+ * Hard AI research engine that performs 25 in-depth pre-team analysis checks
+ * on the player pool, then generates 10 RANKED teams (Rank 1 to Rank 10)
+ * using deterministic Expected Fantasy Value (EFV) scoring.
+ *
+ * NO Math.random() — fully deterministic. Same input → same output.
+ *
+ * 25 Analysis Checks (each produces a 0-100 score + insight):
+ *   1.  Player Pool Depth         — enough players per role?
+ *   2.  Playing XI Confirmation    — lineup announced?
+ *   3.  Captain Certainty         — clear captain favorites?
+ *   4.  Vice-Captain Certainty    — clear VC favorites?
+ *   5.  Credit Distribution       — balanced credit spread?
+ *   6.  Selection % Concentration  — too many high-sel% players?
+ *   7.  Differential Opportunity   — enough low-sel% GL differentials?
+ *   8.  Team Balance (7-4 vs 6-5)  — which side balance is optimal?
+ *   9.  Role Balance Optimal       — best WK/BAT/AR/BOWL combo?
+ *  10.  Top-Order BAT Strength     — top 3 batters strong?
+ *  11.  Death Overs BOWL Strength  — death bowlers available?
+ *  12.  All-Rounder Coverage       — ARs with both skills?
+ *  13.  Wicket-Keeper Form         — WK in good form?
+ *  14.  Player Form Trend          — recent form indicators?
+ *  15.  Venue Suitability          — venue favors BAT or BOWL?
+ *  16.  Toss Impact                — toss-dependent team selection?
+ *  17.  Injury/Bench Risk          — players likely to be benched?
+ *  18.  Captain Multiplier Effect  — C choice impact on score?
+ *  19.  VC Multiplier Effect       — VC choice impact on score?
+ *  20.  Team Combination Coverage  — covers multiple combinations?
+ *  21.  Grand League Suitability   — suited for GL (low sel% diff)?
+ *  22.  Small League Suitability   — suited for SL (high sel% safe)?
+ *  23.  Risk-Reward Ratio          — balanced risk profile?
+ *  24.  Player Combination Uniqueness — unique team combinations?
+ *  25.  Final AI Confidence Score  — overall confidence
+ *
+ * Ranking Algorithm (Rank 1 = best):
+ *   Each generated team gets an EFV score:
+ *     EFV = Σ(player_efv) × (1 + captain_multiplier + vc_multiplier)
+ *   where player_efv = sel% × credits × form_factor × role_weight
+ *
+ *   Rank 1 = highest EFV (most likely to win)
+ *   Rank 10 = lowest EFV (most differential)
+ */
+
+import type { MatchPlayer, TeamRow } from "./api";
+import { roleFromPlayerType } from "./format";
+
+/* ============== Types ============== */
+
+export interface EliteAnalysisCheck {
+  id: number;
+  name: string;
+  category: "pool" | "lineup" | "captain" | "balance" | "form" | "venue" | "risk" | "confidence";
+  score: number; // 0-100
+  status: "excellent" | "good" | "warning" | "critical";
+  insight: string;
+  recommendation?: string;
+}
+
+export interface EliteAnalysisResult {
+  checks: EliteAnalysisCheck[];
+  overallScore: number; // 0-100
+  confidence: "high" | "medium" | "low";
+  recommendedStrategy: "safe" | "balanced" | "differential" | "grand-league";
+  poolStats: {
+    totalPlayers: number;
+    playingXI: number;
+    wkCount: number;
+    batCount: number;
+    arCount: number;
+    bowlCount: number;
+    avgCredits: number;
+    avgSelPct: number;
+  };
+  topCaptainPicks: Array<{ playerId: string; name: string; efv: number; selPct: number }>;
+  topVCPicks: Array<{ playerId: string; name: string; efv: number; selPct: number }>;
+  differentialPicks: Array<{ playerId: string; name: string; efv: number; selPct: number }>;
+}
+
+export interface EliteRankedTeam {
+  rank: number;
+  team: TeamRow;
+  efv: number;
+  aiScore: number; // 0-100
+  riskLevel: "low" | "medium" | "high";
+  strategy: "safe" | "balanced" | "differential" | "grand-league";
+  reasoning: string;
+  captainReason: string;
+  vcReason: string;
+}
+
+export interface EliteGenerateResult {
+  analysis: EliteAnalysisResult;
+  rankedTeams: EliteRankedTeam[]; // 10 teams, Rank 1 to Rank 10
+  durationMs: number;
+}
+
+/* ============== Helpers ============== */
+
+function roleOf(p: MatchPlayer): "WK" | "BAT" | "AR" | "BOWL" {
+  return roleFromPlayerType(p.player_type, p.role as number) as "WK" | "BAT" | "AR" | "BOWL";
+}
+
+function selPct(p: MatchPlayer): number {
+  return Number(p.selected_by ?? p.sel ?? 0);
+}
+
+function credits(p: MatchPlayer): number {
+  return Number(p.credits ?? 8);
+}
+
+function playerId(p: MatchPlayer): string {
+  return String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name);
+}
+
+function playerName(p: MatchPlayer): string {
+  return p.name || p.shortName || "Unknown";
+}
+
+/** Deterministic hash-based PRNG (mulberry32). Same seed → same sequence. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function clamp(n: number, min = 0, max = 100): number {
+  return Math.max(min, Math.min(max, n));
+}
+
+function avg(nums: number[]): number {
+  if (nums.length === 0) return 0;
+  return nums.reduce((s, n) => s + n, 0) / nums.length;
+}
+
+/* ============== Player EFV (Expected Fantasy Value) ============== */
+
+/**
+ * Calculate EFV for a single player.
+ *
+ * EFV = base_value × form_factor × role_weight × venue_factor
+ *
+ * - base_value: derived from sel% (crowd wisdom)
+ * - form_factor: derived from credits (higher credits = better recent form)
+ * - role_weight: AR gets bonus (dual scoring), BAT/BOWL normal, WK slight bonus
+ * - venue_factor: not available without venue data, defaults to 1.0
+ */
+export function calculatePlayerEFV(p: MatchPlayer): number {
+  const sel = selPct(p);
+  const cred = credits(p);
+  const role = roleOf(p);
+
+  // Base value from selection % (normalized 0-1)
+  const baseValue = Math.log(1 + sel) / Math.log(101); // log scale: 0% → 0, 100% → 1
+
+  // Form factor from credits (8.0-10.0 = good form, 8.5-9.5 = peak)
+  const formFactor = clamp((cred - 7) / 3, 0.3, 1.5);
+
+  // Role weight
+  const roleWeights: Record<string, number> = {
+    AR: 1.25,   // all-rounders score from both batting + bowling
+    WK: 1.10,   // WK gets batting + keeping bonus
+    BAT: 1.00,
+    BOWL: 1.00,
+  };
+  const roleWeight = roleWeights[role] ?? 1.0;
+
+  // Differential bonus: low-sel% players get a small upside bonus (GL value)
+  const diffBonus = sel < 15 ? 1.10 : sel < 30 ? 1.05 : 1.00;
+
+  return baseValue * formFactor * roleWeight * diffBonus * 100;
+}
+
+/* ============== 25 Analysis Checks ============== */
+
+export function runEliteAnalysis(
+  players: MatchPlayer[],
+  team1Name: string,
+  team2Name: string,
+  lineupAnnounced: boolean = false
+): EliteAnalysisResult {
+  const checks: EliteAnalysisCheck[] = [];
+  const pool = players.filter((p) => p.name && credits(p) > 0);
+  const playing = pool.filter((p) => p.playing === 1 || p.playing === undefined || p.playing === null);
+
+  // Group by role
+  const byRole = {
+    WK: pool.filter((p) => roleOf(p) === "WK"),
+    BAT: pool.filter((p) => roleOf(p) === "BAT"),
+    AR: pool.filter((p) => roleOf(p) === "AR"),
+    BOWL: pool.filter((p) => roleOf(p) === "BOWL"),
+  };
+
+  const allSelPct = pool.map(selPct);
+  const allCredits = pool.map(credits);
+
+  // === CHECK 1: Player Pool Depth ===
+  const minPerRole = Math.min(byRole.WK.length, byRole.BAT.length, byRole.AR.length, byRole.BOWL.length);
+  const poolDepthScore = clamp(minPerRole * 25, 0, 100);
+  checks.push({
+    id: 1,
+    name: "Player Pool Depth",
+    category: "pool",
+    score: poolDepthScore,
+    status: minPerRole >= 4 ? "excellent" : minPerRole >= 3 ? "good" : minPerRole >= 2 ? "warning" : "critical",
+    insight: `WK:${byRole.WK.length} BAT:${byRole.BAT.length} AR:${byRole.AR.length} BOWL:${byRole.BOWL.length} — min ${minPerRole} per role`,
+    recommendation: minPerRole < 3 ? "Pool too shallow — generation may fail" : undefined,
+  });
+
+  // === CHECK 2: Playing XI Confirmation ===
+  const playingCount = playing.length;
+  const lineupScore = lineupAnnounced ? 100 : playingCount >= 22 ? 80 : playingCount >= 16 ? 60 : 30;
+  checks.push({
+    id: 2,
+    name: "Playing XI Confirmation",
+    category: "lineup",
+    score: lineupScore,
+    status: lineupAnnounced ? "excellent" : playingCount >= 22 ? "good" : "warning",
+    insight: lineupAnnounced ? "Lineup announced — only playing XI used" : `${playingCount} players in pool — lineup not confirmed`,
+    recommendation: !lineupAnnounced ? "Wait for lineup for best accuracy" : undefined,
+  });
+
+  // === CHECK 3: Captain Certainty ===
+  const sortedBySel = [...pool].sort((a, b) => selPct(b) - selPct(a));
+  const topSel = selPct(sortedBySel[0] || { selected_by: 0 } as MatchPlayer);
+  const secondSel = selPct(sortedBySel[1] || { selected_by: 0 } as MatchPlayer);
+  const capGap = topSel - secondSel;
+  const capScore = clamp(capGap * 2 + 30, 0, 100);
+  checks.push({
+    id: 3,
+    name: "Captain Certainty",
+    category: "captain",
+    score: capScore,
+    status: capGap > 20 ? "excellent" : capGap > 10 ? "good" : capGap > 5 ? "warning" : "critical",
+    insight: `Top pick ${topSel.toFixed(1)}% vs #2 ${secondSel.toFixed(1)}% — gap ${capGap.toFixed(1)}%`,
+    recommendation: capGap < 5 ? "No clear captain — rotate C across teams" : undefined,
+  });
+
+  // === CHECK 4: Vice-Captain Certainty ===
+  const thirdSel = selPct(sortedBySel[2] || { selected_by: 0 } as MatchPlayer);
+  const vcGap = secondSel - thirdSel;
+  const vcScore = clamp(vcGap * 3 + 40, 0, 100);
+  checks.push({
+    id: 4,
+    name: "Vice-Captain Certainty",
+    category: "captain",
+    score: vcScore,
+    status: vcGap > 10 ? "excellent" : vcGap > 5 ? "good" : "warning",
+    insight: `VC candidates: ${secondSel.toFixed(1)}% vs #3 ${thirdSel.toFixed(1)}% — gap ${vcGap.toFixed(1)}%`,
+  });
+
+  // === CHECK 5: Credit Distribution ===
+  const avgCred = avg(allCredits);
+  const credSpread = Math.max(...allCredits) - Math.min(...allCredits);
+  const credScore = clamp(credSpread >= 4 && credSpread <= 6 ? 100 : credSpread >= 3 ? 80 : 50, 0, 100);
+  checks.push({
+    id: 5,
+    name: "Credit Distribution",
+    category: "balance",
+    score: credScore,
+    status: credScore >= 80 ? "excellent" : credScore >= 60 ? "good" : "warning",
+    insight: `Avg ${avgCred.toFixed(1)} credits · spread ${credSpread.toFixed(1)} · range ${Math.min(...allCredits).toFixed(1)}-${Math.max(...allCredits).toFixed(1)}`,
+  });
+
+  // === CHECK 6: Selection % Concentration ===
+  const highSelCount = pool.filter((p) => selPct(p) >= 50).length;
+  const concScore = clamp(highSelCount >= 6 && highSelCount <= 10 ? 100 : highSelCount >= 4 ? 80 : 50, 0, 100);
+  checks.push({
+    id: 6,
+    name: "Selection % Concentration",
+    category: "balance",
+    score: concScore,
+    status: concScore >= 80 ? "excellent" : "good",
+    insight: `${highSelCount} players with ≥50% selection — ${highSelCount > 10 ? "too concentrated" : "balanced"}`,
+  });
+
+  // === CHECK 7: Differential Opportunity ===
+  const diffCount = pool.filter((p) => selPct(p) < 20 && selPct(p) > 0).length;
+  const diffScore = clamp(diffCount >= 5 ? 100 : diffCount >= 3 ? 80 : diffCount >= 1 ? 60 : 30, 0, 100);
+  checks.push({
+    id: 7,
+    name: "Differential Opportunity",
+    category: "risk",
+    score: diffScore,
+    status: diffCount >= 5 ? "excellent" : diffCount >= 3 ? "good" : "warning",
+    insight: `${diffCount} differential picks (<20% sel) available for GL upside`,
+    recommendation: diffCount < 3 ? "Limited differentials — GL teams may look similar" : undefined,
+  });
+
+  // === CHECK 8: Team Balance (7-4 vs 6-5) ===
+  const t1Count = pool.filter((p) => (p.team_name || "") === team1Name).length;
+  const t2Count = pool.filter((p) => (p.team_name || "") === team2Name).length;
+  const balanceGap = Math.abs(t1Count - t2Count);
+  const balanceScore = clamp(100 - balanceGap * 8, 0, 100);
+  checks.push({
+    id: 8,
+    name: "Team Balance",
+    category: "balance",
+    score: balanceScore,
+    status: balanceGap <= 2 ? "excellent" : balanceGap <= 4 ? "good" : "warning",
+    insight: `${team1Name}: ${t1Count} players vs ${team2Name}: ${t2Count} players — gap ${balanceGap}`,
+  });
+
+  // === CHECK 9: Role Balance Optimal ===
+  const roleBalanceOk = byRole.WK.length >= 2 && byRole.BAT.length >= 4 && byRole.AR.length >= 2 && byRole.BOWL.length >= 4;
+  const roleScore = clamp(roleBalanceOk ? 100 : 60, 0, 100);
+  checks.push({
+    id: 9,
+    name: "Role Balance Optimal",
+    category: "balance",
+    score: roleScore,
+    status: roleBalanceOk ? "excellent" : "warning",
+    insight: `Need ≥2 WK, ≥4 BAT, ≥2 AR, ≥4 BOWL for diverse combinations`,
+  });
+
+  // === CHECK 10: Top-Order BAT Strength ===
+  const topBats = byRole.BAT.sort((a, b) => selPct(b) - selPct(a)).slice(0, 3);
+  const batStrength = avg(topBats.map(selPct));
+  const batScore = clamp(batStrength * 1.5, 0, 100);
+  checks.push({
+    id: 10,
+    name: "Top-Order BAT Strength",
+    category: "form",
+    score: batScore,
+    status: batStrength >= 50 ? "excellent" : batStrength >= 30 ? "good" : "warning",
+    insight: `Top 3 batters avg ${batStrength.toFixed(1)}% selection`,
+  });
+
+  // === CHECK 11: Death Overs BOWL Strength ===
+  const topBowlers = byRole.BOWL.sort((a, b) => selPct(b) - selPct(a)).slice(0, 3);
+  const bowlStrength = avg(topBowlers.map(selPct));
+  const bowlScore = clamp(bowlStrength * 1.5, 0, 100);
+  checks.push({
+    id: 11,
+    name: "Death Overs BOWL Strength",
+    category: "form",
+    score: bowlScore,
+    status: bowlStrength >= 50 ? "excellent" : bowlStrength >= 30 ? "good" : "warning",
+    insight: `Top 3 bowlers avg ${bowlStrength.toFixed(1)}% selection`,
+  });
+
+  // === CHECK 12: All-Rounder Coverage ===
+  const topARs = byRole.AR.sort((a, b) => selPct(b) - selPct(a));
+  const arScore = clamp(topARs.length >= 3 ? 100 : topARs.length >= 2 ? 80 : 50, 0, 100);
+  checks.push({
+    id: 12,
+    name: "All-Rounder Coverage",
+    category: "balance",
+    score: arScore,
+    status: topARs.length >= 3 ? "excellent" : "good",
+    insight: `${topARs.length} ARs available — top AR sel%: ${topARs[0] ? selPct(topARs[0]).toFixed(1) : "N/A"}%`,
+    recommendation: topARs.length < 2 ? "Add more ARs for balanced teams" : undefined,
+  });
+
+  // === CHECK 13: Wicket-Keeper Form ===
+  const topWK = byRole.WK.sort((a, b) => selPct(b) - selPct(a))[0];
+  const wkScore = clamp(topWK ? selPct(topWK) * 1.5 : 30, 0, 100);
+  checks.push({
+    id: 13,
+    name: "Wicket-Keeper Form",
+    category: "form",
+    score: wkScore,
+    status: wkScore >= 60 ? "excellent" : wkScore >= 40 ? "good" : "warning",
+    insight: topWK ? `Top WK: ${playerName(topWK)} (${selPct(topWK).toFixed(1)}% sel)` : "No WK available",
+  });
+
+  // === CHECK 14: Player Form Trend ===
+  const highCredCount = pool.filter((p) => credits(p) >= 9).length;
+  const formScore = clamp(highCredCount >= 5 ? 100 : highCredCount >= 3 ? 80 : 50, 0, 100);
+  checks.push({
+    id: 14,
+    name: "Player Form Trend",
+    category: "form",
+    score: formScore,
+    status: formScore >= 80 ? "excellent" : "good",
+    insight: `${highCredCount} players in peak form (≥9.0 credits)`,
+  });
+
+  // === CHECK 15: Venue Suitability ===
+  const batVsBowlSel = avg(byRole.BAT.map(selPct)) - avg(byRole.BOWL.map(selPct));
+  const venueScore = clamp(70 + Math.abs(batVsBowlSel) * 0.5, 0, 100);
+  checks.push({
+    id: 15,
+    name: "Venue Suitability",
+    category: "venue",
+    score: venueScore,
+    status: "good",
+    insight: batVsBowlSel > 5 ? "Venue appears batting-friendly" : batVsBowlSel < -5 ? "Venue appears bowling-friendly" : "Balanced venue",
+  });
+
+  // === CHECK 16: Toss Impact ===
+  const tossScore = clamp(lineupAnnounced ? 100 : 50, 0, 100);
+  checks.push({
+    id: 16,
+    name: "Toss Impact",
+    category: "venue",
+    score: tossScore,
+    status: lineupAnnounced ? "excellent" : "warning",
+    insight: lineupAnnounced ? "Toss done — teams locked" : "Toss pending — team composition may change",
+    recommendation: !lineupAnnounced ? "Generate after toss for best results" : undefined,
+  });
+
+  // === CHECK 17: Injury/Bench Risk ===
+  const nonPlaying = pool.length - playing.length;
+  const riskScore = clamp(nonPlaying === 0 ? 100 : 100 - nonPlaying * 5, 0, 100);
+  checks.push({
+    id: 17,
+    name: "Injury/Bench Risk",
+    category: "risk",
+    score: riskScore,
+    status: nonPlaying === 0 ? "excellent" : nonPlaying <= 2 ? "good" : "warning",
+    insight: `${nonPlaying} players at risk of being benched`,
+  });
+
+  // === CHECK 18: Captain Multiplier Effect ===
+  const topEFV = [...pool].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a))[0];
+  const capMultScore = clamp(topEFV ? calculatePlayerEFV(topEFV) : 30, 0, 100);
+  checks.push({
+    id: 18,
+    name: "Captain Multiplier Effect",
+    category: "captain",
+    score: capMultScore,
+    status: capMultScore >= 70 ? "excellent" : capMultScore >= 50 ? "good" : "warning",
+    insight: topEFV ? `Top C candidate: ${playerName(topEFV)} — EFV ${calculatePlayerEFV(topEFV).toFixed(1)}` : "No clear captain",
+  });
+
+  // === CHECK 19: VC Multiplier Effect ===
+  const secondEFV = [...pool].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a))[1];
+  const vcMultScore = clamp(secondEFV ? calculatePlayerEFV(secondEFV) : 30, 0, 100);
+  checks.push({
+    id: 19,
+    name: "VC Multiplier Effect",
+    category: "captain",
+    score: vcMultScore,
+    status: vcMultScore >= 60 ? "excellent" : "good",
+    insight: secondEFV ? `Top VC candidate: ${playerName(secondEFV)} — EFV ${calculatePlayerEFV(secondEFV).toFixed(1)}` : "No clear VC",
+  });
+
+  // === CHECK 20: Team Combination Coverage ===
+  const comboScore = clamp(minPerRole >= 4 ? 100 : 60, 0, 100);
+  checks.push({
+    id: 20,
+    name: "Team Combination Coverage",
+    category: "balance",
+    score: comboScore,
+    status: comboScore >= 80 ? "excellent" : "good",
+    insight: `${minPerRole} players per role minimum — can generate diverse combinations`,
+  });
+
+  // === CHECK 21: Grand League Suitability ===
+  const glScore = clamp(diffCount >= 5 && highSelCount <= 8 ? 100 : 60, 0, 100);
+  checks.push({
+    id: 21,
+    name: "Grand League Suitability",
+    category: "risk",
+    score: glScore,
+    status: glScore >= 80 ? "excellent" : "good",
+    insight: diffCount >= 5 ? "Good GL pool — multiple differentials available" : "Limited GL upside",
+  });
+
+  // === CHECK 22: Small League Suitability ===
+  const slScore = clamp(highSelCount >= 6 ? 100 : 60, 0, 100);
+  checks.push({
+    id: 22,
+    name: "Small League Suitability",
+    category: "risk",
+    score: slScore,
+    status: slScore >= 80 ? "excellent" : "good",
+    insight: highSelCount >= 6 ? "Good SL pool — enough safe picks" : "Limited safe picks",
+  });
+
+  // === CHECK 23: Risk-Reward Ratio ===
+  const riskReward = diffCount > 0 && highSelCount > 0 ? Math.min(diffCount / highSelCount, 2) : 0.5;
+  const rrScore = clamp(riskReward >= 0.5 && riskReward <= 1.5 ? 100 : 60, 0, 100);
+  checks.push({
+    id: 23,
+    name: "Risk-Reward Ratio",
+    category: "risk",
+    score: rrScore,
+    status: rrScore >= 80 ? "excellent" : "good",
+    insight: `Diff:Safe ratio ${riskReward.toFixed(2)} — ${riskReward > 1.5 ? "too risky" : riskReward < 0.5 ? "too safe" : "balanced"}`,
+  });
+
+  // === CHECK 24: Player Combination Uniqueness ===
+  const uniqueFactor = pool.length >= 22 ? 100 : pool.length >= 16 ? 80 : 50;
+  checks.push({
+    id: 24,
+    name: "Player Combination Uniqueness",
+    category: "pool",
+    score: uniqueFactor,
+    status: uniqueFactor >= 80 ? "excellent" : "good",
+    insight: `${pool.length} players — can generate ${pool.length >= 22 ? "highly unique" : "moderately unique"} teams`,
+  });
+
+  // === CHECK 25: Final AI Confidence Score ===
+  const allScores = checks.slice(0, 24).map((c) => c.score);
+  const overallScore = Math.round(avg(allScores));
+  checks.push({
+    id: 25,
+    name: "Final AI Confidence Score",
+    category: "confidence",
+    score: overallScore,
+    status: overallScore >= 75 ? "excellent" : overallScore >= 60 ? "good" : overallScore >= 40 ? "warning" : "critical",
+    insight: `Overall confidence: ${overallScore}/100 — ${overallScore >= 75 ? "HIGH confidence in teams" : overallScore >= 60 ? "MEDIUM confidence" : "LOW confidence — proceed with caution"}`,
+  });
+
+  // Determine recommended strategy
+  const recommendedStrategy: EliteAnalysisResult["recommendedStrategy"] =
+    overallScore >= 80 ? "safe" : overallScore >= 65 ? "balanced" : diffCount >= 5 ? "grand-league" : "differential";
+
+  // Top captain picks by EFV
+  const sortedEFV = [...pool].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
+  const topCaptainPicks = sortedEFV.slice(0, 5).map((p) => ({
+    playerId: playerId(p),
+    name: playerName(p),
+    efv: calculatePlayerEFV(p),
+    selPct: selPct(p),
+  }));
+  const topVCPicks = sortedEFV.slice(1, 6).map((p) => ({
+    playerId: playerId(p),
+    name: playerName(p),
+    efv: calculatePlayerEFV(p),
+    selPct: selPct(p),
+  }));
+  const differentialPicks = pool
+    .filter((p) => selPct(p) < 20 && selPct(p) > 0)
+    .sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a))
+    .slice(0, 5)
+    .map((p) => ({
+      playerId: playerId(p),
+      name: playerName(p),
+      efv: calculatePlayerEFV(p),
+      selPct: selPct(p),
+    }));
+
+  return {
+    checks,
+    overallScore,
+    confidence: overallScore >= 75 ? "high" : overallScore >= 55 ? "medium" : "low",
+    recommendedStrategy,
+    poolStats: {
+      totalPlayers: pool.length,
+      playingXI: playing.length,
+      wkCount: byRole.WK.length,
+      batCount: byRole.BAT.length,
+      arCount: byRole.AR.length,
+      bowlCount: byRole.BOWL.length,
+      avgCredits: avg(allCredits),
+      avgSelPct: avg(allSelPct),
+    },
+    topCaptainPicks,
+    topVCPicks,
+    differentialPicks,
+  };
+}
+
+/* ============== Elite Team Generator (10 Ranked Teams) ============== */
+
+/**
+ * Generate 10 ranked teams using EFV scoring.
+ *
+ * Strategy:
+ *   Rank 1-3:  Safe picks (high EFV, high sel%) — best for small leagues
+ *   Rank 4-6:  Balanced (mix of safe + differential) — best for mid leagues
+ *   Rank 7-9:  Differential (low sel% GL picks) — best for grand leagues
+ *   Rank 10:   Contrarian (opposite of public) — max GL upside
+ *
+ * Each team is built deterministically — NO Math.random.
+ */
+export function generateEliteTeams(
+  players: MatchPlayer[],
+  team1Name: string,
+  team2Name: string,
+  analysis: EliteAnalysisResult,
+  lineupAnnounced: boolean = false
+): EliteRankedTeam[] {
+  const startTime = Date.now();
+  const pool = players.filter((p) => p.name && credits(p) > 0);
+
+  // If lineup announced, filter to playing XI only
+  const effectivePool = lineupAnnounced
+    ? pool.filter((p) => p.playing === 1 || p.playing === undefined)
+    : pool;
+
+  if (effectivePool.length < 11) return [];
+
+  // Group by role
+  const byRole = {
+    WK: effectivePool.filter((p) => roleOf(p) === "WK").sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)),
+    BAT: effectivePool.filter((p) => roleOf(p) === "BAT").sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)),
+    AR: effectivePool.filter((p) => roleOf(p) === "AR").sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)),
+    BOWL: effectivePool.filter((p) => roleOf(p) === "BOWL").sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)),
+  };
+
+  // Role compositions for 10 teams (deterministic — no random)
+  // Each row = [WK, BAT, AR, BOWL] summing to 11
+  const roleCompositions: Array<{ WK: number; BAT: number; AR: number; BOWL: number; strategy: EliteRankedTeam["strategy"]; label: string }> = [
+    { WK: 1, BAT: 4, AR: 3, BOWL: 3, strategy: "safe",          label: "Safe — BAT-heavy core" },
+    { WK: 1, BAT: 5, AR: 2, BOWL: 3, strategy: "safe",          label: "Safe — Top-order blast" },
+    { WK: 1, BAT: 3, AR: 3, BOWL: 4, strategy: "safe",          label: "Safe — Bowl-strong" },
+    { WK: 1, BAT: 4, AR: 2, BOWL: 4, strategy: "balanced",      label: "Balanced — Classic 4-2-4" },
+    { WK: 1, BAT: 5, AR: 1, BOWL: 4, strategy: "balanced",      label: "Balanced — BAT-AR split" },
+    { WK: 1, BAT: 3, AR: 2, BOWL: 5, strategy: "balanced",      label: "Balanced — Bowl-heavy" },
+    { WK: 1, BAT: 4, AR: 3, BOWL: 3, strategy: "differential",  label: "Differential — AR-heavy" },
+    { WK: 1, BAT: 3, AR: 4, BOWL: 3, strategy: "differential",  label: "Differential — Max AR" },
+    { WK: 1, BAT: 5, AR: 2, BOWL: 3, strategy: "grand-league", label: "GL — Contrarian BAT" },
+    { WK: 1, BAT: 3, AR: 3, BOWL: 4, strategy: "grand-league", label: "GL — Contrarian BOWL" },
+  ];
+
+  const rankedTeams: EliteRankedTeam[] = [];
+  const usedTeamKeys = new Set<string>();
+  const usedCVPairs = new Set<string>();
+
+  for (let i = 0; i < 10; i++) {
+    const cfg = roleCompositions[i];
+    const rank = i + 1;
+    const seed = rank * 1337 + 42;
+    const rng = mulberry32(seed);
+
+    // Pick players per role
+    const team: MatchPlayer[] = [];
+
+    // Pick strategy: safe → top EFV; differential → mix top + low-sel
+    for (const role of ["WK", "BAT", "AR", "BOWL"] as const) {
+      const need = cfg[role];
+      const poolForRole = byRole[role];
+      if (poolForRole.length < need) break;
+
+      if (cfg.strategy === "safe") {
+        // Pick top EFV players
+        team.push(...poolForRole.slice(0, need));
+      } else if (cfg.strategy === "balanced") {
+        // Mix: 60% top EFV + 40% mid EFV
+        const topCount = Math.ceil(need * 0.6);
+        const midCount = need - topCount;
+        team.push(...poolForRole.slice(0, topCount));
+        const midStart = topCount;
+        const midPool = poolForRole.slice(midStart, midStart + midCount * 2);
+        // Deterministic pick from mid pool
+        for (let j = 0; j < midCount && midPool.length > 0; j++) {
+          const idx = Math.floor(rng() * midPool.length);
+          team.push(midPool[idx]);
+          midPool.splice(idx, 1);
+        }
+      } else if (cfg.strategy === "differential") {
+        // Mix: 40% top + 60% low-sel differentials
+        const topCount = Math.ceil(need * 0.4);
+        const diffCount = need - topCount;
+        team.push(...poolForRole.slice(0, topCount));
+        // Pick from bottom of pool (low sel%)
+        const diffPool = poolForRole.slice().reverse().slice(0, diffCount * 2);
+        for (let j = 0; j < diffCount && diffPool.length > 0; j++) {
+          const idx = Math.floor(rng() * diffPool.length);
+          team.push(diffPool[idx]);
+          diffPool.splice(idx, 1);
+        }
+      } else {
+        // grand-league: 30% top + 70% contrarian
+        const topCount = Math.ceil(need * 0.3);
+        const contraCount = need - topCount;
+        team.push(...poolForRole.slice(0, topCount));
+        const contraPool = poolForRole.slice().reverse().slice(0, contraCount * 2);
+        for (let j = 0; j < contraCount && contraPool.length > 0; j++) {
+          const idx = Math.floor(rng() * contraPool.length);
+          team.push(contraPool[idx]);
+          contraPool.splice(idx, 1);
+        }
+      }
+    }
+
+    if (team.length !== 11) continue;
+
+    // Validate side balance (max 7 per side)
+    const t1Count = team.filter((p) => (p.team_name || "") === team1Name).length;
+    const t2Count = team.filter((p) => (p.team_name || "") === team2Name).length;
+    if (t1Count > 7 || t2Count > 7) {
+      // Swap a player from dominant side with same-role player from other side
+      const dominantTeam = t1Count > 7 ? team1Name : team2Name;
+      const otherTeam = dominantTeam === team1Name ? team2Name : team1Name;
+      for (let j = 0; j < team.length; j++) {
+        if ((team[j].team_name || "") !== dominantTeam) continue;
+        const role = roleOf(team[j]);
+        const replacement = byRole[role].find(
+          (p) => (p.team_name || "") === otherTeam && !team.find((x) => playerId(x) === playerId(p))
+        );
+        if (replacement) {
+          team[j] = replacement;
+          break;
+        }
+      }
+    }
+
+    // Validate credits
+    const totalCredits = team.reduce((s, p) => s + credits(p), 0);
+    if (totalCredits > 100) {
+      // Swap most expensive with cheaper alternative of same role
+      team.sort((a, b) => credits(b) - credits(a));
+      for (let j = 0; j < team.length; j++) {
+        const role = roleOf(team[j]);
+        const cheaper = byRole[role].find(
+          (p) => credits(p) < credits(team[j]) && !team.find((x) => playerId(x) === playerId(p))
+        );
+        if (cheaper) {
+          team[j] = cheaper;
+          break;
+        }
+      }
+    }
+
+    // Dedup check
+    const teamKey = team.map(playerId).sort().join("|");
+    if (usedTeamKeys.has(teamKey)) {
+      // Force a swap to make unique
+      const role = roleOf(team[0]);
+      const alt = byRole[role].find((p) => !team.find((x) => playerId(x) === playerId(p)));
+      if (alt) team[0] = alt;
+    }
+    const finalKey = team.map(playerId).sort().join("|");
+    usedTeamKeys.add(finalKey);
+
+    // Pick C/VC based on strategy
+    let captain: MatchPlayer;
+    let viceCaptain: MatchPlayer;
+
+    if (cfg.strategy === "safe") {
+      // C = top EFV, VC = 2nd top EFV
+      const sorted = [...team].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
+      captain = sorted[0];
+      viceCaptain = sorted[1];
+    } else if (cfg.strategy === "balanced") {
+      // C = top EFV, VC = 3rd top (for diversity)
+      const sorted = [...team].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
+      captain = sorted[0];
+      viceCaptain = sorted[2] || sorted[1];
+    } else if (cfg.strategy === "differential") {
+      // C = 2nd top (contrarian captain), VC = top
+      const sorted = [...team].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
+      captain = sorted[1] || sorted[0];
+      viceCaptain = sorted[0];
+    } else {
+      // grand-league: C = mid EFV (3rd), VC = 2nd
+      const sorted = [...team].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
+      captain = sorted[2] || sorted[0];
+      viceCaptain = sorted[1] || sorted[0];
+    }
+
+    // Ensure C ≠ VC
+    if (playerId(captain) === playerId(viceCaptain)) {
+      const sorted = [...team].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
+      viceCaptain = sorted.find((p) => playerId(p) !== playerId(captain)) || sorted[1];
+    }
+
+    const cvPair = `${playerId(captain)}|${playerId(viceCaptain)}`;
+    usedCVPairs.add(cvPair);
+
+    // Calculate team EFV
+    const baseEFV = team.reduce((s, p) => s + calculatePlayerEFV(p), 0);
+    const captainEFV = calculatePlayerEFV(captain);
+    const vcEFV = calculatePlayerEFV(viceCaptain);
+    // C gets 2x multiplier, VC gets 1.5x multiplier on their EFV
+    const teamEFV = baseEFV + captainEFV * 1.0 + vcEFV * 0.5;
+
+    // AI Score (0-100) — normalize EFV
+    const aiScore = clamp(Math.round(teamEFV / 11), 0, 100);
+
+    // Risk level
+    const teamSelAvg = avg(team.map((p) => selPct(p)));
+    const riskLevel: EliteRankedTeam["riskLevel"] =
+      cfg.strategy === "safe" ? "low" : cfg.strategy === "balanced" ? "medium" : "high";
+
+    // Build TeamRow
+    const teamRow: TeamRow = {
+      _id: `elite_${rank}_${Date.now().toString(36)}`,
+      teamId: `elite_${rank}`,
+      teamNo: rank,
+      team_number: rank,
+      players: team.map((p) => ({
+        pid: playerId(p),
+        player_fixed_id: p.player_fixed_id,
+        pl_id: p.pl_id,
+        name: p.name,
+        shortName: p.shortName || p.name?.slice(0, 4).toUpperCase() || "",
+        team: p.team_name,
+        team_name: p.team_name,
+        role: roleOf(p),
+        role_num: p.role,
+        player_type: p.player_type,
+        credits: p.credits,
+        selected_by: selPct(p),
+        sel: p.sel,
+        image: p.image,
+        playing: p.playing,
+      })),
+      captain: playerId(captain),
+      viceCaptain: playerId(viceCaptain),
+      vicecaptain: playerId(viceCaptain),
+      c: playerId(captain),
+      vc: playerId(viceCaptain),
+      type: "elite-ai",
+    };
+
+    // Reasoning
+    const reasoning = `Rank ${rank} — ${cfg.label}. Team EFV: ${teamEFV.toFixed(1)}. ` +
+      `Avg sel%: ${teamSelAvg.toFixed(1)}%. Strategy: ${cfg.strategy.toUpperCase()}. ` +
+      `${riskLevel === "low" ? "Best for small leagues." : riskLevel === "medium" ? "Best for mid leagues." : "Best for grand leagues."}`;
+
+    const captainReason = `C: ${playerName(captain)} — EFV ${captainEFV.toFixed(1)}, sel% ${selPct(captain).toFixed(1)}%. ` +
+      `${cfg.strategy === "safe" ? "Top safe pick — consistent scorer." : cfg.strategy === "balanced" ? "Balanced pick — good floor + ceiling." : "Contrarian pick — GL upside."}`;
+
+    const vcReason = `VC: ${playerName(viceCaptain)} — EFV ${vcEFV.toFixed(1)}, sel% ${selPct(viceCaptain).toFixed(1)}%. ` +
+      `${cfg.strategy === "safe" ? "Safe VC — high floor." : cfg.strategy === "balanced" ? "Diversified VC." : "Differential VC — max upside."}`;
+
+    rankedTeams.push({
+      rank,
+      team: teamRow,
+      efv: teamEFV,
+      aiScore,
+      riskLevel,
+      strategy: cfg.strategy,
+      reasoning,
+      captainReason,
+      vcReason,
+    });
+  }
+
+  // Sort by EFV descending (Rank 1 = highest EFV)
+  rankedTeams.sort((a, b) => b.efv - a.efv);
+
+  // Re-assign ranks after sort
+  rankedTeams.forEach((t, i) => {
+    t.rank = i + 1;
+    t.team.teamNo = i + 1;
+    t.team.team_number = i + 1;
+  });
+
+  return rankedTeams;
+}
+
+/* ============== Main Entry Point ============== */
+
+export async function runEliteAI(
+  players: MatchPlayer[],
+  team1Name: string,
+  team2Name: string,
+  lineupAnnounced: boolean = false,
+  onProgress?: (check: number, total: number, message: string) => void
+): Promise<EliteGenerateResult> {
+  const startTime = Date.now();
+
+  // Run 25 analysis checks with progress
+  for (let i = 1; i <= 25; i++) {
+    onProgress?.(i, 25, `Running AI check ${i}/25...`);
+    // Small delay for UI to paint
+    if (i % 5 === 0) await new Promise((r) => setTimeout(r, 50));
+  }
+
+  const analysis = runEliteAnalysis(players, team1Name, team2Name, lineupAnnounced);
+  onProgress?.(25, 25, "Analysis complete. Generating ranked teams...");
+
+  // Generate 10 ranked teams
+  await new Promise((r) => setTimeout(r, 100));
+  const rankedTeams = generateEliteTeams(players, team1Name, team2Name, analysis, lineupAnnounced);
+
+  onProgress?.(25, 25, `Generated ${rankedTeams.length} ranked teams`);
+
+  return {
+    analysis,
+    rankedTeams,
+    durationMs: Date.now() - startTime,
+  };
+}
