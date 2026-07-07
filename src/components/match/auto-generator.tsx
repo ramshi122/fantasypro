@@ -133,16 +133,41 @@ export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGe
       }
 
       // 2. Mode-specific player filtering
+      // IMPORTANT: We do NOT modify the player pool order for GL mode —
+      // the sweep generator's strategyFor() function handles the safe/balanced/
+      // differential mix internally. Sorting by sel% ascending would break
+      // role balance (all low-sel% players might be from one role).
       if (genMode === "advanced") {
-        // Advanced: sort by credits (form indicator) — keep top 30
-        allPlayers = allPlayers.sort((a, b) => Number(b.credits || 0) - Number(a.credits || 0)).slice(0, 30);
+        // Advanced: prioritize high-credit (in-form) players — but keep all
+        // (don't slice, just let the generator prefer them via higher sel%)
+        allPlayers = allPlayers.sort((a, b) => Number(b.credits || 0) - Number(a.credits || 0));
       } else if (genMode === "gl") {
-        // GL: emphasize differentials — sort by sel% ascending + credits
+        // GL: keep full pool — generator's differential strategy handles it
+        // Just ensure players are sorted by sel% descending (high sel% first)
+        // so the generator's "safe" tier has enough players
         allPlayers = allPlayers.sort((a, b) => {
           const selA = Number(a.selected_by ?? a.sel ?? 0);
           const selB = Number(b.selected_by ?? b.sel ?? 0);
-          return selA - selB; // low sel% first
+          return selB - selA; // high sel% first (normal order)
         });
+      }
+      // smart + combination: use players as-is (already has sel% data)
+
+      // Safety check: ensure we have enough players per role
+      const roleCount = { WK: 0, BAT: 0, AR: 0, BOWL: 0 };
+      for (const p of allPlayers) {
+        const role = String(p.player_type || "").toLowerCase();
+        if (role.includes("keeper") || role.includes("wk") || p.role === 0) roleCount.WK++;
+        else if (role.includes("all") || p.role === 2) roleCount.AR++;
+        else if (role.includes("bowl") || role.includes("pacer") || p.role === 3) roleCount.BOWL++;
+        else if (role.includes("bat") || p.role === 1) roleCount.BAT++;
+      }
+      console.log("[generator] Player pool roles:", roleCount, "total:", allPlayers.length);
+
+      // If any role has < 3 players, generation will likely fail — warn but try anyway
+      const minRoleCount = Math.min(roleCount.WK, roleCount.BAT, roleCount.AR, roleCount.BOWL);
+      if (minRoleCount < 3) {
+        toast.warning(`Low player count per role (WK:${roleCount.WK} BAT:${roleCount.BAT} AR:${roleCount.AR} BOWL:${roleCount.BOWL}) — generation may fail. Try smaller count.`);
       }
 
       // 3. Run sweep generator

@@ -121,20 +121,28 @@ function isValidRoleBalance(players: MatchPlayer[]): boolean {
     if (!(r in counts)) return false; // unknown role
     counts[r]++;
   }
+  // Lenient role balance — Dream11 allows:
+  //   WK: 1-8, BAT: 1-8, AR: 1-8, BOWL: 1-8 (just need 11 total)
+  // But we enforce at least 1 WK for a valid cricket team
   if (counts.WK < 1 || counts.WK > 8) return false;
-  if (counts.BAT < 3 || counts.BAT > 8) return false;
+  if (counts.BAT < 2 || counts.BAT > 8) return false;
   if (counts.AR < 1 || counts.AR > 8) return false;
-  if (counts.BOWL < 3 || counts.BOWL > 8) return false;
+  if (counts.BOWL < 2 || counts.BOWL > 8) return false;
   return true;
 }
 
 /**
  * Check team-side balance (max 7 from one side, min 4 from other).
+ * Lenient: allow 3-8 from one side if strict 4-7 fails.
  */
 function isValidSideBalance(players: MatchPlayer[], team1Name: string, team2Name: string): boolean {
   const t1 = players.filter((p) => p.team_name === team1Name).length;
   const t2 = players.filter((p) => p.team_name === team2Name).length;
-  return t1 <= 7 && t2 <= 7 && t1 >= 4 && t2 >= 4;
+  // Strict: 4-7 from each side
+  if (t1 <= 7 && t2 <= 7 && t1 >= 4 && t2 >= 4) return true;
+  // Lenient fallback: 3-8 from each side (still valid Dream11)
+  if (t1 <= 8 && t2 <= 8 && t1 >= 3 && t2 >= 3) return true;
+  return false;
 }
 
 /**
@@ -361,7 +369,7 @@ export async function generateSweep(
   const usedCVPairs = new Set<string>();
   let attempts = 0;
   let duplicates = 0;
-  const maxAttempts = count * 20; // safety valve
+  const maxAttempts = count * 50; // safety valve (increased from 20)
 
   // Use a seeded RNG for reproducibility-ish but still varied
   let seed = 12345 + count;
@@ -383,7 +391,7 @@ export async function generateSweep(
   for (let i = 0; i < count; i++) {
     let team: MatchPlayer[] | null = null;
     let tries = 0;
-    while (tries < 30 && !team) {
+    while (tries < 50 && !team) {
       tries++;
       attempts++;
       if (attempts > maxAttempts) break;
