@@ -61,7 +61,7 @@ export function HomeScreen() {
 
   return (
     <div className="px-4 py-4 space-y-4 pb-24">
-      {/* Apna Cricket Cinematic Video Banner — Ken Burns slideshow with logo overlay */}
+      {/* Apna Cricket Cinematic Video Banner — Ken Burns slideshow (no logo overlay) */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -71,37 +71,6 @@ export function HomeScreen() {
       >
         {/* Cinematic cricket slideshow — Ken Burns effect (video-like) */}
         <CricketVideoBanner />
-
-        {/* Apna Cricket logo overlay — always visible on top of video */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
-          <motion.div
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 1, ease: "backOut", delay: 0.3 }}
-            className="text-center"
-          >
-            <motion.div
-              animate={{ y: [0, -6, 0] }}
-              transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-              className="w-24 h-24 mx-auto mb-2 rounded-2xl overflow-hidden shadow-2xl ring-2 ring-amber-400/60"
-              style={{ boxShadow: "0 0 50px rgba(251, 191, 36, 0.6)" }}
-            >
-              <img
-                src="/logo-square.png"
-                alt="Apna Cricket"
-                className="w-full h-full object-cover"
-              />
-            </motion.div>
-            <h2 className="text-2xl font-black drop-shadow-2xl">
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-yellow-400 to-amber-600">
-                APNA CRICKET
-              </span>
-            </h2>
-            <p className="text-[9px] text-amber-200/90 font-bold tracking-[0.3em] uppercase mt-1 drop-shadow-lg">
-              ⭐ Fantasy Team ⭐
-            </p>
-          </motion.div>
-        </div>
 
         {/* Bottom gradient overlay for text legibility */}
         <div className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-black/80 to-transparent z-10" />
