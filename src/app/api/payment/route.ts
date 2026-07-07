@@ -150,16 +150,37 @@ export const POST = withSecurity(async (request: Request) => {
         }, { status: 200 });
       }
 
-      // Demo mode: auto-approve payment
-      // Production: verify paymentId with Razorpay/PhonePe API
-      const paymentStatus = status || "success";
+      // Payment status check — ONLY generate key if status is "success"
+      // If user clicks "Payment Failed" or doesn't confirm, NO key is generated
+      const paymentStatus = status || "pending";
 
-      if (paymentStatus !== "success") {
+      if (paymentStatus === "failed") {
+        // Mark order as failed in Firebase
+        if (db) {
+          try {
+            await updateDoc(doc(db, "payment_orders", orderId), {
+              status: "failed",
+              failedAt: Date.now(),
+            });
+          } catch { /* ignore */ }
+        }
         return NextResponse.json({
           status: "fail",
-          message: "Payment failed or cancelled",
+          message: "Payment failed. No key generated. Please try again.",
+          code: "PAYMENT_FAILED",
         }, { status: 200 });
       }
+
+      if (paymentStatus === "pending") {
+        return NextResponse.json({
+          status: "fail",
+          message: "Payment not confirmed yet. Complete the UPI payment first, then click confirm.",
+          code: "PAYMENT_PENDING",
+        }, { status: 200 });
+      }
+
+      // paymentStatus === "success" → generate key
+      // ⚠️ Key is ONLY generated here — after payment confirmation
 
       // Generate license key
       const licenseKey = generateKey();

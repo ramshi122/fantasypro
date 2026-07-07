@@ -468,8 +468,17 @@ function LicensePlansSection() {
   ];
 
   function handleBuy(plan: any) {
+    // Try to get mobile from user-auth if not loaded yet
     if (!userMobile) {
-      toast.error("Please login with mobile number first");
+      import("@/lib/user-auth").then(({ getCurrentUser }) => {
+        const user = getCurrentUser();
+        if (user && user.mobile) {
+          setUserMobile(user.mobile);
+          setPaymentPlan(plan);
+        } else {
+          toast.error("Please login with mobile number first (Profile → Login with Mobile)");
+        }
+      });
       return;
     }
     setPaymentPlan(plan);

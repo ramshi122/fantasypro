@@ -30,7 +30,7 @@ interface PaymentModalProps {
   onPaymentSuccess: (licenseKey: string, keyType: string, expiresAt: number | null) => void;
 }
 
-type Phase = "review" | "payment-method" | "processing" | "success" | "failed";
+type Phase = "review" | "payment-method" | "confirm-paid" | "processing" | "success" | "failed";
 
 export function PaymentModal({ open, onClose, plan, mobile, onPaymentSuccess }: PaymentModalProps) {
   const [phase, setPhase] = useState<Phase>("review");
@@ -83,7 +83,8 @@ export function PaymentModal({ open, onClose, plan, mobile, onPaymentSuccess }: 
       // Step 2: Simulate payment processing (demo mode)
       await new Promise((r) => setTimeout(r, 2000));
 
-      // Step 3: Verify payment
+      // Step 3: Verify payment — send status: "success" explicitly
+      // ⚠️ Key is ONLY generated if status === "success"
       const verifyRes = await fetch("/api/payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -91,7 +92,7 @@ export function PaymentModal({ open, onClose, plan, mobile, onPaymentSuccess }: 
           action: "verify",
           orderId: orderData.orderId,
           paymentId: `PAY_${Date.now()}`,
-          status: "success",
+          status: "success",  // Explicit success — only this generates key
         }),
       });
       const verifyData = await verifyRes.json();
@@ -99,17 +100,18 @@ export function PaymentModal({ open, onClose, plan, mobile, onPaymentSuccess }: 
       if (verifyData.status === "success") {
         setLicenseKey(verifyData.licenseKey);
         setPhase("success");
-        toast.success("Payment successful! License key activated.");
+        toast.success("Payment verified! License key activated.");
         setTimeout(() => {
           onPaymentSuccess(verifyData.licenseKey, verifyData.keyType, verifyData.expiresAt);
         }, 2000);
       } else {
-        toast.error(verifyData.message || "Payment verification failed");
+        // Payment failed or pending — NO key generated
+        toast.error(verifyData.message || "Payment verification failed — no key generated");
         setPhase("failed");
       }
     } catch (err: any) {
       console.error("[Payment] Error:", err);
-      toast.error(err?.message || "Payment error");
+      toast.error(err?.message || "Payment error — no key generated");
       setPhase("failed");
     }
   }
@@ -266,11 +268,53 @@ export function PaymentModal({ open, onClose, plan, mobile, onPaymentSuccess }: 
 
                 <Button
                   className="w-full h-11 brand-gradient text-white font-bold"
-                  onClick={handlePay}
+                  onClick={() => setPhase("confirm-paid")}
                 >
                   <CheckCircle2 className="w-4 h-4 mr-2" />
                   I've Paid — Verify & Activate
                 </Button>
+              </>
+            )}
+
+            {/* Confirm payment phase — ask user to confirm */}
+            {phase === "confirm-paid" && (
+              <>
+                <div className="text-center py-2">
+                  <div className="w-14 h-14 mx-auto rounded-full bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center mb-3">
+                    <Shield className="w-7 h-7 text-amber-600" />
+                  </div>
+                  <h3 className="text-sm font-bold text-foreground">Did you complete the payment?</h3>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Confirm only if you've paid ₹{plan.price} to <b>gostr3248@okhdfcbank</b> via UPI.
+                  </p>
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-2 font-bold">
+                    ⚠️ Key activates ONLY after you confirm payment success.
+                    If payment failed, click "Payment Failed" — no key will be generated.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Button
+                    className="w-full h-11 bg-emerald-500 hover:bg-emerald-600 text-white font-bold"
+                    onClick={handlePay}
+                  >
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                    Yes, Payment Successful — Activate Key
+                  </Button>
+                  <Button
+                    className="w-full h-10 bg-red-500 hover:bg-red-600 text-white font-bold text-xs"
+                    onClick={() => setPhase("failed")}
+                  >
+                    <X className="w-3.5 h-3.5 mr-1.5" />
+                    Payment Failed — No Key
+                  </Button>
+                  <button
+                    onClick={() => setPhase("payment-method")}
+                    className="w-full text-[11px] text-muted-foreground hover:underline mt-1"
+                  >
+                    ← Back to payment
+                  </button>
+                </div>
               </>
             )}
 
