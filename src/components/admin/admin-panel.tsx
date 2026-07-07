@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Copy,
   Delete,
+  Download,
   Eye,
   EyeOff,
   Key,
@@ -19,12 +20,14 @@ import {
   Lock,
   LogOut,
   Power,
+  RefreshCw,
   Send,
   Settings,
   Shield,
   ShieldCheck,
   Smartphone,
   Trash2,
+  Trophy,
   Unlock,
   User,
   Users,
@@ -37,7 +40,7 @@ import { toast } from "sonner";
 import { useAdmin, type KeyType, type KeyStatus } from "@/lib/admin-store";
 import { cn } from "@/lib/utils";
 
-type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "users" | "announcements" | "logs" | "settings";
+type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "users" | "announcements" | "logs" | "settings";
 
 interface AdminPanelProps {
   open: boolean;
@@ -60,6 +63,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
     { id: "licenses", label: "Licenses", icon: Key },
     { id: "devices", label: "Devices", icon: Smartphone },
     { id: "team-control", label: "Generator", icon: Zap },
+    { id: "contests", label: "Contests", icon: Trophy },
     { id: "users", label: "Users", icon: Users },
     { id: "announcements", label: "Announce", icon: Bell },
     { id: "logs", label: "Logs", icon: Activity },
@@ -145,6 +149,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
               {tab === "licenses" && <LicensesTab />}
               {tab === "devices" && <DevicesTab />}
               {tab === "team-control" && <TeamControlTab />}
+              {tab === "contests" && <ContestsTab />}
               {tab === "users" && <UsersTab />}
               {tab === "announcements" && <AnnouncementsTab />}
               {tab === "logs" && <LogsTab />}
@@ -864,6 +869,488 @@ function SettingsTab() {
         <Check className="w-4 h-4 mr-2" />
         Save All Settings
       </Button>
+    </div>
+  );
+}
+
+/* ============== CONTESTS TAB ============== */
+
+type FantasyAppSlug = "dream11" | "my11circle";
+
+interface FreeContest {
+  contestId: string;
+  contestName?: string;
+  totalPrizeAmount?: number;
+  prizeDisplayText?: string;
+  maxAllowedTeams?: number;
+  maxJoinTeamCount?: number;
+  joinedTeamIds?: number[];
+  joinedCount?: number;
+  availableSlots?: number;
+  notJoinedTeamIds?: number[];
+  canJoinMore?: boolean;
+  [k: string]: unknown;
+}
+
+interface MyTeam {
+  teamId: string;
+  teamNo: number | null;
+  fantasyApp: string;
+}
+
+interface JoinResult {
+  status: string;
+  message: string;
+  contestId: string;
+  joinResults: Array<{ teamId: number; success: boolean; error?: string; message?: string }>;
+  summary: {
+    successCount: number;
+    failedCount: number;
+    totalCount?: number;
+    batches?: number;
+    batchSize?: number;
+    shuffled?: boolean;
+  };
+  needsReauth?: boolean;
+}
+
+function ContestsTab() {
+  const [selectedApp, setSelectedApp] = useState<FantasyAppSlug>("my11circle");
+  const [jwtToken, setJwtToken] = useState("");
+  const [authToken, setAuthToken] = useState("");
+  const [matchId, setMatchId] = useState("");
+  const [contestId, setContestId] = useState("");
+  const [teamIds, setTeamIds] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [freeContests, setFreeContests] = useState<FreeContest[]>([]);
+  const [myTeams, setMyTeams] = useState<MyTeam[]>([]);
+  const [joinResult, setJoinResult] = useState<JoinResult | null>(null);
+
+  // Load JWT from localStorage on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const t = localStorage.getItem("user_token") || "";
+      setJwtToken(t);
+    }
+  }, []);
+
+  function handleSaveJwt() {
+    if (typeof window !== "undefined") {
+      if (jwtToken.trim()) {
+        localStorage.setItem("user_token", jwtToken.trim());
+        toast.success("JWT token saved");
+      } else {
+        localStorage.removeItem("user_token");
+        toast.info("JWT token cleared");
+      }
+    }
+  }
+
+  // Fetch user's already-created teams for this match
+  async function handleFetchMyTeams() {
+    if (!authToken.trim() || !matchId.trim()) {
+      toast.error("Auth token and Match ID required");
+      return;
+    }
+    setLoading(true);
+    setMyTeams([]);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (jwtToken.trim()) headers.Authorization = `Bearer ${jwtToken.trim()}`;
+
+      const res = await fetch(`/api/contest/my-teams`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          fantasyApp: selectedApp,
+          authToken: authToken.trim(),
+          matchId: matchId.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.status === "success" && Array.isArray(data.teams)) {
+        setMyTeams(data.teams);
+        // Auto-fill the Team IDs field with all team IDs
+        const ids = data.teams.map((t: MyTeam) => t.teamId).filter(Boolean);
+        if (ids.length > 0) {
+          setTeamIds(ids.join(","));
+          toast.success(`Found ${ids.length} teams — auto-filled Team IDs`);
+        } else {
+          toast.info("No teams found for this match");
+        }
+      } else {
+        toast.error(data.message || "Failed to fetch teams");
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Fetch free contests
+  async function handleFetchContests() {
+    if (!authToken.trim() || !matchId.trim()) {
+      toast.error("Auth token and Match ID required");
+      return;
+    }
+    setLoading(true);
+    setFreeContests([]);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (jwtToken.trim()) headers.Authorization = `Bearer ${jwtToken.trim()}`;
+
+      const ids = teamIds.split(",").map(t => parseInt(t.trim())).filter(n => !isNaN(n));
+
+      const res = await fetch(`/api/contest/free-status`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          fantasyApp: selectedApp,
+          authToken: authToken.trim(),
+          matchId: matchId.trim(),
+          allTeamIds: ids,
+        }),
+      });
+      const data = await res.json();
+      if (data.status === "success" && Array.isArray(data.contests)) {
+        setFreeContests(data.contests);
+        toast.success(`Found ${data.contests.length} free contests`);
+      } else {
+        toast.error(data.message || "Failed to fetch contests");
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Join a contest — uses /api/contest/join which now batches + shuffles
+  async function handleJoinContest(cid?: string) {
+    const cId = cid || contestId.trim();
+    if (!authToken.trim() || !matchId.trim() || !cId) {
+      toast.error("Auth token, Match ID, Contest ID required");
+      return;
+    }
+    const ids = teamIds.split(",").map(t => parseInt(t.trim())).filter(n => !isNaN(n));
+    if (ids.length === 0) {
+      toast.error("Team IDs required (comma-separated) — or click 'Fetch My Teams'");
+      return;
+    }
+    setLoading(true);
+    setJoinResult(null);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (jwtToken.trim()) headers.Authorization = `Bearer ${jwtToken.trim()}`;
+
+      const res = await fetch(`/api/contest/join`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          fantasyApp: selectedApp,
+          authToken: authToken.trim(),
+          matchId: matchId.trim(),
+          contestId: cId,
+          teamIds: ids,
+        }),
+      });
+      const data = await res.json();
+      setJoinResult(data);
+      if (data.status === "success" || data.status === "partial") {
+        const s = data.summary || {};
+        const batchesInfo = s.batches ? ` · ${s.batches} batches · shuffled` : "";
+        if (data.status === "success") {
+          toast.success(`✓ Joined ${s.successCount}/${s.totalCount || ids.length} teams${batchesInfo}`);
+        } else {
+          toast.warning(`⚠ Partial: ${s.successCount} joined, ${s.failedCount} failed${batchesInfo}`);
+        }
+      } else if (data.needsReauth) {
+        toast.error("Session expired — re-link via OTP");
+      } else {
+        toast.error(data.message || "Failed to join contest");
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4 text-slate-200">
+      {/* JWT Token Section */}
+      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+        <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-2">
+          <Shield className="w-4 h-4 text-amber-400" />
+          JWT Token (Admin Auth)
+        </h3>
+        <p className="text-[10px] text-slate-400 mb-2">
+          Backend JWT token for admin API calls. Stored in localStorage as &quot;user_token&quot;.
+        </p>
+        <div className="flex gap-2">
+          <Input
+            value={jwtToken}
+            onChange={(e) => setJwtToken(e.target.value)}
+            placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+            className="bg-slate-900 border-slate-700 text-white h-9 text-xs font-mono"
+            type="password"
+          />
+          <Button
+            size="sm"
+            className="bg-amber-600 hover:bg-amber-700 text-white h-9 text-xs"
+            onClick={handleSaveJwt}
+          >
+            Save
+          </Button>
+        </div>
+        {jwtToken && (
+          <p className="text-[9px] text-emerald-400 mt-1">✓ JWT token active</p>
+        )}
+      </div>
+
+      {/* App Selector */}
+      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+        <h3 className="text-sm font-bold text-white mb-2">Select Platform</h3>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => setSelectedApp("dream11")}
+            className={cn(
+              "h-10 rounded-xl text-xs font-bold transition-all border-2",
+              selectedApp === "dream11"
+                ? "bg-red-600 text-white border-transparent"
+                : "bg-slate-900 border-slate-700 text-slate-300"
+            )}
+          >
+            🏏 Dream11
+          </button>
+          <button
+            onClick={() => setSelectedApp("my11circle")}
+            className={cn(
+              "h-10 rounded-xl text-xs font-bold transition-all border-2",
+              selectedApp === "my11circle"
+                ? "bg-sky-600 text-white border-transparent"
+                : "bg-slate-900 border-slate-700 text-slate-300"
+            )}
+          >
+            ⭕ My11Circle
+          </button>
+        </div>
+      </div>
+
+      {/* Contest Form */}
+      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-3">
+        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+          <Trophy className="w-4 h-4 text-violet-400" />
+          Join Contest — {selectedApp === "dream11" ? "Dream11" : "My11Circle"}
+        </h3>
+
+        <div>
+          <label className="text-[10px] text-slate-400 mb-1 block">Fantasy Auth Token (OTP-linked)</label>
+          <Input
+            value={authToken}
+            onChange={(e) => setAuthToken(e.target.value)}
+            placeholder="Token from OTP login..."
+            className="bg-slate-900 border-slate-700 text-white h-9 text-xs font-mono"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-[10px] text-slate-400 mb-1 block">Match ID</label>
+            <Input
+              value={matchId}
+              onChange={(e) => setMatchId(e.target.value)}
+              placeholder="113526"
+              className="bg-slate-900 border-slate-700 text-white h-9 text-xs"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-slate-400 mb-1 block">Contest ID</label>
+            <Input
+              value={contestId}
+              onChange={(e) => setContestId(e.target.value)}
+              placeholder="contest123"
+              className="bg-slate-900 border-slate-700 text-white h-9 text-xs"
+            />
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-[10px] text-slate-400">Team IDs (comma-separated)</label>
+            <button
+              onClick={handleFetchMyTeams}
+              disabled={loading || !authToken.trim() || !matchId.trim()}
+              className="text-[10px] text-sky-400 hover:text-sky-300 disabled:opacity-40 flex items-center gap-1 font-bold"
+            >
+              {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+              Fetch My Teams
+            </button>
+          </div>
+          <Input
+            value={teamIds}
+            onChange={(e) => setTeamIds(e.target.value)}
+            placeholder="1,2,3,4,5,...,40  (or click Fetch My Teams)"
+            className="bg-slate-900 border-slate-700 text-white h-9 text-xs font-mono"
+          />
+          {myTeams.length > 0 && (
+            <p className="text-[9px] text-emerald-400 mt-1">
+              ✓ {myTeams.length} teams found · auto-filled
+            </p>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            className="bg-violet-600 hover:bg-violet-700 text-white h-10 text-xs"
+            onClick={handleFetchContests}
+            disabled={loading}
+          >
+            {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Trophy className="w-3 h-3 mr-1" />}
+            Fetch Free Contests
+          </Button>
+          <Button
+            className="bg-emerald-600 hover:bg-emerald-700 text-white h-10 text-xs"
+            onClick={() => handleJoinContest()}
+            disabled={loading}
+          >
+            {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Send className="w-3 h-3 mr-1" />}
+            Join All Teams
+          </Button>
+        </div>
+
+        {/* Batch info banner */}
+        <div className="bg-sky-950/40 border border-sky-800/50 rounded-lg p-2.5">
+          <p className="text-[10px] text-sky-300 font-bold flex items-center gap-1.5">
+            <RefreshCw className="w-3 h-3" />
+            Smart Batch Join Active
+          </p>
+          <p className="text-[9px] text-sky-200/70 mt-0.5">
+            Teams are shuffled randomly + sent in batches of 20. All 40 teams will be joined (not just 1-20).
+          </p>
+        </div>
+      </div>
+
+      {/* Free Contests List */}
+      {freeContests.length > 0 && (
+        <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+          <h3 className="text-sm font-bold text-white mb-2">Free Contests ({freeContests.length})</h3>
+          <div className="space-y-2 max-h-60 overflow-y-auto">
+            {freeContests.map((c, i) => (
+              <div key={i} className="bg-slate-900 rounded-lg p-2.5 border border-slate-700">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] font-bold text-white truncate">
+                      {c.contestName || `Contest ${c.contestId}`}
+                    </p>
+                    <p className="text-[9px] text-slate-400">
+                      ID: {c.contestId} · Prize: {c.prizeDisplayText || c.totalPrizeAmount || "N/A"}
+                    </p>
+                    <p className="text-[9px] text-slate-500">
+                      Joined: {c.joinedCount || 0} · Slots: {c.availableSlots ?? "N/A"}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 text-[10px] flex-shrink-0"
+                    onClick={() => {
+                      setContestId(c.contestId);
+                      handleJoinContest(c.contestId);
+                    }}
+                    disabled={loading}
+                  >
+                    Join All
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Join Result */}
+      {joinResult && (
+        <div className={cn(
+          "rounded-xl p-4 border",
+          joinResult.status === "success"
+            ? "bg-emerald-950/30 border-emerald-700"
+            : joinResult.status === "partial"
+            ? "bg-amber-950/30 border-amber-700"
+            : "bg-red-950/30 border-red-700"
+        )}>
+          <h3 className={cn(
+            "text-sm font-bold mb-2 flex items-center gap-2",
+            joinResult.status === "success"
+              ? "text-emerald-400"
+              : joinResult.status === "partial"
+              ? "text-amber-400"
+              : "text-red-400"
+          )}>
+            {joinResult.status === "success"
+              ? <CheckCircle2 className="w-4 h-4" />
+              : <AlertTriangle className="w-4 h-4" />}
+            Join Result — {joinResult.status.toUpperCase()}
+          </h3>
+          <p className="text-[10px] text-slate-300 mb-2">{joinResult.message}</p>
+
+          {joinResult.summary && (
+            <>
+              <div className="grid grid-cols-3 gap-2 text-[10px] mb-2">
+                <div className="bg-slate-900 rounded p-2 text-center">
+                  <p className="text-emerald-400 font-black text-lg">{joinResult.summary.successCount}</p>
+                  <p className="text-slate-500 uppercase">Success</p>
+                </div>
+                <div className="bg-slate-900 rounded p-2 text-center">
+                  <p className="text-red-400 font-black text-lg">{joinResult.summary.failedCount}</p>
+                  <p className="text-slate-500 uppercase">Failed</p>
+                </div>
+                <div className="bg-slate-900 rounded p-2 text-center">
+                  <p className="text-sky-400 font-black text-lg">{joinResult.summary.totalCount || (joinResult.summary.successCount + joinResult.summary.failedCount)}</p>
+                  <p className="text-slate-500 uppercase">Total</p>
+                </div>
+              </div>
+              {joinResult.summary.batches && (
+                <p className="text-[9px] text-sky-300 mb-2">
+                  🔄 {joinResult.summary.batches} batches × {joinResult.summary.batchSize} teams
+                  {joinResult.summary.shuffled ? " · shuffled randomly" : ""}
+                </p>
+              )}
+            </>
+          )}
+
+          {joinResult.joinResults && joinResult.joinResults.length > 0 && (
+            <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+              <p className="text-[9px] text-slate-400 font-bold">Per-team results:</p>
+              {joinResult.joinResults.map((r: any, i: number) => (
+                <div key={i} className="flex items-center justify-between text-[9px] bg-slate-900/50 rounded px-2 py-1">
+                  <span className="text-slate-300">Team {r.teamId}</span>
+                  <span className={r.success ? "text-emerald-400" : "text-red-400"}>
+                    {r.success ? "✓ Joined" : `✗ ${r.error || "Failed"}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {joinResult.needsReauth && (
+            <p className="text-[10px] text-amber-400 mt-2 font-bold">
+              ⚠️ Session expired — re-link via OTP
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Backend endpoints info */}
+      <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
+        <p className="text-[9px] text-slate-500 font-bold mb-1">Backend Endpoints:</p>
+        <div className="space-y-0.5 text-[9px] text-slate-400 font-mono">
+          <p>Dream11: /api/dream11/contest/all-free-status + /join-contest</p>
+          <p>My11Circle: /api/my11circle/contest/all-free-status + /join-contest</p>
+          <p>List Teams: /api/fantasy/list-of-teams</p>
+          <p>JWT: Bearer token in Authorization header</p>
+        </div>
+      </div>
     </div>
   );
 }
