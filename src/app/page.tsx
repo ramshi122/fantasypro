@@ -51,18 +51,10 @@ export default function Home() {
     return <SplashScreen onFinish={() => setShowSplash(false)} duration={3500} />;
   }
 
-  // While the auto-guest effect is running, show a tiny splash
+  // While the auto-guest effect is running, show the splash screen again
+  // (NOT the old "AC" letter loading screen — use the real splash)
   if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen brand-gradient flex items-center justify-center">
-        <div className="text-center text-white">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center mb-3">
-            <span className="text-2xl font-black">AC</span>
-          </div>
-          <p className="text-sm font-semibold">Loading Apna Cricket...</p>
-        </div>
-      </div>
-    );
+    return <SplashScreen onFinish={() => {}} duration={1000} />;
   }
 
   // Show login screen only when explicitly requested
