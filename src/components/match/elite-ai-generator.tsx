@@ -55,10 +55,13 @@ export function EliteAIGenerator({
   const [result, setResult] = useState<EliteGenerateResult | null>(null);
   const [selectedCount, setSelectedCount] = useState<number>(20);
 
-  const matchId = (match.matchId ?? match.id ?? "") as string;
+  const matchId = (match?.matchId ?? match?.id ?? "") as string;
+
+  // Defensive: ensure players is always an array
+  const safePlayers = Array.isArray(players) ? players : [];
 
   async function handleRun() {
-    if (players.length < 11) {
+    if (safePlayers.length < 11) {
       toast.error("Need at least 11 players in pool");
       return;
     }
@@ -68,15 +71,15 @@ export function EliteAIGenerator({
 
     try {
       const res = await runEliteAI(
-        players,
-        team1Name,
-        team2Name,
+        safePlayers,
+        team1Name || "T1",
+        team2Name || "T2",
         lineupAnnounced,
         (check, total, message) => setProgress({ check, total, message }),
         selectedCount
       );
 
-      if (res.rankedTeams.length === 0) {
+      if (!res || !res.rankedTeams || res.rankedTeams.length === 0) {
         toast.error("AI could not generate teams — try with more players");
         setRunning(false);
         return;
@@ -86,7 +89,7 @@ export function EliteAIGenerator({
       toast.success(`Elite AI generated ${res.rankedTeams.length} ranked teams in ${(res.durationMs / 1000).toFixed(2)}s`);
     } catch (err: any) {
       console.error("[EliteAI] error:", err);
-      toast.error(err?.message || "Elite AI failed");
+      toast.error(err?.message || "Elite AI failed — check console for details");
     } finally {
       setRunning(false);
     }
@@ -166,7 +169,7 @@ export function EliteAIGenerator({
               {match.series || match.title}
             </p>
             <p className="text-[11px] text-amber-700 dark:text-amber-300">
-              {team1Name} vs {team2Name} · {players.length} players · {lineupAnnounced ? "✓ Lineup announced" : "⚠ Lineup pending"}
+              {team1Name} vs {team2Name} · {safePlayers.length} players · {lineupAnnounced ? "✓ Lineup announced" : "⚠ Lineup pending"}
             </p>
           </div>
 
@@ -238,14 +241,14 @@ export function EliteAIGenerator({
                 <Button
                   className="w-full h-12 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white font-bold"
                   onClick={handleRun}
-                  disabled={players.length < 11}
+                  disabled={safePlayers.length < 11}
                 >
                   <Brain className="w-5 h-5 mr-2" />
                   Run Elite AI Research — Generate {selectedCount} Teams
                 </Button>
-                {players.length < 11 && (
+                {safePlayers.length < 11 && (
                   <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-2">
-                    Need at least 11 players (currently {players.length})
+                    Need at least 11 players (currently {safePlayers.length})
                   </p>
                 )}
               </div>

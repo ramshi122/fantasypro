@@ -181,6 +181,18 @@ export function calculatePlayerEFV(p: MatchPlayer): number {
 
 /* ============== 25 Analysis Checks ============== */
 
+/**
+ * Safe math helpers — prevent NaN/Infinity crashes on empty arrays.
+ */
+function safeMax(nums: number[]): number {
+  if (nums.length === 0) return 0;
+  return Math.max(...nums);
+}
+function safeMin(nums: number[]): number {
+  if (nums.length === 0) return 0;
+  return Math.min(...nums);
+}
+
 export function runEliteAnalysis(
   players: MatchPlayer[],
   team1Name: string,
@@ -188,8 +200,32 @@ export function runEliteAnalysis(
   lineupAnnounced: boolean = false
 ): EliteAnalysisResult {
   const checks: EliteAnalysisCheck[] = [];
-  const pool = players.filter((p) => p.name && credits(p) > 0);
+  const pool = (players || []).filter((p) => p && p.name && credits(p) > 0);
   const playing = pool.filter((p) => p.playing === 1 || p.playing === undefined || p.playing === null);
+
+  // If pool is too small, return early with safe defaults
+  if (pool.length === 0) {
+    return {
+      checks: [{
+        id: 25,
+        name: "Final AI Confidence Score",
+        category: "confidence",
+        score: 0,
+        status: "critical",
+        insight: "No valid players in pool — cannot analyze",
+      }],
+      overallScore: 0,
+      confidence: "low",
+      recommendedStrategy: "safe",
+      poolStats: {
+        totalPlayers: 0, playingXI: 0, wkCount: 0, batCount: 0, arCount: 0, bowlCount: 0,
+        avgCredits: 0, avgSelPct: 0,
+      },
+      topCaptainPicks: [],
+      topVCPicks: [],
+      differentialPicks: [],
+    };
+  }
 
   // Group by role
   const byRole = {
@@ -198,6 +234,7 @@ export function runEliteAnalysis(
     AR: pool.filter((p) => roleOf(p) === "AR"),
     BOWL: pool.filter((p) => roleOf(p) === "BOWL"),
   };
+
 
   const allSelPct = pool.map(selPct);
   const allCredits = pool.map(credits);
@@ -259,7 +296,7 @@ export function runEliteAnalysis(
 
   // === CHECK 5: Credit Distribution ===
   const avgCred = avg(allCredits);
-  const credSpread = Math.max(...allCredits) - Math.min(...allCredits);
+  const credSpread = safeMax(allCredits) - safeMin(allCredits);
   const credScore = clamp(credSpread >= 4 && credSpread <= 6 ? 100 : credSpread >= 3 ? 80 : 50, 0, 100);
   checks.push({
     id: 5,
@@ -267,7 +304,7 @@ export function runEliteAnalysis(
     category: "balance",
     score: credScore,
     status: credScore >= 80 ? "excellent" : credScore >= 60 ? "good" : "warning",
-    insight: `Avg ${avgCred.toFixed(1)} credits · spread ${credSpread.toFixed(1)} · range ${Math.min(...allCredits).toFixed(1)}-${Math.max(...allCredits).toFixed(1)}`,
+    insight: `Avg ${avgCred.toFixed(1)} credits · spread ${credSpread.toFixed(1)} · range ${safeMin(allCredits).toFixed(1)}-${safeMax(allCredits).toFixed(1)}`,
   });
 
   // === CHECK 6: Selection % Concentration ===

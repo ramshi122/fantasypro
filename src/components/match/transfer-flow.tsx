@@ -45,6 +45,7 @@ import { ApnaTransferModal } from "./apna-transfer-modal";
 import { FreeContestsModal } from "./free-contests-modal";
 import { OtpLoginModal } from "@/components/auth/otp-login-modal";
 import { EliteAIGenerator } from "./elite-ai-generator";
+import { ErrorBoundary } from "@/components/error-boundary";
 import {
   autoReplaceNonPlaying,
   buildPlayingPlayerSet,
@@ -664,27 +665,37 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
       {/* Elite AI Generator modal */}
       <AnimatePresence>
         {showEliteAI && (
-          <EliteAIGenerator
-            match={match}
-            players={players}
-            team1Name={team1Name}
-            team2Name={team2Name}
-            lineupAnnounced={lineupAnnounced}
-            onClose={() => setShowEliteAI(false)}
-            onGenerated={(teams) => {
-              handleBulkAddTeams(teams);
-              setShowEliteAI(false);
-            }}
-            onTransfer={(teams, app) => {
-              // Save teams first, then open transfer modal with those teams
-              handleBulkAddTeams(teams);
-              setSelectedTransferApp(app);
-              // Small delay so teams are in state before modal opens
-              setTimeout(() => {
-                setShowBulkTransfer(true);
-              }, 200);
-            }}
-          />
+          <ErrorBoundary
+            fallback={
+              <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+                <div className="bg-white dark:bg-card rounded-2xl p-6 max-w-sm text-center">
+                  <p className="text-sm font-bold text-red-600 mb-2">Elite AI Error</p>
+                  <p className="text-xs text-muted-foreground mb-4">Something went wrong loading Elite AI. Please try again.</p>
+                  <Button onClick={() => setShowEliteAI(false)}>Close</Button>
+                </div>
+              </div>
+            }
+          >
+            <EliteAIGenerator
+              match={match}
+              players={players}
+              team1Name={team1Name}
+              team2Name={team2Name}
+              lineupAnnounced={lineupAnnounced}
+              onClose={() => setShowEliteAI(false)}
+              onGenerated={(teams) => {
+                handleBulkAddTeams(teams);
+                setShowEliteAI(false);
+              }}
+              onTransfer={(teams, app) => {
+                handleBulkAddTeams(teams);
+                setSelectedTransferApp(app);
+                setTimeout(() => {
+                  setShowBulkTransfer(true);
+                }, 200);
+              }}
+            />
+          </ErrorBoundary>
         )}
       </AnimatePresence>
 
