@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Copy,
+  CreditCard,
   Delete,
   Download,
   Eye,
@@ -40,7 +41,7 @@ import { toast } from "sonner";
 import { useAdmin, type KeyType, type KeyStatus } from "@/lib/admin-store";
 import { cn } from "@/lib/utils";
 
-type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "users" | "announcements" | "logs" | "settings";
+type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "payments" | "users" | "announcements" | "logs" | "settings";
 
 interface AdminPanelProps {
   open: boolean;
@@ -64,6 +65,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
     { id: "devices", label: "Devices", icon: Smartphone },
     { id: "team-control", label: "Generator", icon: Zap },
     { id: "contests", label: "Contests", icon: Trophy },
+    { id: "payments", label: "Payments", icon: CreditCard },
     { id: "users", label: "Users", icon: Users },
     { id: "announcements", label: "Announce", icon: Bell },
     { id: "logs", label: "Logs", icon: Activity },
@@ -150,6 +152,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
               {tab === "devices" && <DevicesTab />}
               {tab === "team-control" && <TeamControlTab />}
               {tab === "contests" && <ContestsTab />}
+              {tab === "payments" && <PaymentsTab />}
               {tab === "users" && <UsersTab />}
               {tab === "announcements" && <AnnouncementsTab />}
               {tab === "logs" && <LogsTab />}
@@ -1516,6 +1519,246 @@ function ContestsTab() {
           <p>List Teams: /api/fantasy/list-of-teams</p>
           <p>JWT: Bearer token in Authorization header</p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============== PAYMENTS TAB ============== */
+
+interface PaymentOrder {
+  orderId: string;
+  mobile: string;
+  plan: string;
+  amount: number;
+  keyType: string;
+  label: string;
+  status: string;
+  licenseKey: string | null;
+  expiresAt: number | null;
+  paymentId: string | null;
+  createdAt: number;
+  completedAt: number | null;
+  failedAt: number | null;
+}
+
+function PaymentsTab() {
+  const [payments, setPayments] = useState<PaymentOrder[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState<"all" | "pending" | "completed" | "failed">("all");
+  const [summary, setSummary] = useState({ total: 0, pending: 0, completed: 0, failed: 0, totalRevenue: 0 });
+
+  async function fetchPayments() {
+    setLoading(true);
+    try {
+      const statusParam = filter === "all" ? "" : `?status=${filter}`;
+      const res = await fetch(`/api/payment/list${statusParam}`);
+      const data = await res.json();
+      if (data.status === "success") {
+        setPayments(data.payments || []);
+        setSummary(data.summary || { total: 0, pending: 0, completed: 0, failed: 0, totalRevenue: 0 });
+      } else {
+        toast.error(data.message || "Failed to fetch payments");
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchPayments();
+  }, [filter]);
+
+  function formatDate(ts: number | null): string {
+    if (!ts) return "—";
+    return new Date(ts).toLocaleString("en-IN", {
+      day: "2-digit", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  }
+
+  const statusColors: Record<string, string> = {
+    pending: "bg-amber-500",
+    completed: "bg-emerald-500",
+    failed: "bg-red-500",
+  };
+
+  return (
+    <div className="space-y-4 text-slate-200">
+      {/* Summary cards */}
+      <div className="grid grid-cols-4 gap-2">
+        <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 text-center">
+          <p className="text-2xl font-black text-white">{summary.total}</p>
+          <p className="text-[9px] text-slate-400 uppercase">Total</p>
+        </div>
+        <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 text-center">
+          <p className="text-2xl font-black text-amber-400">{summary.pending}</p>
+          <p className="text-[9px] text-slate-400 uppercase">Pending</p>
+        </div>
+        <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 text-center">
+          <p className="text-2xl font-black text-emerald-400">{summary.completed}</p>
+          <p className="text-[9px] text-slate-400 uppercase">Completed</p>
+        </div>
+        <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 text-center">
+          <p className="text-2xl font-black text-violet-400">₹{summary.totalRevenue}</p>
+          <p className="text-[9px] text-slate-400 uppercase">Revenue</p>
+        </div>
+      </div>
+
+      {/* Filter buttons */}
+      <div className="flex gap-1.5">
+        {(["all", "pending", "completed", "failed"] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border-2",
+              filter === f
+                ? "bg-violet-600 text-white border-transparent"
+                : "bg-slate-800 border-slate-700 text-slate-300"
+            )}
+          >
+            {f.toUpperCase()}
+          </button>
+        ))}
+        <button
+          onClick={fetchPayments}
+          className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-sky-600 text-white ml-auto flex items-center gap-1"
+        >
+          {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+          Refresh
+        </button>
+      </div>
+
+      {/* Payments list */}
+      {loading && payments.length === 0 ? (
+        <div className="text-center py-8">
+          <Loader2 className="w-8 h-8 mx-auto text-violet-500 animate-spin" />
+          <p className="text-xs text-slate-400 mt-2">Loading payments...</p>
+        </div>
+      ) : payments.length === 0 ? (
+        <div className="text-center py-8">
+          <CreditCard className="w-10 h-10 mx-auto text-slate-600 mb-2" />
+          <p className="text-xs text-slate-400">No payments found</p>
+        </div>
+      ) : (
+        <div className="space-y-2 max-h-[60vh] overflow-y-auto scrollbar-thin">
+          {payments.map((p, i) => (
+            <div key={i} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className={cn(
+                    "w-2 h-2 rounded-full",
+                    statusColors[p.status] || "bg-slate-500"
+                  )} />
+                  <code className="text-[10px] text-slate-400 font-mono">{p.orderId}</code>
+                </div>
+                <span className={cn(
+                  "text-[9px] font-bold px-2 py-0.5 rounded-full uppercase",
+                  p.status === "completed" && "bg-emerald-900/50 text-emerald-400",
+                  p.status === "pending" && "bg-amber-900/50 text-amber-400",
+                  p.status === "failed" && "bg-red-900/50 text-red-400",
+                )}>
+                  {p.status}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-[10px]">
+                <div>
+                  <p className="text-slate-500">Mobile</p>
+                  <p className="text-white font-bold">+91 {p.mobile}</p>
+                </div>
+                <div>
+                  <p className="text-slate-500">Plan</p>
+                  <p className="text-white font-bold">{p.label}</p>
+                </div>
+                <div>
+                  <p className="text-slate-500">Amount</p>
+                  <p className="text-emerald-400 font-black">₹{p.amount}</p>
+                </div>
+                <div>
+                  <p className="text-slate-500">Created</p>
+                  <p className="text-white">{formatDate(p.createdAt)}</p>
+                </div>
+                {p.licenseKey && (
+                  <div className="col-span-2">
+                    <p className="text-slate-500">License Key</p>
+                    <code className="text-violet-400 font-mono font-bold">{p.licenseKey}</code>
+                  </div>
+                )}
+                {p.completedAt && (
+                  <div>
+                    <p className="text-slate-500">Completed</p>
+                    <p className="text-emerald-400">{formatDate(p.completedAt)}</p>
+                  </div>
+                )}
+                {p.paymentId && (
+                  <div>
+                    <p className="text-slate-500">Payment ID</p>
+                    <code className="text-slate-300 font-mono text-[9px]">{p.paymentId}</code>
+                  </div>
+                )}
+              </div>
+
+              {/* Admin verification info */}
+              {p.status === "completed" && (
+                <div className="mt-2 bg-emerald-950/30 border border-emerald-800/50 rounded-lg p-2">
+                  <p className="text-[9px] text-emerald-400 font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    Payment confirmed — Key auto-activated
+                  </p>
+                  {p.expiresAt && (
+                    <p className="text-[9px] text-emerald-300/70 mt-0.5">
+                      Expires: {formatDate(p.expiresAt)}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {p.status === "pending" && (
+                <div className="mt-2 bg-amber-950/30 border border-amber-800/50 rounded-lg p-2">
+                  <p className="text-[9px] text-amber-400 font-bold flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    Awaiting payment confirmation from user
+                  </p>
+                  <p className="text-[9px] text-amber-300/70 mt-0.5">
+                    User must click "Yes, Payment Successful" to activate key
+                  </p>
+                </div>
+              )}
+
+              {p.status === "failed" && (
+                <div className="mt-2 bg-red-950/30 border border-red-800/50 rounded-lg p-2">
+                  <p className="text-[9px] text-red-400 font-bold flex items-center gap-1">
+                    <X className="w-3 h-3" />
+                    Payment failed — No key generated
+                  </p>
+                  <p className="text-[9px] text-red-300/70 mt-0.5">
+                    Failed at: {formatDate(p.failedAt)}
+                  </p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Payment info */}
+      <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
+        <p className="text-[9px] text-slate-500 font-bold mb-1">Payment Flow:</p>
+        <div className="space-y-0.5 text-[9px] text-slate-400">
+          <p>1. User clicks "Buy Now" on plan card</p>
+          <p>2. UPI payment screen opens → pays to gostr3248@okhdfcbank</p>
+          <p>3. User clicks "I've Paid — Verify & Activate"</p>
+          <p>4. Confirmation: "Yes, Payment Successful" or "Payment Failed"</p>
+          <p>5. ✅ Success → Key auto-generated + auto-activated</p>
+          <p>5. ❌ Failed → No key generated — user can retry</p>
+        </div>
+        <p className="text-[9px] text-slate-500 mt-2">
+          UPI ID: <code className="text-violet-300 font-mono">gostr3248@okhdfcbank</code>
+        </p>
       </div>
     </div>
   );
