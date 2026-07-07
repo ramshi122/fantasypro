@@ -1,12 +1,33 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // License keys collection — allow read/write for app to function
+    // License keys collection — 1 key = 1 device
     match /license_keys/{keyId} {
       allow read: if true;
       allow write: if true;
       allow update: if true;
       allow delete: if true;
+    }
+
+    // Payment orders — admin can read/write
+    match /payment_orders/{orderId} {
+      allow read: if true;
+      allow write: if true;
+      allow update: if true;
+    }
+
+    // Users collection — mobile login
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if true;
+      allow update: if true;
+    }
+
+    // Referrals collection
+    match /referrals/{referralId} {
+      allow read: if true;
+      allow write: if true;
+      allow update: if true;
     }
 
     // Default — deny all other collections

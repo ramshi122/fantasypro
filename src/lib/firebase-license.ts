@@ -180,9 +180,9 @@ export async function verifyKeyInFirestore(
       return { valid: false, message: "Key expired" };
     }
 
-    // Device binding check — allow up to 2 devices per key
-    if (key.deviceIds.length >= 2 && !key.deviceIds.includes(deviceId)) {
-      return { valid: false, message: "Key already bound to 2 devices" };
+    // Device binding check — STRICT 1 KEY = 1 DEVICE
+    if (key.deviceIds.length >= 1 && !key.deviceIds.includes(deviceId)) {
+      return { valid: false, message: "This key is already activated on another device. Each key can only be used on 1 device." };
     }
 
     // Success — update key in Firestore
