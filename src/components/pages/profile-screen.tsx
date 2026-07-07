@@ -250,6 +250,9 @@ export function ProfileScreen({ onAdminTrigger }: { onAdminTrigger?: () => void 
       {/* License Plans Section */}
       <LicensePlansSection />
 
+      {/* Feature Matrix Section */}
+      <FeatureMatrixSection />
+
       {/* Brand + Logout */}
       <div className="text-center py-4">
         <div className="flex justify-center mb-3">
@@ -501,6 +504,147 @@ function LicensePlansSection() {
 
       <p className="text-center text-[10px] text-muted-foreground">
         Contact admin to purchase license keys
+      </p>
+    </div>
+  );
+}
+
+/* ============== Feature Matrix Section ============== */
+
+function FeatureMatrixSection() {
+  const [activeTier, setActiveTier] = useState<string>("elite");
+
+  // Load current license tier
+  useEffect(() => {
+    import("@/lib/admin-store").then(({ getLicenseState }) => {
+      const state = getLicenseState();
+      if (state.keyType) {
+        setActiveTier(state.keyType);
+      }
+    });
+  }, []);
+
+  const tiers = [
+    { id: "trial", name: "Trial", price: "FREE", duration: "1 Day" },
+    { id: "match_basic", name: "1 Match", price: "₹49", duration: "6h" },
+    { id: "match_full", name: "24 Hour", price: "₹99", duration: "24h" },
+    { id: "weekly", name: "Weekly", price: "₹149", duration: "7d" },
+    { id: "monthly", name: "Pro", price: "₹299", duration: "30d" },
+    { id: "elite", name: "Elite", price: "₹999", duration: "90d" },
+    { id: "lifetime", name: "Lifetime", price: "₹4999", duration: "∞" },
+  ];
+
+  const features = [
+    { label: "Team Generation", key: "teamGeneration", type: "boolean" },
+    { label: "Single Transfer", key: "singleTransferPerDay", type: "limit" },
+    { label: "Bulk Add Teams", key: "bulkAddLimit", type: "limit" },
+    { label: "Per-Team Replace", key: "perTeamReplaceMode", type: "boolean" },
+    { label: "Bulk Replace All", key: "bulkReplaceAll", type: "boolean" },
+    { label: "Multi-Account", key: "multiAccount", type: "boolean" },
+    { label: "Dream11 Transfer", key: "dream11Transfer", type: "boolean" },
+    { label: "My11Circle Transfer", key: "my11CircleTransfer", type: "boolean" },
+    { label: "Elite AI (25 checks)", key: "eliteAI", type: "boolean" },
+    { label: "Rank 1-40 Teams", key: "rank1to40Teams", type: "boolean" },
+    { label: "Contest Join", key: "contestJoin", type: "boolean" },
+    { label: "Referral Program", key: "referralProgram", type: "boolean" },
+  ];
+
+  function getFeatureValue(tierId: string, feature: any) {
+    // Lazy import to avoid SSR
+    return import("@/lib/subscription").then(({ getTierFeatures }) => {
+      const f = getTierFeatures(tierId);
+      const val = (f as any)[feature.key];
+      if (feature.type === "boolean") {
+        return val ? "✅" : "❌";
+      }
+      if (feature.type === "limit") {
+        if (val === 0) return "❌";
+        if (val === -1) return "∞";
+        return val.toString();
+      }
+      return String(val);
+    });
+  }
+
+  const [featureValues, setFeatureValues] = useState<Record<string, Record<string, string>>>({});
+
+  useEffect(() => {
+    // Load all feature values
+    const loadFeatures = async () => {
+      const { getTierFeatures } = await import("@/lib/subscription");
+      const values: Record<string, Record<string, string>> = {};
+      for (const tier of tiers) {
+        values[tier.id] = {};
+        const f = getTierFeatures(tier.id);
+        for (const feature of features) {
+          const val = (f as any)[feature.key];
+          if (feature.type === "boolean") {
+            values[tier.id][feature.key] = val ? "✅" : "❌";
+          } else if (feature.type === "limit") {
+            if (val === 0) values[tier.id][feature.key] = "❌";
+            else if (val === -1) values[tier.id][feature.key] = "∞";
+            else values[tier.id][feature.key] = val.toString();
+          }
+        }
+      }
+      setFeatureValues(values);
+    };
+    loadFeatures();
+  }, []);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 px-1">
+        <Shield className="w-4 h-4 text-violet-500" />
+        <h3 className="font-bold text-sm text-foreground">Feature Matrix — What You Get</h3>
+      </div>
+
+      {/* Tier selector */}
+      <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+        {tiers.map((tier) => (
+          <button
+            key={tier.id}
+            onClick={() => setActiveTier(tier.id)}
+            className={cn(
+              "flex-shrink-0 px-3 py-2 rounded-lg text-[10px] font-bold transition-all border-2",
+              activeTier === tier.id
+                ? "brand-gradient text-white border-transparent shadow-md"
+                : "bg-card border-violet-200 dark:border-violet-900/30 text-foreground"
+            )}
+          >
+            {tier.name}
+            <p className="text-[8px] opacity-70 mt-0.5">{tier.price}</p>
+          </button>
+        ))}
+      </div>
+
+      {/* Feature list for selected tier */}
+      <div className="bg-white dark:bg-card rounded-2xl border border-violet-100 dark:border-violet-900/30 overflow-hidden">
+        {features.map((feature, i) => {
+          const value = featureValues[activeTier]?.[feature.key] || "...";
+          const isYes = value === "✅" || value === "∞";
+          return (
+            <div
+              key={feature.key}
+              className={cn(
+                "flex items-center justify-between px-3 py-2.5",
+                i !== features.length - 1 && "border-b border-violet-50 dark:border-violet-900/20"
+              )}
+            >
+              <span className="text-[11px] text-foreground font-medium">{feature.label}</span>
+              <span className={cn(
+                "text-xs font-black",
+                isYes ? "text-emerald-600 dark:text-emerald-400" : value === "❌" ? "text-red-500" : "text-violet-600 dark:text-violet-400"
+              )}>
+                {value === "✅" ? "YES" : value === "❌" ? "NO" : value === "∞" ? "UNLIMITED" : value}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="text-center text-[10px] text-muted-foreground">
+        Your current tier is highlighted. Upgrade to unlock more features.
       </p>
     </div>
   );
