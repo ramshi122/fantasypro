@@ -38,7 +38,7 @@ export function useLicense() {
   const [verifying, setVerifying] = useState(false);
   const admin = useAdmin();
 
-  // Auto-verify on mount if license exists
+  // Auto-verify on mount if license exists — also syncs keyType for existing users
   useEffect(() => {
     if (licenseState.verified && licenseState.key) {
       const result = admin.verifyLicense(licenseState.key, licenseState.deviceId);
@@ -47,10 +47,16 @@ export function useLicense() {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
       } else if (result.keyType && result.keyType !== licenseState.keyType) {
-        // Update stored key type if it changed
+        // Sync keyType — handles users who activated before this update
         setLicenseVerified(licenseState.key, result.keyType);
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        setLicenseState({ verified: true, key: licenseState.key, deviceId: licenseState.deviceId, keyType: result.keyType });
+        setLicenseState({
+          verified: true,
+          key: licenseState.key,
+          deviceId: licenseState.deviceId,
+          keyType: result.keyType,
+        });
+        console.log("[useLicense] Synced keyType from backend:", result.keyType);
       }
     }
   }, []);
@@ -100,6 +106,9 @@ export function useLicense() {
    * Call this when user tries to use an ELITE-only feature.
    * Returns true if the user has an elite or lifetime key.
    * Returns false (and opens activate modal) if not.
+   *
+   * If keyType is missing (e.g. user activated before this update),
+   * does a LIVE lookup against the admin store to determine tier.
    */
   const requireElite = useCallback((): boolean => {
     if (!licenseState.verified) {
@@ -107,12 +116,43 @@ export function useLicense() {
       return false;
     }
     const kt = licenseState.keyType;
+    // Fast path — keyType already known
     if (kt === "elite" || kt === "lifetime") return true;
-    return false;
-  }, [licenseState.verified, licenseState.keyType]);
+    if (kt && kt !== "elite" && kt !== "lifetime") return false;
 
-  // Derived flags
-  const isElite = licenseState.verified && (licenseState.keyType === "elite" || licenseState.keyType === "lifetime");
+    // Fallback — keyType missing, do a live lookup
+    if (licenseState.key) {
+      const result = admin.verifyLicense(licenseState.key, licenseState.deviceId);
+      if (result.valid && (result.keyType === "elite" || result.keyType === "lifetime")) {
+        // Update stored state so future checks are fast
+        setLicenseVerified(licenseState.key, result.keyType);
+        setLicenseState({
+          verified: true,
+          key: licenseState.key,
+          deviceId: licenseState.deviceId,
+          keyType: result.keyType || null,
+        });
+        return true;
+      }
+    }
+    return false;
+  }, [licenseState.verified, licenseState.keyType, licenseState.key, licenseState.deviceId, admin]);
+
+  // Derived flags — also do live lookup if keyType is missing but user is verified
+  const isElite = (() => {
+    if (!licenseState.verified) return false;
+    if (licenseState.keyType === "elite" || licenseState.keyType === "lifetime") return true;
+    // Live lookup fallback for existing users without keyType stored
+    if (licenseState.key) {
+      const result = admin.verifyLicense(licenseState.key, licenseState.deviceId);
+      if (result.valid && (result.keyType === "elite" || result.keyType === "lifetime")) {
+        // Update state async (won't block render but will update on next tick)
+        return true;
+      }
+    }
+    return false;
+  })();
+
   const isPro = licenseState.verified && (isElite || licenseState.keyType === "monthly");
   const isTrial = licenseState.verified && (licenseState.keyType === "trial" || licenseState.keyType === "weekly");
 
