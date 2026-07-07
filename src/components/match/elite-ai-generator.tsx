@@ -11,6 +11,7 @@ import {
   Crown,
   Layers,
   Loader2,
+  Send,
   Shield,
   Sparkles,
   TrendingUp,
