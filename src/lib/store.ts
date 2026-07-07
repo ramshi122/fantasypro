@@ -65,7 +65,8 @@ export type AppView =
   | "promotions"
   | "match-detail"
   | "expert-teams"
-  | "prime-teams";
+  | "prime-teams"
+  | "contact";
 
 interface AppState {
   view: AppView;

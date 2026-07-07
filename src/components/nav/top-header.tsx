@@ -14,10 +14,10 @@ const MENU_ITEMS = [
   { label: "Promotions", view: "promotions" as const },
   { label: "Expert Teams", view: "expert-teams" as const },
   { label: "Prime Teams", view: "prime-teams" as const },
+  { label: "Contact us", view: "contact" as const },
   { label: "Privacy Policy", href: "#" },
   { label: "Terms & Conditions", href: "#" },
   { label: "Disclaimer", href: "#" },
-  { label: "Contact us", href: "#" },
   { label: "About us", href: "#" },
 ] as const;
 

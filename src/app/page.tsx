@@ -12,6 +12,7 @@ import { ResearchScreen } from "@/components/pages/research-screen";
 import { ProfileScreen } from "@/components/pages/profile-screen";
 import { PromotionsScreen } from "@/components/pages/promotions-screen";
 import { TeamListScreen } from "@/components/pages/team-list-screen";
+import { ContactScreen } from "@/components/pages/contact-screen";
 import { SplashScreen } from "@/components/splash-screen";
 import { AdminPanel } from "@/components/admin/admin-panel";
 import { LicenseLockOverlay } from "@/components/admin/license-lock";
@@ -83,6 +84,7 @@ export default function Home() {
             {view === "promotions" && <PromotionsScreen />}
             {view === "expert-teams" && <TeamListScreen variant="expert" />}
             {view === "prime-teams" && <TeamListScreen variant="prime" />}
+            {view === "contact" && <ContactScreen />}
           </motion.div>
         </AnimatePresence>
       </main>
