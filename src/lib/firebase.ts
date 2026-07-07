@@ -2,10 +2,10 @@
  * Firebase Configuration
  * ======================
  * Project: revofixer-81a1c
- * Used for: License key storage (Firestore), Analytics
+ * Used for: License key storage (Firestore), Analytics, Payment orders
  *
- * Firestore collection: `license_keys`
- * Document ID: license key string (e.g. "CRICB-ABCD-EFGH-IJKL")
+ * IMPORTANT: Firebase must initialize on BOTH client AND server (API routes).
+ * The `typeof window` check was preventing server-side initialization.
  */
 
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
@@ -25,12 +25,11 @@ const firebaseConfig = {
   measurementId: "G-HYF2T2VQ8K",
 };
 
-// Initialize Firebase (singleton — only once)
+// Initialize Firebase — works on BOTH client and server
 let app: FirebaseApp;
 let db: Firestore;
 
-if (typeof window !== "undefined") {
-  // Client-side initialization
+try {
   if (getApps().length === 0) {
     app = initializeApp(firebaseConfig);
   } else {
@@ -38,15 +37,19 @@ if (typeof window !== "undefined") {
   }
   db = getFirestore(app);
   console.log("[Firebase] Initialized — project: revofixer-81a1c");
+} catch (err) {
+  console.error("[Firebase] Init failed:", err);
+  // Create fallback to prevent crashes
+  app = {} as FirebaseApp;
+  db = {} as Firestore;
 }
 
-// Analytics — only load on client side (lazy import to avoid SSR issues)
-let analyticsInstance: any = null;
+// Analytics — only on client side (lazy import)
 if (typeof window !== "undefined") {
   import("firebase/analytics")
     .then(({ getAnalytics }) => {
       try {
-        analyticsInstance = getAnalytics(app);
+        const analyticsInstance = getAnalytics(app);
         console.log("[Firebase] Analytics initialized");
       } catch (err) {
         console.log("[Firebase] Analytics skipped:", err);
@@ -57,5 +60,5 @@ if (typeof window !== "undefined") {
     });
 }
 
-export { app, db, analyticsInstance };
+export { app, db };
 export default app;
