@@ -1,87 +1,65 @@
-// Quick test of the generator engine
-import { generateTeams, rankPlayers, validateTeam } from "../src/lib/generator";
+/**
+ * Test the sweep generator with a real player pool to find why teams fail.
+ */
+import { generateSweep, cleanPlayerPool } from "../src/lib/sweep-generator";
+import type { MatchPlayer } from "../src/lib/api";
 
-// Mock 30 players similar to the real API
-const mockPlayers = [];
-const roles = ["batter", "pacer", "wicket-keeper", "all-rounder"];
-const teams = ["IND", "AFG"];
-const names = {
-  IND: ["Rohit", "Kohli", "Gill", "Rahul", "Bumrah", "Siraj", "Jadeja", "Pandya", "Sky", "Ishan", "Shami", "Kuldeep", "Ashwin", "Sundar"],
-  AFG: ["Gurbaz", "Rashid", "Nabi", "Ibrahim", "Omarzai", "Shahidi", "Zia", "Saleem", "Atal", "Rasooli", "Khil", "Bilal", "Fareed", "Mehmood"],
-};
-let pid = 1;
-for (const t of teams) {
-  for (let i = 0; i < 14; i++) {
-    const name = names[t][i];
-    const r = roles[i % 4];
-    mockPlayers.push({
-      name,
-      team_name: t,
-      player_type: r,
-      credits: 7 + (i % 3),
-      selected_by: Math.floor(80 - i * 5),
-      player_fixed_id: String(pid),
-      pl_id: String(pid),
-      pid: pid,
-    });
-    pid++;
+// Simulate a typical match player pool (22 players, uneven role distribution)
+const testPool: MatchPlayer[] = [
+  // WK (2 players)
+  { name: "WK1", player_type: "keeper", role: 0, credits: 9, selected_by: 60, team_name: "T1", player_fixed_id: "wk1" },
+  { name: "WK2", player_type: "keeper", role: 0, credits: 8, selected_by: 30, team_name: "T2", player_fixed_id: "wk2" },
+  // BAT (4 players — LOW count)
+  { name: "BAT1", player_type: "batter", role: 1, credits: 10, selected_by: 70, team_name: "T1", player_fixed_id: "bat1" },
+  { name: "BAT2", player_type: "batter", role: 1, credits: 9, selected_by: 50, team_name: "T1", player_fixed_id: "bat2" },
+  { name: "BAT3", player_type: "batter", role: 1, credits: 8, selected_by: 40, team_name: "T2", player_fixed_id: "bat3" },
+  { name: "BAT4", player_type: "batter", role: 1, credits: 7, selected_by: 20, team_name: "T2", player_fixed_id: "bat4" },
+  // AR (3 players)
+  { name: "AR1", player_type: "allrounder", role: 2, credits: 9.5, selected_by: 65, team_name: "T1", player_fixed_id: "ar1" },
+  { name: "AR2", player_type: "allrounder", role: 2, credits: 8.5, selected_by: 35, team_name: "T2", player_fixed_id: "ar2" },
+  { name: "AR3", player_type: "allrounder", role: 2, credits: 7.5, selected_by: 15, team_name: "T2", player_fixed_id: "ar3" },
+  // BOWL (5 players)
+  { name: "BOWL1", player_type: "pacer", role: 3, credits: 9, selected_by: 55, team_name: "T1", player_fixed_id: "bowl1" },
+  { name: "BOWL2", player_type: "pacer", role: 3, credits: 8.5, selected_by: 45, team_name: "T1", player_fixed_id: "bowl2" },
+  { name: "BOWL3", player_type: "pacer", role: 3, credits: 8, selected_by: 30, team_name: "T2", player_fixed_id: "bowl3" },
+  { name: "BOWL4", player_type: "pacer", role: 3, credits: 7.5, selected_by: 20, team_name: "T2", player_fixed_id: "bowl4" },
+  { name: "BOWL5", player_type: "pacer", role: 3, credits: 7, selected_by: 10, team_name: "T1", player_fixed_id: "bowl5" },
+];
+
+async function run() {
+  console.log("=== Test 1: 20 teams, Smart Auto ===");
+  const cleaned = cleanPlayerPool(testPool);
+  console.log("Cleaned pool:", cleaned.length, "players");
+  console.log("Roles:", {
+    WK: cleaned.filter(p => p.player_type === "keeper").length,
+    BAT: cleaned.filter(p => p.player_type === "batter").length,
+    AR: cleaned.filter(p => p.player_type === "allrounder").length,
+    BOWL: cleaned.filter(p => p.player_type === "pacer").length,
+  });
+
+  const res = await generateSweep(cleaned, 20, "T1", "T2", (p) => {
+    if (p.generated % 5 === 0) console.log(`  Progress: ${p.generated}/${p.total} - ${p.message}`);
+  });
+
+  console.log("Result:", {
+    requested: res.stats.requested,
+    generated: res.stats.generated,
+    duplicates: res.stats.duplicates,
+    attempts: res.stats.attempts,
+    durationMs: res.stats.durationMs,
+  });
+  console.log("Teams generated:", res.teams.length);
+
+  if (res.teams.length === 0) {
+    console.log("❌ FAILED — no teams generated!");
+  } else {
+    console.log("✅ SUCCESS — generated teams!");
+    // Show first team
+    const t = res.teams[0];
+    console.log("First team players:", t.players?.length);
+    console.log("First team C:", t.captain);
+    console.log("First team VC:", t.viceCaptain);
   }
 }
 
-console.log(`Total players: ${mockPlayers.length}`);
-const ranked = rankPlayers(mockPlayers);
-console.log("Ranked by role:");
-const byRole = { WK: 0, BAT: 0, AR: 0, BOWL: 0 };
-for (const p of ranked) byRole[p.role]++;
-console.log(byRole);
-
-// Try generating 20 teams
-console.log("\nGenerating 20 teams...");
-const start = Date.now();
-const result = await generateTeams(mockPlayers, {
-  count: 20,
-  team1Name: "IND",
-  team2Name: "AFG",
-});
-console.log(`Generated ${result.teams.length} teams in ${Date.now() - start}ms`);
-console.log(`Duplicates prevented: ${result.duplicatesPrevented}`);
-console.log(`Attempts: ${result.attempts}`);
-
-// Validate every team
-let validCount = 0;
-for (const t of result.teams) {
-  const v = validateTeam(ranked, "IND", "AFG");
-  if (v.ok) validCount++;
-}
-console.log(`Valid teams: ${validCount}/${result.teams.length}`);
-
-// Check uniqueness
-const keys = new Set();
-let duplicates = 0;
-for (const t of result.teams) {
-  const k = (t.players || []).map(p => p.player_fixed_id || p.pid).sort().join("|");
-  if (keys.has(k)) duplicates++;
-  keys.add(k);
-}
-console.log(`Duplicate teams in result: ${duplicates}`);
-
-// Check C/VC uniqueness
-const cvPairs = new Set();
-let cvDups = 0;
-for (const t of result.teams) {
-  const pair = `${t.captain}|${t.viceCaptain}`;
-  if (cvPairs.has(pair)) cvDups++;
-  cvPairs.add(pair);
-}
-console.log(`Duplicate C/VC pairs: ${cvDups}`);
-console.log(`Unique C/VC pairs: ${cvPairs.size}`);
-
-// Sample team
-if (result.teams[0]) {
-  const t = result.teams[0];
-  console.log("\nSample team #1:");
-  console.log("  Players:", t.players?.map(p => `${p.name}(${p.team})`).join(", "));
-  console.log("  Captain:", t.players?.find(p => String(p.player_fixed_id || p.pid) === String(t.captain))?.name);
-  console.log("  VC:", t.players?.find(p => String(p.player_fixed_id || p.pid) === String(t.viceCaptain))?.name);
-  console.log("  Total credits:", t.players?.reduce((s, p) => s + Number(p.credits || 0), 0));
-}
+run().catch(console.error);
