@@ -1292,6 +1292,100 @@ function ContestsTab() {
           </Button>
         </div>
 
+        {/* Random Mixed Auto Join — fetch + shuffle + join all in one click */}
+        <Button
+          className="w-full bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white h-11 text-xs font-bold"
+          onClick={async () => {
+            if (!authToken.trim() || !matchId.trim() || !contestId.trim()) {
+              toast.error("Auth token, Match ID, Contest ID required");
+              return;
+            }
+            setLoading(true);
+            toast.info("Fetching all teams + shuffling + joining...");
+            try {
+              const headers: Record<string, string> = { "Content-Type": "application/json" };
+              if (jwtToken.trim()) headers.Authorization = `Bearer ${jwtToken.trim()}`;
+
+              // 1. Fetch all teams
+              const teamsRes = await fetch(`/api/contest/my-teams`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                  fantasyApp: selectedApp,
+                  authToken: authToken.trim(),
+                  matchId: matchId.trim(),
+                }),
+              });
+              const teamsData = await teamsRes.json();
+              if (teamsData.status !== "success" || !teamsData.teams?.length) {
+                toast.error("No teams found — create teams first");
+                setLoading(false);
+                return;
+              }
+
+              const allIds = teamsData.teams.map((t: any) => parseInt(t.teamId)).filter((n: number) => !isNaN(n));
+              if (allIds.length === 0) {
+                toast.error("No valid team IDs found");
+                setLoading(false);
+                return;
+              }
+
+              toast.info(`Found ${allIds.length} teams — shuffling randomly...`);
+
+              // 2. Shuffle randomly (Fisher-Yates)
+              const shuffled = [...allIds];
+              for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+              }
+
+              // 3. Join all shuffled teams to contest
+              const joinRes = await fetch(`/api/contest/join`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                  fantasyApp: selectedApp,
+                  authToken: authToken.trim(),
+                  matchId: matchId.trim(),
+                  contestId: contestId.trim(),
+                  teamIds: shuffled,
+                }),
+              });
+              const joinData = await joinRes.json();
+              setJoinResult(joinData);
+
+              if (joinData.status === "success" || joinData.status === "partial") {
+                const s = joinData.summary || {};
+                const batchesInfo = s.batches ? ` · ${s.batches} batches · shuffled` : "";
+                toast.success(`✓ Random Mixed Join: ${s.successCount}/${s.totalCount || shuffled.length} teams${batchesInfo}`);
+              } else if (joinData.needsReauth) {
+                toast.error("Session expired — re-link via OTP");
+              } else {
+                toast.error(joinData.message || "Random join failed");
+              }
+            } catch (err: any) {
+              toast.error(err?.message || "Random join error");
+            } finally {
+              setLoading(false);
+            }
+          }}
+          disabled={loading}
+        >
+          {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+          Random Mixed Auto Join (All 40 Teams Shuffled)
+        </Button>
+
+        {/* Lineup filter info */}
+        <div className="bg-amber-950/40 border border-amber-800/50 rounded-lg p-2.5">
+          <p className="text-[10px] text-amber-300 font-bold mb-1">
+            📋 Lineup Filter (After Lineup Announced)
+          </p>
+          <p className="text-[9px] text-amber-200/70">
+            After lineup is announced, only playing 11 players are shown (11+11 = 22 players).
+            Teams with non-playing players are auto-filtered.
+          </p>
+        </div>
+
         {/* Batch info banner */}
         <div className="bg-sky-950/40 border border-sky-800/50 rounded-lg p-2.5">
           <p className="text-[10px] text-sky-300 font-bold flex items-center gap-1.5">
