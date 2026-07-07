@@ -30,6 +30,7 @@ import {
   type LinkedFantasyAccount,
 } from "@/lib/api";
 import { OtpLoginModal } from "@/components/auth/otp-login-modal";
+import { UserLoginButton } from "@/components/auth/mobile-login-modal";
 import { motion, AnimatePresence } from "framer-motion";
 import { useHiddenTrigger } from "@/lib/use-hidden-trigger";
 import { cn } from "@/lib/utils";
@@ -129,6 +130,9 @@ export function ProfileScreen({ onAdminTrigger }: { onAdminTrigger?: () => void 
 
       {/* License Activation + Countdown */}
       <LicenseActivationCard />
+
+      {/* User Mobile Login */}
+      <UserLoginButton />
 
       {/* Linked Fantasy Accounts */}
       <div className="space-y-2">
