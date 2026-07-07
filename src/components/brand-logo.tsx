@@ -19,9 +19,9 @@ export function BrandLogo({
   // rounded container. Otherwise fall back to the gradient "AC" mark.
   if (useImage) {
     return (
-      <div className={cn("flex items-center gap-2", className)}>
+      <div className={cn("flex items-center gap-2.5", className)}>
         <div
-          className="rounded-xl overflow-hidden flex items-center justify-center shadow-md"
+          className="rounded-xl overflow-hidden flex items-center justify-center shadow-md bg-white/5"
           style={{ width: size, height: size }}
         >
           <img
@@ -43,13 +43,13 @@ export function BrandLogo({
           <div className="flex flex-col leading-none">
             <span
               className={cn(
-                "font-extrabold brand-gradient-text text-xl tracking-tight",
-                textClassName
+                "font-black brand-gradient-text tracking-tight",
+                textClassName || "text-xl"
               )}
             >
               Apna Cricket
             </span>
-            <span className="text-[10px] text-muted-foreground font-medium tracking-wider uppercase">
+            <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold tracking-wider uppercase">
               Fantasy Team
             </span>
           </div>
@@ -60,7 +60,7 @@ export function BrandLogo({
 
   // Fallback gradient mark
   return (
-    <div className={cn("flex items-center gap-2", className)}>
+    <div className={cn("flex items-center gap-2.5", className)}>
       <div
         className="brand-gradient rounded-2xl flex items-center justify-center shadow-lg shadow-violet-500/30"
         style={{ width: size, height: size }}
@@ -76,13 +76,13 @@ export function BrandLogo({
         <div className="flex flex-col leading-none">
           <span
             className={cn(
-              "font-extrabold brand-gradient-text text-xl tracking-tight",
-              textClassName
+              "font-black brand-gradient-text tracking-tight",
+              textClassName || "text-xl"
             )}
           >
             Apna Cricket
           </span>
-          <span className="text-[10px] text-muted-foreground font-medium tracking-wider uppercase">
+          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold tracking-wider uppercase">
             Fantasy Team
           </span>
         </div>

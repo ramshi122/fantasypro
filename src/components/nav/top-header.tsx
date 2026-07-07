@@ -34,8 +34,8 @@ export function TopHeader({ onAdminTrigger }: { onAdminTrigger?: () => void }) {
   }
 
   return (
-    <header className="sticky top-0 z-40 bg-white/80 dark:bg-background/80 backdrop-blur-xl border-b border-violet-100 dark:border-violet-900/30">
-      <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
+    <header className="sticky top-0 z-40 bg-white/80 dark:bg-background/80 backdrop-blur-xl border-b border-amber-600/20">
+      <div className="max-w-3xl mx-auto px-4 h-16 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
@@ -49,8 +49,8 @@ export function TopHeader({ onAdminTrigger }: { onAdminTrigger?: () => void }) {
             <SheetContent side="left" className="w-[280px] p-0">
               <SheetHeader className="p-4 brand-gradient">
                 <SheetTitle className="text-white flex items-center gap-2">
-                  <BrandLogo size={28} />
-                  <span>Apna Cricket</span>
+                  <BrandLogo size={36} />
+                  <span className="text-lg font-black">Apna Cricket</span>
                 </SheetTitle>
               </SheetHeader>
               <nav className="p-2 overflow-y-auto h-[calc(100vh-72px)]">
@@ -98,7 +98,7 @@ export function TopHeader({ onAdminTrigger }: { onAdminTrigger?: () => void }) {
             onMouseLeave={trigger.cancelLongPress}
             className="select-none"
           >
-            <BrandLogo size={32} withText textClassName="text-base" />
+            <BrandLogo size={44} withText textClassName="text-lg" />
           </div>
         </div>
 
