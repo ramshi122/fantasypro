@@ -42,7 +42,7 @@ import { toast } from "sonner";
 import { useAdmin, type KeyType, type KeyStatus } from "@/lib/admin-store";
 import { cn } from "@/lib/utils";
 
-type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "payments" | "matches" | "users" | "announcements" | "logs" | "settings";
+type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "payments" | "matches" | "subscriptions" | "users" | "announcements" | "logs" | "settings";
 
 interface AdminPanelProps {
   open: boolean;
@@ -68,6 +68,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
     { id: "contests", label: "Contests", icon: Trophy },
     { id: "payments", label: "Payments", icon: CreditCard },
     { id: "matches", label: "Matches", icon: Activity },
+    { id: "subscriptions", label: "Subs", icon: Crown },
     { id: "users", label: "Users", icon: Users },
     { id: "announcements", label: "Announce", icon: Bell },
     { id: "logs", label: "Logs", icon: Activity },
@@ -156,6 +157,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
               {tab === "contests" && <ContestsTab />}
               {tab === "payments" && <PaymentsTab />}
               {tab === "matches" && <MatchesTab />}
+              {tab === "subscriptions" && <SubscriptionsTab />}
               {tab === "users" && <UsersTab />}
               {tab === "announcements" && <AnnouncementsTab />}
               {tab === "logs" && <LogsTab />}
@@ -1894,6 +1896,221 @@ function MatchesTab() {
           <p>✓ AES Key: Hidden (server-side only)</p>
           <p>✓ Backend proxy: All API calls via /api/* routes</p>
           <p>✓ No direct server URLs in client code</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============== SUBSCRIPTIONS TAB ============== */
+
+interface UserSubscription {
+  userId: string;
+  mobile: string;
+  userName: string;
+  plan: string;
+  planStatus: "active" | "expired" | "none";
+  primePlan: boolean;
+  currentPlan: string;
+  previousPlans: string[];
+  expiryDate: number | null;
+  createdAt: number;
+}
+
+function SubscriptionsTab() {
+  const [subscriptions, setSubscriptions] = useState<UserSubscription[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<"all" | "active" | "expired" | "prime" | "free">("all");
+  const [showAddPlan, setShowAddPlan] = useState(false);
+  const [planUserMobile, setPlanUserMobile] = useState("");
+  const [planType, setPlanType] = useState<KeyType>("monthly");
+
+  async function fetchSubscriptions() {
+    setLoading(true);
+    try {
+      const { db } = await import("@/lib/firebase");
+      if (!db) {
+        const admin = useAdmin.getState();
+        const localSubs: UserSubscription[] = admin.keys.slice(0, 50).map((k) => ({
+          userId: k.deviceIds[0] || "unknown",
+          mobile: k.userName || "—",
+          userName: k.userName || "User",
+          plan: k.type,
+          planStatus: k.status === "active" ? "active" : "expired",
+          primePlan: k.type === "elite" || k.type === "lifetime",
+          currentPlan: k.type,
+          previousPlans: [],
+          expiryDate: k.expiresAt,
+          createdAt: k.createdAt,
+        }));
+        setSubscriptions(localSubs);
+        toast.success(`Found ${localSubs.length} subscriptions (local)`);
+        setLoading(false);
+        return;
+      }
+      const { collection, getDocs } = await import("firebase/firestore");
+      const snap = await getDocs(collection(db, "users"));
+      const subs: UserSubscription[] = [];
+      snap.forEach((doc) => {
+        const d = doc.data() as any;
+        subs.push({
+          userId: d.userId || doc.id, mobile: d.mobile || "—", userName: d.name || "User",
+          plan: d.plan || "free", planStatus: d.plan === "free" || !d.plan ? "none" : "active",
+          primePlan: d.plan === "elite" || d.plan === "lifetime", currentPlan: d.plan || "free",
+          previousPlans: d.previousPlans || [], expiryDate: d.planExpiry || null, createdAt: d.createdAt || 0,
+        });
+      });
+      setSubscriptions(subs);
+      toast.success(`Found ${subs.length} user subscriptions`);
+    } catch (err: any) { toast.error(err?.message || "Failed to fetch"); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { fetchSubscriptions(); }, []);
+
+  async function handleAddPlan() {
+    if (!planUserMobile.trim()) { toast.error("Enter mobile number"); return; }
+    setLoading(true);
+    try {
+      const admin = useAdmin.getState();
+      const key = admin.generateKey(planType);
+      const { db } = await import("@/lib/firebase");
+      if (db) {
+        const { doc, setDoc, collection, query, where, getDocs, updateDoc } = await import("firebase/firestore");
+        const { getExpiryForType } = await import("@/lib/admin-store");
+        const expiry = getExpiryForType(planType);
+        await setDoc(doc(db, "license_keys", key), {
+          key, type: planType, status: "active", createdAt: Date.now(), expiresAt: expiry,
+          deviceIds: [], verifications: 0, userName: planUserMobile, mobile: planUserMobile,
+        });
+        const uq = await getDocs(query(collection(db, "users"), where("mobile", "==", planUserMobile)));
+        if (!uq.empty) {
+          await updateDoc(doc(db, "users", uq.docs[0].id), { plan: planType, planExpiry: expiry, updatedAt: Date.now() });
+        }
+      }
+      toast.success(`Plan ${planType} added for ${planUserMobile}. Key: ${key}`);
+      setPlanUserMobile(""); setShowAddPlan(false); fetchSubscriptions();
+    } catch (err: any) { toast.error(err?.message || "Failed"); }
+    finally { setLoading(false); }
+  }
+
+  async function handleDeactivate(userId: string) {
+    if (!confirm("Deactivate subscription?")) return;
+    try {
+      const { db } = await import("@/lib/firebase");
+      if (db) { const { doc, updateDoc } = await import("firebase/firestore");
+        await updateDoc(doc(db, "users", userId), { plan: "free", planExpiry: null, updatedAt: Date.now() }); }
+      toast.success("Deactivated"); fetchSubscriptions();
+    } catch (err: any) { toast.error(err?.message || "Failed"); }
+  }
+
+  function formatDate(ts: number | null): string {
+    if (!ts) return "—";
+    return new Date(ts).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  }
+
+  const filtered = subscriptions.filter((s) => {
+    if (search && !s.mobile.includes(search) && !s.userName.toLowerCase().includes(search.toLowerCase())) return false;
+    if (filter === "active" && s.planStatus !== "active") return false;
+    if (filter === "expired" && s.planStatus !== "expired") return false;
+    if (filter === "prime" && !s.primePlan) return false;
+    if (filter === "free" && s.plan !== "free") return false;
+    return true;
+  });
+
+  const planColors: Record<string, string> = {
+    trial: "bg-emerald-900/50 text-emerald-400", match_basic: "bg-amber-900/50 text-amber-400",
+    match_full: "bg-rose-900/50 text-rose-400", weekly: "bg-sky-900/50 text-sky-400",
+    monthly: "bg-sky-900/50 text-sky-400", elite: "bg-violet-900/50 text-violet-400",
+    lifetime: "bg-amber-900/50 text-amber-400", free: "bg-slate-700 text-slate-400",
+  };
+
+  return (
+    <div className="space-y-4 text-slate-200">
+      <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 flex items-center justify-between">
+        <div><p className="text-sm font-bold text-white">Subscription Management</p>
+        <p className="text-[10px] text-slate-400">Manage plans, prime access, mobile numbers — like original teamgeneration.in</p></div>
+        <div className="flex gap-2">
+          <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs" onClick={() => setShowAddPlan(!showAddPlan)}>
+            <Plus className="w-3 h-3 mr-1" /> Add Plan</Button>
+          <Button size="sm" className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs" onClick={fetchSubscriptions} disabled={loading}>
+            {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />} Refresh</Button>
+        </div>
+      </div>
+
+      {showAddPlan && (
+        <div className="bg-slate-800 rounded-xl p-4 border border-violet-700 space-y-3">
+          <p className="text-xs font-bold text-white">Add Subscription Plan (like original Prime Plan)</p>
+          <Input value={planUserMobile} onChange={(e) => setPlanUserMobile(e.target.value.replace(/\D/g, "").slice(0, 10))}
+            placeholder="User mobile number (10 digits)" className="bg-slate-900 border-slate-700 text-white h-9 text-xs" />
+          <div className="grid grid-cols-2 gap-2">
+            <select value={planType} onChange={(e) => setPlanType(e.target.value as KeyType)}
+              className="bg-slate-900 border border-slate-700 text-white text-xs rounded-lg px-2 h-9">
+              <option value="trial">Trial (1 day)</option><option value="match_basic">1 Match (₹49)</option>
+              <option value="match_full">24 Hour (₹99)</option><option value="weekly">Weekly (₹149)</option>
+              <option value="monthly">Pro (₹299, 30d)</option><option value="elite">Elite (₹999, 90d)</option>
+              <option value="lifetime">Lifetime</option>
+            </select>
+            <Button size="sm" className="bg-violet-600 hover:bg-violet-700 text-white h-9 text-xs" onClick={handleAddPlan} disabled={loading}>
+              {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Check className="w-3 h-3 mr-1" />} Activate Plan</Button>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-4 gap-2">
+        <div className="bg-slate-800 rounded-lg p-2 text-center border border-slate-700">
+          <p className="text-lg font-black text-white">{subscriptions.length}</p><p className="text-[9px] text-slate-400 uppercase">Total</p></div>
+        <div className="bg-slate-800 rounded-lg p-2 text-center border border-slate-700">
+          <p className="text-lg font-black text-emerald-400">{subscriptions.filter(s => s.planStatus === "active").length}</p><p className="text-[9px] text-slate-400 uppercase">Active</p></div>
+        <div className="bg-slate-800 rounded-lg p-2 text-center border border-slate-700">
+          <p className="text-lg font-black text-violet-400">{subscriptions.filter(s => s.primePlan).length}</p><p className="text-[9px] text-slate-400 uppercase">Prime</p></div>
+        <div className="bg-slate-800 rounded-lg p-2 text-center border border-slate-700">
+          <p className="text-lg font-black text-slate-400">{subscriptions.filter(s => s.plan === "free").length}</p><p className="text-[9px] text-slate-400 uppercase">Free</p></div>
+      </div>
+
+      <div className="flex gap-2">
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search mobile or name..." className="bg-slate-800 border-slate-700 text-white h-9 text-xs flex-1" />
+        <select value={filter} onChange={(e) => setFilter(e.target.value as any)} className="bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2 h-9">
+          <option value="all">All</option><option value="active">Active</option><option value="expired">Expired</option>
+          <option value="prime">Prime</option><option value="free">Free</option>
+        </select>
+      </div>
+
+      {loading && subscriptions.length === 0 ? (
+        <div className="text-center py-8"><Loader2 className="w-8 h-8 mx-auto text-violet-500 animate-spin" /><p className="text-xs text-slate-400 mt-2">Loading...</p></div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-8"><Crown className="w-10 h-10 mx-auto text-slate-600 mb-2" /><p className="text-xs text-slate-400">No subscriptions found</p></div>
+      ) : (
+        <div className="space-y-2 max-h-[55vh] overflow-y-auto scrollbar-thin">
+          {filtered.map((s, i) => (
+            <div key={i} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex-1 min-w-0"><p className="text-xs font-bold text-white">{s.userName}</p><p className="text-[10px] text-slate-400">+91 {s.mobile}</p></div>
+                <div className="flex items-center gap-1.5">
+                  {s.primePlan && <span className="text-[8px] bg-violet-900/50 text-violet-400 px-1.5 py-0.5 rounded-full font-bold">PRIME</span>}
+                  <span className={cn("text-[9px] font-bold px-2 py-0.5 rounded-full uppercase", planColors[s.plan] || planColors.free)}>{s.plan}</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-[10px] mb-2">
+                <div><p className="text-slate-500">Status</p><p className={cn("font-bold", s.planStatus === "active" ? "text-emerald-400" : "text-slate-400")}>{s.planStatus === "active" ? "✓ Active" : "Free"}</p></div>
+                <div><p className="text-slate-500">Expiry</p><p className="text-white">{formatDate(s.expiryDate)}</p></div>
+                <div><p className="text-slate-500">Joined</p><p className="text-white">{formatDate(s.createdAt)}</p></div>
+              </div>
+              <div className="flex gap-1.5">
+                {s.planStatus === "active" && <Button size="sm" variant="outline" className="h-7 text-[10px] border-red-600 text-red-400 hover:bg-red-900/30" onClick={() => handleDeactivate(s.userId)}><Ban className="w-3 h-3 mr-1" /> Deactivate</Button>}
+                <Button size="sm" variant="outline" className="h-7 text-[10px] border-violet-600 text-violet-400 hover:bg-violet-900/30" onClick={() => { setPlanUserMobile(s.mobile); setShowAddPlan(true); }}><Plus className="w-3 h-3 mr-1" /> Change Plan</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
+        <p className="text-[9px] text-slate-500 font-bold mb-1">Plans (like original teamgeneration.in):</p>
+        <div className="space-y-0.5 text-[9px] text-slate-400">
+          <p>🆓 FREE · 🎟 1 Match ₹49 · ⏰ 24h ₹99 · ⭐ Pro ₹299 · 👑 Elite ₹999 · 💎 Lifetime</p>
+          <p>👑 Prime Plan — Add prime access · 📱 Mobile Number — User registered</p>
         </div>
       </div>
     </div>
