@@ -406,124 +406,157 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               {existingTeams.length} team{existingTeams.length !== 1 ? "s" : ""} saved
             </p>
             <div className="flex gap-1.5 flex-wrap">
-              {/* Transfer to Dream11 — trial users limited to 3/day */}
+              {/* Dream11 Transfer — locked for unlicensed, 3/day for trial */}
+              {(() => {
+                const canDream11 = license.isLicensed;
+                const isTrial = license.licenseKeyType === "trial";
+                return (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (!license.requireLicense()) return;
+                      if (isTrial) {
+                        const today = new Date().toDateString();
+                        const count = parseInt(localStorage.getItem(`apna-cricket-d11-transfers-${today}`) || "0");
+                        if (count >= 3) {
+                          toast.error("Trial limit: 3 Dream11 transfers/day. Upgrade for unlimited.");
+                          return;
+                        }
+                      }
+                      setSelectedTransferApp("dream11");
+                      setShowBulkTransfer(true);
+                    }}
+                    className={cn(
+                      canDream11 ? "bg-red-600 hover:bg-red-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
+                    )}
+                    disabled={existingTeams.length === 0}
+                  >
+                    {canDream11 ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                    {canDream11 ? "🏏 Dream11" : "Dream11 🔒"}
+                  </Button>
+                );
+              })()}
+
+              {/* My11Circle Transfer — locked for trial + match_basic */}
+              {(() => {
+                const my11Tiers = ["match_full", "weekly", "monthly", "elite", "lifetime"];
+                const canMy11 = license.isLicensed && license.licenseKeyType && my11Tiers.includes(license.licenseKeyType);
+                return (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (!license.requireLicense()) return;
+                      if (!canMy11) {
+                        toast.error("My11Circle transfer requires 24 Hour pass (₹99) or higher.");
+                        return;
+                      }
+                      setSelectedTransferApp("my11circle");
+                      setShowBulkTransfer(true);
+                    }}
+                    className={cn(
+                      canMy11 ? "bg-sky-600 hover:bg-sky-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
+                    )}
+                    disabled={existingTeams.length === 0}
+                  >
+                    {canMy11 ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                    {canMy11 ? "⭕ My11Circle" : "My11 🔒"}
+                  </Button>
+                );
+              })()}
+
+              {/* Free Contests — locked for trial */}
+              {(() => {
+                const contestTiers = ["match_basic", "match_full", "weekly", "monthly", "elite", "lifetime"];
+                const canContest = license.isLicensed && license.licenseKeyType && contestTiers.includes(license.licenseKeyType);
+                return (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (!license.requireLicense()) return;
+                      if (!canContest) {
+                        toast.error("Contest join requires 1 Match pass (₹49) or higher.");
+                        return;
+                      }
+                      setShowFreeContests(true);
+                    }}
+                    className={cn(
+                      canContest ? "bg-amber-500 hover:bg-amber-600 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
+                    )}
+                    disabled={existingTeams.length === 0}
+                  >
+                    {canContest ? <Gift className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                    {canContest ? "Free Contests" : "Contests 🔒"}
+                  </Button>
+                );
+              })()}
+
+              {/* Auto Generate — locked for unlicensed */}
+              {(() => {
+                return (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      if (!license.requireLicense()) return;
+                      setShowSweepGenerator(true);
+                    }}
+                    disabled={players.length < 11}
+                    className={cn(
+                      "border-violet-200 text-violet-700 dark:text-violet-300",
+                      !license.isLicensed && "border-amber-300 text-amber-600 dark:border-amber-800 dark:text-amber-400"
+                    )}
+                  >
+                    {license.isLicensed ? <Zap className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                    {license.isLicensed ? "Auto Generate" : "Generate 🔒"}
+                  </Button>
+                );
+              })()}
+
+              {/* Elite AI — locked for non-elite/lifetime */}
+              {(() => {
+                const eliteTiers = ["elite", "lifetime"];
+                const canElite = license.isLicensed && license.licenseKeyType && eliteTiers.includes(license.licenseKeyType);
+                return (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (!license.isLicensed) {
+                        license.requireLicense();
+                        return;
+                      }
+                      if (!canElite) {
+                        toast.error("Elite AI requires Elite (₹999) or Lifetime subscription.");
+                        return;
+                      }
+                      setShowEliteAI(true);
+                    }}
+                    disabled={players.length < 11}
+                    className={cn(
+                      "bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white",
+                      !canElite && "opacity-60"
+                    )}
+                  >
+                    <Crown className="w-3.5 h-3.5 mr-1" />
+                    Elite AI
+                    {!canElite && <Lock className="w-3 h-3 ml-1" />}
+                  </Button>
+                );
+              })()}
+
+              {/* Add Team manually — locked for unlicensed */}
               <Button
                 size="sm"
                 onClick={() => {
                   if (!license.requireLicense()) return;
-                  // Trial users: limit to 3 transfers per day
-                  if (license.licenseKeyType === "trial") {
-                    const today = new Date().toDateString();
-                    const transferCount = parseInt(localStorage.getItem(`apna-cricket-transfers-${today}`) || "0");
-                    if (transferCount >= 3) {
-                      toast.error("Trial limit: 3 transfers per day. Upgrade to Pro (₹299) for unlimited transfers.");
-                      return;
-                    }
-                  }
-                  setSelectedTransferApp("dream11");
-                  setShowBulkTransfer(true);
-                }}
-                className={cn(
-                  license.isLicensed ? "bg-red-600 hover:bg-red-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700",
-                  !license.isLicensed && "cursor-pointer"
-                )}
-                disabled={existingTeams.length === 0}
-              >
-                {license.isLicensed ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
-                {license.isLicensed ? "🏏 Dream11" : "Dream11 🔒"}
-              </Button>
-              {/* Transfer to My11Circle — requires match_full or higher (NOT trial/match_basic) */}
-              <Button
-                size="sm"
-                onClick={() => {
-                  if (!license.requireLicense()) return;
-                  // My11Circle requires match_full, weekly, monthly, elite, or lifetime
-                  const my11Tiers = ["match_full", "weekly", "monthly", "elite", "lifetime"];
-                  if (!license.licenseKeyType || !my11Tiers.includes(license.licenseKeyType)) {
-                    toast.error("My11Circle transfer requires 24 Hour key (₹99) or higher. Trial/1-Match users can only use Dream11.");
-                    return;
-                  }
-                  setSelectedTransferApp("my11circle");
-                  setShowBulkTransfer(true);
-                }}
-                className={cn(
-                  license.isLicensed ? "bg-sky-600 hover:bg-sky-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700",
-                  !license.isLicensed && "cursor-pointer"
-                )}
-                disabled={existingTeams.length === 0}
-              >
-                {license.isLicensed ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
-                {license.isLicensed ? "⭕ My11Circle" : "My11 🔒"}
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => {
-                  // Free Contests: requires at least match_basic or higher (NOT trial)
-                  if (!license.isLicensed) {
-                    license.requireLicense();
-                    return;
-                  }
-                  const contestTiers = ["match_basic", "match_full", "weekly", "monthly", "elite", "lifetime"];
-                  if (!license.licenseKeyType || !contestTiers.includes(license.licenseKeyType)) {
-                    toast.error("Free Contests requires at least 1 Match key (₹49) or higher. Trial users cannot join contests.");
-                    return;
-                  }
-                  setShowFreeContests(true);
-                }}
-                className={cn(
-                  license.isLicensed ? "bg-amber-500 hover:bg-amber-600 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
-                )}
-                disabled={existingTeams.length === 0}
-              >
-                {license.isLicensed ? <Gift className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
-                {license.isLicensed ? "Free Contests" : "Contests 🔒"}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => license.requireLicense() && setShowSweepGenerator(true)}
-                disabled={players.length < 11}
-                className={cn(
-                  "border-violet-200 text-violet-700 dark:text-violet-300",
-                  !license.isLicensed && "border-amber-300 text-amber-600 dark:border-amber-800 dark:text-amber-400"
-                )}
-              >
-                {license.isLicensed ? <Zap className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
-                {license.isLicensed ? "Auto Generate" : "Generate 🔒"}
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => {
-                  if (!license.requireElite()) {
-                    if (license.isLicensed) {
-                      toast.error("Elite AI requires an Elite or Lifetime license key. Upgrade to unlock.");
-                    }
-                    return;
-                  }
-                  setShowEliteAI(true);
-                }}
-                disabled={players.length < 11}
-                className={cn(
-                  "bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white",
-                  !license.isElite && "opacity-60"
-                )}
-              >
-                <Crown className="w-3.5 h-3.5 mr-1" />
-                Elite AI
-                {!license.isElite && <Lock className="w-3 h-3 ml-1" />}
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => license.requireLicense() && (() => {
                   setEditingTeam(null);
                   setShowEditor(true);
-                })()}
+                }}
                 className={cn(
                   license.isLicensed ? "brand-gradient text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
                 )}
                 disabled={players.length === 0}
               >
-                {license.isLicensed ? <Plus className="w-4 h-4 mr-1" /> : <Lock className="w-4 h-4 mr-1" />}
+                {license.isLicensed ? <Plus className="w-4 h-4 mr-1.5" /> : <Lock className="w-4 h-4 mr-1.5" />}
                 {license.isLicensed ? "Add Team" : "Add 🔒"}
               </Button>
             </div>

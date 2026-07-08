@@ -1,65 +1,31 @@
 /**
- * Subscription Tier System
- * ========================
- * Defines what features each license key type unlocks.
+ * Subscription Tier System — APNA CRICKET
+ * =======================================
+ * Server-side source of truth for all tier features.
+ * Matches /api/license/verify route exactly.
  *
- * Feature Matrix:
- * ┌─────────────────────────┬─────────┬──────────────┬──────────┬───────────┐
- * │ Feature                 │ Trial   │ Match Basic  │ Match Full│ Pro/Elite │
- * │                         │ (1 day) │ (6h, 1 match)│ (24h)    │ (30/90d)  │
- * ├─────────────────────────┼─────────┼──────────────┼──────────┼───────────┤
- * │ Team Generation         │ ✅ FREE │ ✅ FREE      │ ✅ FREE  │ ✅ FREE   │
- * │ Single Team Transfer    │ 3/day   │ UNLIMITED    │ UNLIMITED│ UNLIMITED │
- * │ Bulk Add All Teams      │ ❌ NO   │ UP TO 11     │ UP TO 11 │ UP TO 40  │
- * │ Per-Team Replace Mode   │ ❌ NO   │ ❌ NO        │ ❌ NO    │ ✅ YES    │
- * │ Bulk Replace All Teams  │ ❌ NO   │ ❌ NO        │ ❌ NO    │ ✅ YES    │
- * │ Multi-Account           │ ❌ NO   │ SINGLE ONLY  │ SINGLE   │ ✅ YES    │
- * │ My11Circle Transfer     │ ❌ NO   │ ❌ NO        │ ✅ YES   │ ✅ YES    │
- * │ Dream11 Transfer        │ ✅ YES  │ ✅ YES       │ ✅ YES   │ ✅ YES    │
- * │ Elite AI (25 checks)    │ ❌ NO   │ ❌ NO        │ ❌ NO    │ Elite only│
- * │ Rank 1-40 Teams         │ ❌ NO   │ ❌ NO        │ ❌ NO    │ Elite only│
- * │ Contest Join            │ ❌ NO   │ ✅ YES       │ ✅ YES   │ ✅ YES    │
- * │ Referral Program        │ ✅ YES  │ ✅ YES       │ ✅ YES   │ ✅ YES    │
- * └─────────────────────────┴─────────┴──────────────┴──────────┴───────────┘
- *
- * Tier hierarchy:
- *   trial       —最基本的 (1 day, limited)
- *   match_basic — 1 match access (6h, single match)
- *   match_full  — 24 hour full access
- *   weekly      — 7 days (same as Pro)
- *   monthly     — Pro tier (30 days)
- *   elite       — Elite tier (90 days, full access + Elite AI)
- *   lifetime    — Elite tier (forever, full access + Elite AI)
+ * ⚠️ Frontend checks are for UI only. All real enforcement is server-side.
  */
 
 import type { KeyType } from "./admin-store";
 
-export type Tier = "trial" | "match_basic" | "match_full" | "weekly" | "monthly" | "elite" | "lifetime";
+export type Tier = KeyType;
 
 export interface TierFeatures {
   // Team Generation
   teamGeneration: boolean;
-  teamGenerationLimit: number; // max teams per generation
+  teamGenerationLimit: number;
 
   // Transfer
-  singleTransferPerDay: number; // 0 = blocked, -1 = unlimited
-  bulkAddLimit: number; // 0 = blocked, 11 = up to 11, 40 = up to 40
-  perTeamReplaceMode: boolean;
-  bulkReplaceAll: boolean;
-
-  // Multi-Account
-  multiAccount: boolean; // Dream11 + My11Circle simultaneously
-
-  // Platform Access
-  dream11Transfer: boolean;
-  my11CircleTransfer: boolean;
-
-  // Elite AI
-  eliteAI: boolean;
-  rank1to40Teams: boolean;
-
-  // Contest
+  dream11Transfer: "locked" | "3/day" | "unlimited";
+  my11CircleTransfer: "locked" | "enabled" | "unlimited";
   contestJoin: boolean;
+  multiPlatform: boolean;
+
+  // Premium Features
+  expertTeams: boolean;
+  primeTeams: boolean;
+  eliteAI: boolean;
 
   // Referral
   referralProgram: boolean;
@@ -72,165 +38,85 @@ export interface TierFeatures {
   tierDuration: string;
 }
 
-/**
- * Get features for a given tier.
- */
 export function getTierFeatures(tier: Tier | string | null | undefined): TierFeatures {
   const t = (tier || "trial") as Tier;
 
   switch (t) {
     case "trial":
       return {
-        teamGeneration: true,
-        teamGenerationLimit: 10,
-        singleTransferPerDay: 3,
-        bulkAddLimit: 0,
-        perTeamReplaceMode: false,
-        bulkReplaceAll: false,
-        multiAccount: false,
-        dream11Transfer: true,
-        my11CircleTransfer: false,
-        eliteAI: false,
-        rank1to40Teams: false,
-        contestJoin: false,
+        teamGeneration: true, teamGenerationLimit: 10,
+        dream11Transfer: "3/day", my11CircleTransfer: "locked",
+        contestJoin: false, multiPlatform: false,
+        expertTeams: false, primeTeams: false, eliteAI: false,
         referralProgram: true,
-        tierName: "Trial",
-        tierColor: "from-emerald-500 to-green-600",
-        tierEmoji: "🆓",
-        tierPrice: "FREE",
-        tierDuration: "1 Day",
+        tierName: "Trial", tierColor: "from-emerald-500 to-green-600",
+        tierEmoji: "🆓", tierPrice: "FREE", tierDuration: "Unlimited",
       };
 
     case "match_basic":
       return {
-        teamGeneration: true,
-        teamGenerationLimit: 20,
-        singleTransferPerDay: -1, // unlimited
-        bulkAddLimit: 11,
-        perTeamReplaceMode: false,
-        bulkReplaceAll: false,
-        multiAccount: false,
-        dream11Transfer: true,
-        my11CircleTransfer: false,
-        eliteAI: false,
-        rank1to40Teams: false,
-        contestJoin: true,
+        teamGeneration: true, teamGenerationLimit: 20,
+        dream11Transfer: "unlimited", my11CircleTransfer: "locked",
+        contestJoin: true, multiPlatform: false,
+        expertTeams: false, primeTeams: false, eliteAI: false,
         referralProgram: true,
-        tierName: "1 Match",
-        tierColor: "from-amber-500 to-orange-600",
-        tierEmoji: "🏏",
-        tierPrice: "₹49",
-        tierDuration: "6 Hours",
+        tierName: "1 Match", tierColor: "from-amber-500 to-orange-600",
+        tierEmoji: "🎟", tierPrice: "₹49", tierDuration: "1 Match",
       };
 
     case "match_full":
       return {
-        teamGeneration: true,
-        teamGenerationLimit: 40,
-        singleTransferPerDay: -1,
-        bulkAddLimit: 11,
-        perTeamReplaceMode: false,
-        bulkReplaceAll: false,
-        multiAccount: false,
-        dream11Transfer: true,
-        my11CircleTransfer: true,
-        eliteAI: false,
-        rank1to40Teams: false,
-        contestJoin: true,
+        teamGeneration: true, teamGenerationLimit: 40,
+        dream11Transfer: "unlimited", my11CircleTransfer: "enabled",
+        contestJoin: true, multiPlatform: false,
+        expertTeams: false, primeTeams: false, eliteAI: false,
         referralProgram: true,
-        tierName: "24 Hour",
-        tierColor: "from-rose-500 to-pink-600",
-        tierEmoji: "⏰",
-        tierPrice: "₹99",
-        tierDuration: "24 Hours",
+        tierName: "24 Hours", tierColor: "from-rose-500 to-pink-600",
+        tierEmoji: "⏰", tierPrice: "₹99", tierDuration: "24 Hours",
       };
 
     case "weekly":
       return {
-        teamGeneration: true,
-        teamGenerationLimit: 40,
-        singleTransferPerDay: -1,
-        bulkAddLimit: 40,
-        perTeamReplaceMode: true,
-        bulkReplaceAll: true,
-        multiAccount: true,
-        dream11Transfer: true,
-        my11CircleTransfer: true,
-        eliteAI: false,
-        rank1to40Teams: false,
-        contestJoin: true,
+        teamGeneration: true, teamGenerationLimit: 40,
+        dream11Transfer: "unlimited", my11CircleTransfer: "enabled",
+        contestJoin: true, multiPlatform: false,
+        expertTeams: false, primeTeams: false, eliteAI: false,
         referralProgram: true,
-        tierName: "Weekly",
-        tierColor: "from-sky-500 to-blue-600",
-        tierEmoji: "📅",
-        tierPrice: "₹149",
-        tierDuration: "7 Days",
+        tierName: "Weekly", tierColor: "from-sky-500 to-blue-600",
+        tierEmoji: "📅", tierPrice: "₹149", tierDuration: "7 Days",
       };
 
     case "monthly":
       return {
-        teamGeneration: true,
-        teamGenerationLimit: 40,
-        singleTransferPerDay: -1,
-        bulkAddLimit: 40,
-        perTeamReplaceMode: true,
-        bulkReplaceAll: true,
-        multiAccount: true,
-        dream11Transfer: true,
-        my11CircleTransfer: true,
-        eliteAI: false,
-        rank1to40Teams: false,
-        contestJoin: true,
+        teamGeneration: true, teamGenerationLimit: 40,
+        dream11Transfer: "unlimited", my11CircleTransfer: "enabled",
+        contestJoin: true, multiPlatform: false,
+        expertTeams: true, primeTeams: false, eliteAI: false,
         referralProgram: true,
-        tierName: "Pro",
-        tierColor: "from-sky-500 to-blue-600",
-        tierEmoji: "💎",
-        tierPrice: "₹299",
-        tierDuration: "30 Days",
+        tierName: "Pro", tierColor: "from-sky-500 to-blue-600",
+        tierEmoji: "⭐", tierPrice: "₹299", tierDuration: "30 Days",
       };
 
     case "elite":
       return {
-        teamGeneration: true,
-        teamGenerationLimit: 500,
-        singleTransferPerDay: -1,
-        bulkAddLimit: 40,
-        perTeamReplaceMode: true,
-        bulkReplaceAll: true,
-        multiAccount: true,
-        dream11Transfer: true,
-        my11CircleTransfer: true,
-        eliteAI: true,
-        rank1to40Teams: true,
-        contestJoin: true,
+        teamGeneration: true, teamGenerationLimit: 500,
+        dream11Transfer: "unlimited", my11CircleTransfer: "unlimited",
+        contestJoin: true, multiPlatform: true,
+        expertTeams: true, primeTeams: true, eliteAI: true,
         referralProgram: true,
-        tierName: "Elite",
-        tierColor: "from-violet-500 to-purple-600",
-        tierEmoji: "👑",
-        tierPrice: "₹999",
-        tierDuration: "90 Days",
+        tierName: "Elite", tierColor: "from-violet-500 to-purple-600",
+        tierEmoji: "👑", tierPrice: "₹999", tierDuration: "90 Days",
       };
 
     case "lifetime":
       return {
-        teamGeneration: true,
-        teamGenerationLimit: 500,
-        singleTransferPerDay: -1,
-        bulkAddLimit: 40,
-        perTeamReplaceMode: true,
-        bulkReplaceAll: true,
-        multiAccount: true,
-        dream11Transfer: true,
-        my11CircleTransfer: true,
-        eliteAI: true,
-        rank1to40Teams: true,
-        contestJoin: true,
+        teamGeneration: true, teamGenerationLimit: 500,
+        dream11Transfer: "unlimited", my11CircleTransfer: "unlimited",
+        contestJoin: true, multiPlatform: true,
+        expertTeams: true, primeTeams: true, eliteAI: true,
         referralProgram: true,
-        tierName: "Lifetime",
-        tierColor: "from-amber-500 to-yellow-600",
-        tierEmoji: "♾️",
-        tierPrice: "₹4999",
-        tierDuration: "Forever",
+        tierName: "Lifetime", tierColor: "from-amber-500 to-yellow-600",
+        tierEmoji: "💎", tierPrice: "—", tierDuration: "Forever",
       };
 
     default:
@@ -238,60 +124,76 @@ export function getTierFeatures(tier: Tier | string | null | undefined): TierFea
   }
 }
 
-/**
- * Check if a feature is accessible for the given tier.
- */
-export function hasFeature(tier: Tier | string | null | undefined, feature: keyof TierFeatures): boolean {
-  const features = getTierFeatures(tier);
-  return Boolean(features[feature]);
+// Helper functions for frontend UI checks (NOT for security — server verifies)
+export function hasFeature(tier: string | null, feature: keyof TierFeatures): boolean {
+  return Boolean(getTierFeatures(tier)[feature]);
 }
 
-/**
- * Get team generation limit for tier.
- */
-export function getTeamGenerationLimit(tier: Tier | string | null | undefined): number {
+export function getTeamGenerationLimit(tier: string | null): number {
   return getTierFeatures(tier).teamGenerationLimit;
 }
 
-/**
- * Get bulk add limit for tier.
- */
-export function getBulkAddLimit(tier: Tier | string | null | undefined): number {
-  return getTierFeatures(tier).bulkAddLimit;
+export function canDream11Transfer(tier: string | null): boolean {
+  return getTierFeatures(tier).dream11Transfer !== "locked";
 }
 
-/**
- * Get single transfer limit per day for tier.
- * Returns -1 for unlimited.
- */
-export function getSingleTransferLimit(tier: Tier | string | null | undefined): number {
-  return getTierFeatures(tier).singleTransferPerDay;
+export function canMy11CircleTransfer(tier: string | null): boolean {
+  return getTierFeatures(tier).my11CircleTransfer !== "locked";
 }
 
-/**
- * Check if Elite AI is accessible.
- */
-export function hasEliteAI(tier: Tier | string | null | undefined): boolean {
+export function canJoinContest(tier: string | null): boolean {
+  return getTierFeatures(tier).contestJoin;
+}
+
+export function canAccessExpertTeams(tier: string | null): boolean {
+  return getTierFeatures(tier).expertTeams;
+}
+
+export function canAccessPrimeTeams(tier: string | null): boolean {
+  return getTierFeatures(tier).primeTeams;
+}
+
+export function canAccessEliteAI(tier: string | null): boolean {
   return getTierFeatures(tier).eliteAI;
 }
 
-/**
- * Check if My11Circle transfer is accessible.
- */
-export function hasMy11Circle(tier: Tier | string | null | undefined): boolean {
-  return getTierFeatures(tier).my11CircleTransfer;
+export function canMultiPlatform(tier: string | null): boolean {
+  return getTierFeatures(tier).multiPlatform;
 }
 
 /**
- * Check if multi-account is accessible.
+ * Check a feature via SERVER-SIDE API.
+ * This is the REAL check — frontend checks are only for UI.
+ *
+ * Usage:
+ *   const result = await checkFeatureServerSide(licenseKey, deviceId, "my11circle_transfer");
+ *   if (!result.valid) { // blocked }
  */
-export function hasMultiAccount(tier: Tier | string | null | undefined): boolean {
-  return getTierFeatures(tier).multiAccount;
-}
-
-/**
- * Check if contest join is accessible.
- */
-export function hasContestJoin(tier: Tier | string | null | undefined): boolean {
-  return getTierFeatures(tier).contestJoin;
+export async function checkFeatureServerSide(
+  licenseKey: string,
+  deviceId: string,
+  feature: string,
+  action?: "check" | "increment_transfer" | "increment_team_gen"
+): Promise<{
+  valid: boolean;
+  message?: string;
+  code?: string;
+  tier?: string;
+  features?: TierFeatures;
+  remaining?: {
+    dream11Transfers: number;  // -1 = unlimited, 0 = locked/used
+    teamGeneration: number;
+  };
+}> {
+  try {
+    const res = await fetch("/api/license/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ licenseKey, deviceId, feature, action }),
+    });
+    const data = await res.json();
+    return data;
+  } catch {
+    return { valid: false, message: "Server error", code: "NETWORK_ERROR" };
+  }
 }
