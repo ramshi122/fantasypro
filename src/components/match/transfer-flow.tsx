@@ -756,6 +756,8 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                   setShowBulkTransfer(true);
                 }, 200);
               }}
+              licenseTier={license.licenseKeyType}
+              isLicensed={license.isLicensed}
             />
           </ErrorBoundary>
         )}

@@ -39,6 +39,8 @@ interface EliteAIGeneratorProps {
   onClose: () => void;
   onGenerated: (teams: TeamRow[]) => void;
   onTransfer?: (teams: TeamRow[], app: "dream11" | "my11circle") => void;
+  licenseTier?: string | null;
+  isLicensed?: boolean;
 }
 
 export function EliteAIGenerator({
@@ -50,6 +52,8 @@ export function EliteAIGenerator({
   onClose,
   onGenerated,
   onTransfer,
+  licenseTier,
+  isLicensed,
 }: EliteAIGeneratorProps) {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ check: 0, total: 25, message: "" });
@@ -319,6 +323,8 @@ export function EliteAIGenerator({
               onRerun={handleRun}
               onTransferAll={onTransfer ? handleTransferAll : undefined}
               onTransferOne={onTransfer ? handleTransferOne : undefined}
+              licenseTier={licenseTier}
+              isLicensed={isLicensed}
             />
           )}
         </div>
@@ -336,6 +342,8 @@ function EliteAIResult({
   onRerun,
   onTransferAll,
   onTransferOne,
+  licenseTier,
+  isLicensed,
 }: {
   result: EliteGenerateResult;
   onSaveAll: () => void;
@@ -343,9 +351,16 @@ function EliteAIResult({
   onRerun: () => void;
   onTransferAll?: (app: "dream11" | "my11circle") => void;
   onTransferOne?: (rank: number, app: "dream11" | "my11circle") => void;
+  licenseTier?: string | null;
+  isLicensed?: boolean;
 }) {
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [selectedRank, setSelectedRank] = useState<number | null>(null);
+
+  // Tier checks for transfer buttons
+  const my11Tiers = ["match_full", "weekly", "monthly", "elite", "lifetime"];
+  const canDream11 = isLicensed !== false;
+  const canMy11 = isLicensed && licenseTier && my11Tiers.includes(licenseTier);
 
   const { analysis, rankedTeams, durationMs } = result;
 
@@ -463,6 +478,8 @@ function EliteAIResult({
               onToggle={() => setSelectedRank(selectedRank === rt.rank ? null : rt.rank)}
               onSave={() => onSaveOne(rt.rank)}
               onTransferOne={onTransferOne}
+              canDream11={canDream11}
+              canMy11={canMy11}
             />
           ))}
         </div>
@@ -474,18 +491,22 @@ function EliteAIResult({
         {onTransferAll && (
           <div className="grid grid-cols-2 gap-2">
             <Button
-              className="bg-red-600 hover:bg-red-700 text-white font-bold h-11"
-              onClick={() => onTransferAll("dream11")}
+              className={cn(
+                canDream11 ? "bg-red-600 hover:bg-red-700 text-white font-bold h-11" : "bg-slate-300 text-slate-500 dark:bg-slate-700 h-11"
+              )}
+              onClick={() => canDream11 ? onTransferAll("dream11") : toast.error("Activate license to transfer")}
             >
               <Send className="w-4 h-4 mr-1.5" />
-              Transfer All → Dream11
+              {canDream11 ? "Transfer All → Dream11" : "🔒 Dream11"}
             </Button>
             <Button
-              className="bg-sky-600 hover:bg-sky-700 text-white font-bold h-11"
-              onClick={() => onTransferAll("my11circle")}
+              className={cn(
+                canMy11 ? "bg-sky-600 hover:bg-sky-700 text-white font-bold h-11" : "bg-slate-300 text-slate-500 dark:bg-slate-700 h-11"
+              )}
+              onClick={() => canMy11 ? onTransferAll("my11circle") : toast.error("My11Circle requires 24h pass (₹99) or higher")}
             >
               <Send className="w-4 h-4 mr-1.5" />
-              Transfer All → My11Circle
+              {canMy11 ? "Transfer All → My11Circle" : "🔒 My11Circle"}
             </Button>
           </div>
         )}
@@ -521,12 +542,16 @@ function RankedTeamCard({
   onToggle,
   onSave,
   onTransferOne,
+  canDream11,
+  canMy11,
 }: {
   rankedTeam: EliteRankedTeam;
   expanded: boolean;
   onToggle: () => void;
   onSave: () => void;
   onTransferOne?: (rank: number, app: "dream11" | "my11circle") => void;
+  canDream11?: boolean;
+  canMy11?: boolean;
 }) {
   const { rank, team, efv, aiScore, riskLevel, strategy, reasoning, captainReason, vcReason } = rankedTeam;
 
@@ -634,24 +659,30 @@ function RankedTeamCard({
               <CheckCircle2 className="w-3 h-3 mr-1" />
               Save Rank {rank} Team
             </Button>
-            {/* Single team transfer buttons */}
+            {/* Single team transfer buttons — locked per tier */}
             {onTransferOne && (
               <div className="grid grid-cols-2 gap-1.5">
                 <Button
                   size="sm"
-                  className="h-8 bg-red-600 hover:bg-red-700 text-white text-[10px]"
-                  onClick={() => onTransferOne(rank, "dream11")}
+                  className={cn(
+                    "h-8 text-[10px]",
+                    canDream11 ? "bg-red-600 hover:bg-red-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
+                  )}
+                  onClick={() => canDream11 ? onTransferOne(rank, "dream11") : toast.error("Activate license to transfer")}
                 >
                   <Send className="w-3 h-3 mr-1" />
-                  → Dream11
+                  {canDream11 ? "→ Dream11" : "🔒 Dream11"}
                 </Button>
                 <Button
                   size="sm"
-                  className="h-8 bg-sky-600 hover:bg-sky-700 text-white text-[10px]"
-                  onClick={() => onTransferOne(rank, "my11circle")}
+                  className={cn(
+                    "h-8 text-[10px]",
+                    canMy11 ? "bg-sky-600 hover:bg-sky-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
+                  )}
+                  onClick={() => canMy11 ? onTransferOne(rank, "my11circle") : toast.error("My11Circle requires 24h pass or higher")}
                 >
                   <Send className="w-3 h-3 mr-1" />
-                  → My11Circle
+                  {canMy11 ? "→ My11Circle" : "🔒 My11Circle"}
                 </Button>
               </div>
             )}
