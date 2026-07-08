@@ -1769,12 +1769,12 @@ function MatchesTab() {
           return;
         }
         const adminMatches: AdminMatch[] = rawMatches.map((m: any) => ({
-          matchId: String(m.matchId ?? m.id ?? ""),
-          title: m.title || m.series || `${m.team1?.shortName || "T1"} vs ${m.team2?.shortName || "T2"}`,
-          team1: typeof m.team1 === "string" ? m.team1 : (m.team1?.shortName || m.team1?.name || "T1"),
-          team2: typeof m.team2 === "string" ? m.team2 : (m.team2?.shortName || m.team2?.name || "T2"),
-          startTime: m.start_time ? (m.start_time < 1e12 ? m.start_time * 1000 : m.start_time) : 0,
-          inDb: Boolean(m.in_db || m.inDb || false),
+          matchId: String(m.id ?? m._id ?? m.matchId ?? ""),
+          title: m.series_name || m.title || `${m.left_team_name || "T1"} vs ${m.right_team_name || "T2"}`,
+          team1: m.left_team_name || (typeof m.team1 === "string" ? m.team1 : (m.team1?.shortName || "T1")),
+          team2: m.right_team_name || (typeof m.team2 === "string" ? m.team2 : (m.team2?.shortName || "T2")),
+          startTime: m.match_time ? new Date(m.match_time).getTime() : (m.start_time ? (m.start_time < 1e12 ? m.start_time * 1000 : m.start_time) : 0),
+          inDb: Boolean(m.in_db || m.inDb || m.direct_teams > 0 || false),
           supports: m.fantasy_list || [],
         }));
         setMatches(adminMatches);
