@@ -887,33 +887,11 @@ function SettingsTab() {
         </Button>
       </div>
 
-      {/* API URL — hidden from UI, hardcoded internally */}
+      {/* API URL — hidden from UI (like original teamgeneration.in) */}
       <input type="hidden" value={apiUrl} readOnly />
 
-      {/* Firebase */}
-      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="text-xs font-bold text-white">Firebase Config (Firestore)</p>
-          <span className={cn(
-            "text-[9px] px-2 py-0.5 rounded-full font-bold",
-            firebase.trim()
-              ? "bg-emerald-900/50 text-emerald-400 border border-emerald-700"
-              : "bg-slate-700 text-slate-400"
-          )}>
-            {firebase.trim() ? "✓ CONFIGURED" : "⚠ NOT SET"}
-          </span>
-        </div>
-        <textarea
-          value={firebase}
-          onChange={(e) => setFirebase(e.target.value)}
-          placeholder={'{\n  "apiKey": "AIza...",\n  "authDomain": "xxx.firebaseapp.com",\n  "projectId": "xxx",\n  "storageBucket": "xxx.appspot.com",\n  "messagingSenderId": "123",\n  "appId": "1:123:web:abc"\n}'}
-          className="w-full min-h-[100px] bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-xs font-mono resize-none focus:outline-none"
-        />
-        <p className="text-[10px] text-slate-400">
-          Paste your Firebase web config JSON. License keys will sync to Firestore collection <span className="font-mono text-violet-300">license_keys</span>.
-          Get this from Firebase Console → Project Settings → General → Web apps.
-        </p>
-      </div>
+      {/* Firebase Config — hidden from UI, hardcoded internally */}
+      <input type="hidden" value={firebase} readOnly />
 
       {/* License prefix */}
       <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-2">
