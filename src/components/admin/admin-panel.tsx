@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Copy,
   CreditCard,
+  Crown,
   Delete,
   Download,
   Eye,
