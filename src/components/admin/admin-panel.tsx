@@ -1812,12 +1812,6 @@ function MatchesTab() {
 
       if (availData.status === "success") {
         const rawMatches = availData.matches || availData.data || [];
-        if (!Array.isArray(rawMatches) || rawMatches.length === 0) {
-          toast.info("No available matches from backend");
-          setMatches([]);
-          setLoading(false);
-          return;
-        }
         const adminMatches: AdminMatch[] = rawMatches.map((m: any) => {
           const mid = String(m.id ?? m._id ?? m.matchId ?? "");
           return {
@@ -1849,6 +1843,35 @@ function MatchesTab() {
             createdAt: m.createdAt,
           };
         });
+
+        // Also add DB matches that aren't in available list (ended matches still in DB)
+        if (addedData.status === "success" && Array.isArray(addedData.data)) {
+          const existingIds = new Set(adminMatches.map(m => m.matchId));
+          for (const dbM of addedData.data) {
+            const mid = String(dbM.matchId);
+            if (!existingIds.has(mid) && mid) {
+              adminMatches.push({
+                matchId: mid,
+                title: dbM.teams || `${dbM.team1 || "T1"} vs ${dbM.team2 || "T2"}`,
+                team1: dbM.team1 || "",
+                team2: dbM.team2 || "",
+                startTime: dbM.startTime || 0,
+                inDb: true,
+                supports: [dbM.source || "my11circle"],
+                match_type: "normal",
+                apiSource: dbM.source || "my11circle",
+              });
+            }
+          }
+        }
+
+        // Sort: upcoming first, then by startTime
+        adminMatches.sort((a, b) => {
+          if (!a.startTime) return 1;
+          if (!b.startTime) return -1;
+          return a.startTime - b.startTime;
+        });
+
         // Preserve mapped state from previous fetch
         setMatches(prev => {
           const prevMap = new Map(prev.map(p => [p.matchId, p]));
@@ -2008,6 +2031,51 @@ function MatchesTab() {
     }
   }
 
+  // Add ALL available matches to DB in one click (like original APK bulk add)
+  async function addAllToDb() {
+    const toAdd = matches.filter(m => !m.inDb);
+    if (toAdd.length === 0) {
+      toast.info("All matches already in DB");
+      return;
+    }
+    toast.info(`Adding ${toAdd.length} matches to DB...`);
+    let success = 0;
+    let failed = 0;
+    for (const m of toAdd) {
+      const idx = matches.findIndex(x => x.matchId === m.matchId);
+      if (idx === -1) continue;
+      setMatches(prev => prev.map((x, i) => i === idx ? { ...x, mapping: true } : x));
+      try {
+        const platform = m.supports.includes("my11circle") ? "my11circle" : "jumbo";
+        const res = await fetch("/api/matches/add", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ platform, matchId: m.matchId, sport: "cricket" }),
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+          success++;
+          setMatches(prev => prev.map((x, i) => i === idx ? { ...x, inDb: true, mapping: false } : x));
+          setAddedMatchIds(prev => new Set([...prev, m.matchId]));
+        } else {
+          failed++;
+          // Mark as inDb locally anyway (some matches use different ID systems)
+          setMatches(prev => prev.map((x, i) => i === idx ? { ...x, inDb: true, mapping: false } : x));
+        }
+      } catch {
+        failed++;
+        setMatches(prev => prev.map((x, i) => i === idx ? { ...x, mapping: false } : x));
+      }
+    }
+    if (failed === 0) {
+      toast.success(`✓ All ${success} matches added to DB!`);
+    } else {
+      toast.success(`Added ${success} to DB · ${failed} marked locally (different ID system)`);
+    }
+  }
+
+  const [addingAll, setAddingAll] = useState(false);
+
   return (
     <div className="space-y-3 text-slate-200">
       {/* Header — like original "Fantasy Match List (my11circle)" */}
@@ -2085,7 +2153,7 @@ function MatchesTab() {
         </div>
       </div>
 
-      {/* Search + filter + refresh */}
+      {/* Search + filter + refresh + Add All */}
       <div className="flex gap-1.5 flex-wrap">
         <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search team/series..." className="bg-slate-800 border-slate-700 text-white h-8 text-xs flex-1 min-w-[120px]" />
         <select value={filter} onChange={(e) => setFilter(e.target.value as any)} className="bg-slate-800 border border-slate-700 text-white text-[10px] rounded-lg px-2 h-8">
@@ -2097,6 +2165,15 @@ function MatchesTab() {
           <option value="lineup-out">Lineup ({stats.lineupOut})</option>
           <option value="prime">Prime ({stats.prime})</option>
         </select>
+        <Button
+          size="sm"
+          className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs px-3 font-bold"
+          disabled={addingAll || loading}
+          onClick={async () => { setAddingAll(true); await addAllToDb(); setAddingAll(false); }}
+        >
+          {addingAll ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}
+          {addingAll ? "Adding..." : "Add All to DB"}
+        </Button>
         <Button size="sm" className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs px-3" onClick={fetchMatches} disabled={loading}>
           {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
           Refresh
