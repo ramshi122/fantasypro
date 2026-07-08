@@ -119,7 +119,7 @@ interface AdminState {
   deleteKey: (key: string) => void;
   extendExpiry: (key: string, days: number) => void;
   resetDevice: (key: string) => void;
-  verifyLicense: (key: string, deviceId: string) => { valid: boolean; message: string; keyType?: KeyType };
+  verifyLicense: (key: string, deviceId: string) => Promise<{ valid: boolean; message: string; keyType?: KeyType }>;
   /** Re-activate ALL keys — fixes any expired/suspended key by extending expiry
    *  and setting status to "active". Returns count of fixed keys. */
   validateAllKeys: () => number;
@@ -451,7 +451,7 @@ export const useAdmin = create<AdminState>()(
         return fixedCount;
       },
 
-      verifyLicense: (key, deviceId) => {
+      verifyLicense: async (key, deviceId) => {
         // Step 1: Clean the key — trim spaces, convert to uppercase
         const cleanKey = key.trim().toUpperCase();
         console.log("[License Verify] Entered key:", cleanKey);
@@ -464,15 +464,32 @@ export const useAdmin = create<AdminState>()(
           return { valid: false, message: "Invalid key format. Expected format: CRICB-XXXX-XXXX-XXXX" };
         }
 
-        // Step 3: Look up key in database
+        // Step 3: Look up key in LOCAL database
         const allKeys = get().keys;
-        console.log("[License Verify] Total keys in database:", allKeys.length);
-        const k = allKeys.find((x) => x.key.toUpperCase() === cleanKey);
+        console.log("[License Verify] Total keys in local database:", allKeys.length);
+        let k = allKeys.find((x) => x.key.toUpperCase() === cleanKey);
+
+        // Step 3b: If not found locally, check FIREBASE (key may have been generated on another device)
+        if (!k) {
+          console.log("[License Verify] Key not found locally — checking Firebase...");
+          try {
+            // Dynamic import to avoid circular dependency
+            const { fetchKeyFromFirestore } = await import("./firebase-license");
+            const firebaseKey = await fetchKeyFromFirestore(cleanKey);
+            if (firebaseKey) {
+              console.log("[License Verify] ✅ Key found in Firebase:", firebaseKey.key, "| Type:", firebaseKey.type);
+              // Add to local store for future lookups
+              set((s) => ({ keys: [firebaseKey, ...s.keys] }));
+              k = firebaseKey;
+            }
+          } catch (err) {
+            console.log("[License Verify] Firebase lookup failed:", err);
+          }
+        }
 
         if (!k) {
-          console.log("[License Verify] FAIL: Key not found in database");
-          console.log("[License Verify] Available keys:", allKeys.map(x => x.key).slice(0, 10).join(", "), "...");
-          return { valid: false, message: "Key not found — this key does not exist in the database" };
+          console.log("[License Verify] FAIL: Key not found in local OR Firebase database");
+          return { valid: false, message: "Key not found — this key does not exist in the database. Make sure admin generated this key." };
         }
 
         console.log("[License Verify] Key found:", k.key, "| Status:", k.status, "| Type:", k.type);

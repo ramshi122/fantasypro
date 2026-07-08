@@ -83,24 +83,26 @@ export function useLicense() {
   // Auto-verify on mount + sync keyType + check expiry
   useEffect(() => {
     if (licenseState.verified && licenseState.key) {
-      const result = admin.verifyLicense(licenseState.key, licenseState.deviceId);
-      if (!result.valid) {
-        // Key no longer valid (expired, suspended, or deleted)
-        clearLicense();
-        setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
-        setIsExpired(true);
-        console.log("[useLicense] License auto-cleared — key invalid");
-      } else if (result.keyType && result.keyType !== licenseState.keyType) {
-        // Sync keyType
-        setLicenseVerified(licenseState.key, result.keyType);
-        setLicenseState({
-          verified: true,
-          key: licenseState.key,
-          deviceId: licenseState.deviceId,
-          keyType: result.keyType,
-        });
-        console.log("[useLicense] Synced keyType from backend:", result.keyType);
-      }
+      // verifyLicense is now async (checks Firebase if not found locally)
+      admin.verifyLicense(licenseState.key, licenseState.deviceId).then((result) => {
+        if (!result.valid) {
+          // Key no longer valid (expired, suspended, or deleted)
+          clearLicense();
+          setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
+          setIsExpired(true);
+          console.log("[useLicense] License auto-cleared — key invalid");
+        } else if (result.keyType && result.keyType !== licenseState.keyType) {
+          // Sync keyType
+          setLicenseVerified(licenseState.key, result.keyType);
+          setLicenseState({
+            verified: true,
+            key: licenseState.key,
+            deviceId: licenseState.deviceId,
+            keyType: result.keyType,
+          });
+          console.log("[useLicense] Synced keyType from backend:", result.keyType);
+        }
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -126,9 +128,9 @@ export function useLicense() {
     console.log("[useLicense] Activating key:", cleanKey);
 
     return new Promise((resolve) => {
-      setTimeout(() => {
+      setTimeout(async () => {
         const deviceId = getDeviceId();
-        const result = admin.verifyLicense(cleanKey, deviceId);
+        const result = await admin.verifyLicense(cleanKey, deviceId);
         setVerifying(false);
         if (result.valid) {
           setLicenseVerified(cleanKey, result.keyType);
