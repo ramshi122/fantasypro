@@ -21,6 +21,7 @@ import {
   Lock,
   LogOut,
   Power,
+  Plus,
   RefreshCw,
   Send,
   Settings,
