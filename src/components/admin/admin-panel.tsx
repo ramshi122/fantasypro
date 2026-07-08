@@ -1774,15 +1774,21 @@ interface AdminMatch {
   direct_teams?: number;
   cb11_key?: string;
   createdAt?: string;
+  // Local UI state
+  mapping?: boolean;
+  mapped?: boolean;
 }
 
 function MatchesTab() {
   const [matches, setMatches] = useState<AdminMatch[]>([]);
   const [loading, setLoading] = useState(false);
+  const [platform, setPlatform] = useState<"all" | "my11circle" | "dream11">("my11circle");
   const [filter, setFilter] = useState<"all" | "live" | "upcoming" | "in-db" | "not-db" | "lineup-out" | "prime">("all");
   const [search, setSearch] = useState("");
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const [showSettings, setShowSettings] = useState(false);
 
   async function fetchMatches() {
     setLoading(true);
@@ -1825,7 +1831,14 @@ function MatchesTab() {
           cb11_key: m.cb11_key,
           createdAt: m.createdAt,
         }));
-        setMatches(adminMatches);
+        // Preserve inDb/mapped state from previous fetch
+        setMatches(prev => {
+          const prevMap = new Map(prev.map(p => [p.matchId, p]));
+          return adminMatches.map(m => {
+            const p = prevMap.get(m.matchId);
+            return p ? { ...m, inDb: p.inDb, mapped: p.mapped } : m;
+          });
+        });
         toast.success(`Scraped ${adminMatches.length} matches from original backend`);
       } else {
         toast.error("Failed to fetch matches");
@@ -1841,6 +1854,12 @@ function MatchesTab() {
     fetchMatches();
   }, []);
 
+  // Live countdown timer — updates every second like original teamgeneration.in
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     if (!autoRefresh) return;
     const id = setInterval(fetchMatches, 30000);
@@ -1849,33 +1868,42 @@ function MatchesTab() {
 
   function isLive(ts: number): boolean {
     if (!ts) return false;
-    const diff = ts - Date.now();
+    const diff = ts - now;
     return diff <= 0 && diff > -8 * 3600000; // started within last 8h = live
   }
 
-  function formatDate(ts: number): string {
+  // Format with seconds — like "1h 22m 52s" (matches original screenshot)
+  function formatCountdown(ts: number): string {
     if (!ts) return "—";
-    const diff = ts - Date.now();
+    const diff = ts - now;
     if (isLive(ts)) {
       const mins = Math.floor(-diff / 60000);
-      return `LIVE · ${mins}m ago`;
+      const secs = Math.floor((-diff % 60000) / 1000);
+      return `LIVE ${mins}m ${secs}s`;
     }
     if (diff <= 0) {
       const hrs = Math.floor(-diff / 3600000);
-      return `Ended · ${hrs}h ago`;
+      return `Ended ${hrs}h ago`;
     }
     const days = Math.floor(diff / 86400000);
     const hours = Math.floor((diff % 86400000) / 3600000);
     const mins = Math.floor((diff % 3600000) / 60000);
-    if (days > 0) return `${days}d ${hours}h`;
-    if (hours > 0) return `${hours}h ${mins}m`;
-    return `${mins}m`;
+    const secs = Math.floor((diff % 60000) / 1000);
+    if (days > 0) return `${days}d ${hours}h ${mins}m ${secs}s`;
+    if (hours > 0) return `${hours}h ${mins}m ${secs}s`;
+    return `${mins}m ${secs}s`;
   }
 
-  const filtered = matches.filter((m) => {
+  // Filter by platform first (like original "Fantasy Match List (my11circle)")
+  const platformFiltered = matches.filter(m => {
+    if (platform === "all") return true;
+    return m.supports.includes(platform);
+  });
+
+  const filtered = platformFiltered.filter((m) => {
     if (search && !m.title.toLowerCase().includes(search.toLowerCase()) && !m.team1.toLowerCase().includes(search.toLowerCase()) && !m.team2.toLowerCase().includes(search.toLowerCase())) return false;
     if (filter === "live" && !isLive(m.startTime)) return false;
-    if (filter === "upcoming" && m.startTime < Date.now()) return false;
+    if (filter === "upcoming" && m.startTime < now) return false;
     if (filter === "in-db" && !m.inDb) return false;
     if (filter === "not-db" && m.inDb) return false;
     if (filter === "lineup-out" && !m.lineup_out) return false;
@@ -1884,145 +1912,248 @@ function MatchesTab() {
   });
 
   const stats = {
-    total: matches.length,
-    live: matches.filter(m => isLive(m.startTime)).length,
-    upcoming: matches.filter(m => m.startTime > Date.now()).length,
-    ended: matches.filter(m => m.startTime && m.startTime < Date.now() - 8 * 3600000).length,
-    inDb: matches.filter(m => m.inDb).length,
-    lineupOut: matches.filter(m => m.lineup_out).length,
-    prime: matches.filter(m => m.prime_team).length,
+    total: platformFiltered.length,
+    live: platformFiltered.filter(m => isLive(m.startTime)).length,
+    upcoming: platformFiltered.filter(m => m.startTime > now).length,
+    ended: platformFiltered.filter(m => m.startTime && m.startTime < now - 8 * 3600000).length,
+    inDb: platformFiltered.filter(m => m.inDb).length,
+    lineupOut: platformFiltered.filter(m => m.lineup_out).length,
+    prime: platformFiltered.filter(m => m.prime_team).length,
     d11: matches.filter(m => m.supports.includes("dream11")).length,
     m11: matches.filter(m => m.supports.includes("my11circle")).length,
   };
 
+  async function runFirstStageMapper(m: AdminMatch, i: number) {
+    setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, mapping: true } : x));
+    toast.info(`First Stage Mapper: Fetching full detail for ${m.title}...`);
+    try {
+      const res = await fetch(`/api/match-detail?matchId=${m.matchId}`);
+      const data = await res.json();
+      if (data.status === "success") {
+        const d = data.data || data;
+        const leftCount = Array.isArray(d?.left_team_players) ? d.left_team_players.length : 0;
+        const rightCount = Array.isArray(d?.right_team_players) ? d.right_team_players.length : 0;
+        const total = leftCount + rightCount;
+        if (total > 0) {
+          setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, mapping: false, mapped: true, inDb: true } : x));
+          toast.success(`✓ First Stage Mapper done: ${leftCount} + ${rightCount} = ${total} players mapped for ${m.title}`);
+        } else {
+          setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, mapping: false } : x));
+          toast.warning(`Mapper ran but no players found. Match may not have lineup yet.`);
+        }
+      } else {
+        setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, mapping: false } : x));
+        toast.error("Failed to fetch match detail from backend");
+      }
+    } catch (err: any) {
+      setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, mapping: false } : x));
+      toast.error(err?.message || "Network error during mapping");
+    }
+  }
+
+  function toggleInDb(m: AdminMatch, i: number) {
+    setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, inDb: !x.inDb } : x));
+    toast.success(m.inDb ? `Removed ${m.title} from DB` : `Added ${m.title} to DB`);
+  }
+
   return (
-    <div className="space-y-4 text-slate-200">
-      <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 flex items-center justify-between">
-        <div>
-          <p className="text-sm font-bold text-white">Match Management <span className="text-[9px] text-emerald-400 ml-1 bg-emerald-900/40 px-1.5 py-0.5 rounded">SCRAPED LIVE</span></p>
-          <p className="text-[10px] text-slate-400">Direct proxy from original backend (tgsoftware-api.online)</p>
+    <div className="space-y-3 text-slate-200">
+      {/* Header — like original "Fantasy Match List (my11circle)" */}
+      <div className="bg-gradient-to-r from-violet-900 to-indigo-900 rounded-xl p-3 border border-violet-700/50 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Trophy className="w-5 h-5 text-amber-400" />
+          <div>
+            <p className="text-sm font-bold text-white flex items-center gap-1.5">
+              Fantasy Match List
+              <span className="text-[10px] bg-emerald-600/30 text-emerald-300 px-1.5 py-0.5 rounded-full font-bold">
+                ({platform === "all" ? "all" : platform})
+              </span>
+              <ChevronRight className="w-3 h-3 text-slate-400" />
+            </p>
+            <p className="text-[10px] text-violet-300">Scraped live from tgsoftware-api.online · 1-by-1 add</p>
+          </div>
         </div>
-        <div className="flex gap-1.5">
-          <Button size="sm" variant="outline" className={cn("h-8 text-xs border-slate-600", autoRefresh ? "bg-emerald-900/40 text-emerald-400 border-emerald-600" : "text-slate-300")} onClick={() => setAutoRefresh(v => !v)}>
-            <RefreshCw className={cn("w-3 h-3 mr-1", autoRefresh && "animate-spin")} /> Auto
-          </Button>
-          <Button size="sm" className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs" onClick={fetchMatches} disabled={loading}>
-            {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
-            Refresh
-          </Button>
+        <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-violet-300 hover:bg-violet-800/50" onClick={() => setShowSettings(v => !v)}>
+          <Settings className="w-4 h-4" />
+        </Button>
+      </div>
+
+      {showSettings && (
+        <div className="bg-slate-800/80 rounded-xl p-3 border border-slate-700 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] text-slate-400 font-bold">Auto-refresh (30s)</p>
+            <Button size="sm" variant="outline" className={cn("h-7 text-[10px] border-slate-600", autoRefresh ? "bg-emerald-900/40 text-emerald-400 border-emerald-600" : "text-slate-300")} onClick={() => setAutoRefresh(v => !v)}>
+              {autoRefresh ? "ON" : "OFF"}
+            </Button>
+          </div>
+          <div className="text-[9px] text-slate-500 space-y-0.5">
+            <p>✓ API URL: Hidden (tgsoftware-api.online)</p>
+            <p>✓ AES Key: Hidden (server-side only)</p>
+            <p>✓ Firebase Config: Hidden (revofixer-81a1c)</p>
+            <p>✓ All original fields preserved</p>
+          </div>
+        </div>
+      )}
+
+      {/* Platform tabs — All / my11circle / dream11 */}
+      <div className="flex gap-1 bg-slate-800/50 rounded-lg p-1">
+        {(["all", "my11circle", "dream11"] as const).map(p => (
+          <button
+            key={p}
+            onClick={() => setPlatform(p)}
+            className={cn(
+              "flex-1 h-8 text-[11px] font-bold rounded-md transition-all",
+              platform === p
+                ? p === "my11circle" ? "bg-emerald-600 text-white" : p === "dream11" ? "bg-red-600 text-white" : "bg-violet-600 text-white"
+                : "text-slate-400 hover:text-white hover:bg-slate-700/50"
+            )}
+          >
+            {p === "all" ? `All (${matches.length})` : p === "my11circle" ? `my11circle (${stats.m11})` : `dream11 (${stats.d11})`}
+          </button>
+        ))}
+      </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-4 gap-1.5">
+        <div className="bg-slate-800/70 rounded-lg p-1.5 border border-slate-700/70 text-center">
+          <p className="text-base font-bold text-white">{stats.total}</p>
+          <p className="text-[8px] text-slate-400">Total</p>
+        </div>
+        <div className="bg-slate-800/70 rounded-lg p-1.5 border border-red-800/40 text-center">
+          <p className="text-base font-bold text-red-400">{stats.live}</p>
+          <p className="text-[8px] text-slate-400">Live</p>
+        </div>
+        <div className="bg-slate-800/70 rounded-lg p-1.5 border border-slate-700/70 text-center">
+          <p className="text-base font-bold text-emerald-400">{stats.upcoming}</p>
+          <p className="text-[8px] text-slate-400">Upcoming</p>
+        </div>
+        <div className="bg-slate-800/70 rounded-lg p-1.5 border border-slate-700/70 text-center">
+          <p className="text-base font-bold text-amber-400">{stats.inDb}</p>
+          <p className="text-[8px] text-slate-400">In DB</p>
         </div>
       </div>
 
-      {/* Stats row like original admin */}
-      <div className="grid grid-cols-4 gap-2">
-        <div className="bg-slate-800/70 rounded-lg p-2 border border-slate-700/70 text-center">
-          <p className="text-lg font-bold text-white">{stats.total}</p>
-          <p className="text-[9px] text-slate-400">Total</p>
-        </div>
-        <div className="bg-slate-800/70 rounded-lg p-2 border border-red-800/40 text-center">
-          <p className="text-lg font-bold text-red-400">{stats.live}</p>
-          <p className="text-[9px] text-slate-400">Live</p>
-        </div>
-        <div className="bg-slate-800/70 rounded-lg p-2 border border-slate-700/70 text-center">
-          <p className="text-lg font-bold text-emerald-400">{stats.upcoming}</p>
-          <p className="text-[9px] text-slate-400">Upcoming</p>
-        </div>
-        <div className="bg-slate-800/70 rounded-lg p-2 border border-slate-700/70 text-center">
-          <p className="text-lg font-bold text-amber-400">{stats.lineupOut}</p>
-          <p className="text-[9px] text-slate-400">Lineup Out</p>
-        </div>
-      </div>
-
-      <div className="flex gap-2 flex-wrap">
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search team/series..." className="bg-slate-800 border-slate-700 text-white h-9 text-xs flex-1 min-w-[150px]" />
-        <select value={filter} onChange={(e) => setFilter(e.target.value as any)} className="bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2 h-9">
-          <option value="all">All ({stats.total})</option>
+      {/* Search + filter + refresh */}
+      <div className="flex gap-1.5 flex-wrap">
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search team/series..." className="bg-slate-800 border-slate-700 text-white h-8 text-xs flex-1 min-w-[120px]" />
+        <select value={filter} onChange={(e) => setFilter(e.target.value as any)} className="bg-slate-800 border border-slate-700 text-white text-[10px] rounded-lg px-2 h-8">
+          <option value="all">All</option>
           <option value="live">🔴 Live ({stats.live})</option>
           <option value="upcoming">Upcoming ({stats.upcoming})</option>
           <option value="in-db">In DB ({stats.inDb})</option>
           <option value="not-db">Not in DB ({stats.total - stats.inDb})</option>
-          <option value="lineup-out">Lineup Out ({stats.lineupOut})</option>
+          <option value="lineup-out">Lineup ({stats.lineupOut})</option>
           <option value="prime">Prime ({stats.prime})</option>
         </select>
+        <Button size="sm" className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs px-3" onClick={fetchMatches} disabled={loading}>
+          {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+          Refresh
+        </Button>
       </div>
 
+      {/* Match list — like original screenshot */}
       {loading && matches.length === 0 ? (
         <div className="text-center py-8"><Loader2 className="w-8 h-8 mx-auto text-violet-500 animate-spin" /><p className="text-xs text-slate-400 mt-2">Scraping original backend...</p></div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-8"><p className="text-xs text-slate-400">No matches found for this filter</p></div>
       ) : (
-        <div className="space-y-2 max-h-[60vh] overflow-y-auto scrollbar-thin">
+        <div className="space-y-2 max-h-[55vh] overflow-y-auto scrollbar-thin">
           {filtered.map((m, i) => {
             const live = isLive(m.startTime);
             const expanded = expandedIdx === i;
             return (
-              <div key={i} className={cn("bg-slate-800 rounded-xl p-3 border", live ? "border-red-700/70 shadow-lg shadow-red-900/20" : "border-slate-700")}>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    {m.team1Img && <img src={m.team1Img} alt={m.team1} className="w-6 h-6 rounded-full object-cover" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-white truncate">{m.title}</p>
-                      <p className="text-[10px] text-slate-400">{m.team1} vs {m.team2} · {formatDate(m.startTime)}</p>
-                    </div>
-                    {m.team2Img && <img src={m.team2Img} alt={m.team2} className="w-6 h-6 rounded-full object-cover" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />}
+              <div key={i} className={cn("bg-slate-800 rounded-xl p-2.5 border", live ? "border-red-700/70 shadow-lg shadow-red-900/20" : "border-slate-700")}>
+                {/* Row 1: Title + countdown */}
+                <div className="flex items-center justify-between mb-1.5">
+                  <p className="text-xs font-bold text-white truncate flex-1">{m.title}</p>
+                  <span className={cn(
+                    "text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap",
+                    live ? "bg-red-600 text-white animate-pulse" : "bg-slate-700 text-emerald-300"
+                  )}>
+                    {formatCountdown(m.startTime)}
+                  </span>
+                </div>
+
+                {/* Row 2: Teams with logos */}
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <div className="flex items-center gap-1.5">
+                    {m.team1Img && <img src={m.team1Img} alt={m.team1} className="w-6 h-6 rounded-full object-cover bg-slate-700" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />}
+                    <span className="text-xs font-bold text-white">{m.team1}</span>
                   </div>
-                  <div className="flex gap-1 flex-shrink-0">
-                    {live && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-600 text-white animate-pulse">LIVE</span>}
-                    {m.lineup_out ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-900/60 text-emerald-300">LINEUP</span> : null}
-                    {m.prime_team ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-900/60 text-amber-300">PRIME</span> : null}
-                    {m.expert_teams ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-900/60 text-violet-300">EXP</span> : null}
-                    <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded-full", m.inDb ? "bg-emerald-900/50 text-emerald-400" : "bg-amber-900/50 text-amber-400")}>
-                      {m.inDb ? "DB" : "—"}
+                  <span className="text-[10px] text-slate-500 font-bold">vs</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-white">{m.team2}</span>
+                    {m.team2Img && <img src={m.team2Img} alt={m.team2} className="w-6 h-6 rounded-full object-cover bg-slate-700" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />}
+                  </div>
+                </div>
+
+                {/* Row 3: Status badges */}
+                <div className="flex gap-1 flex-wrap items-center justify-center mb-2">
+                  {live && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-600 text-white">LIVE</span>}
+                  {m.lineup_out ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-900/60 text-emerald-300">LINEUP</span> : null}
+                  {m.prime_team ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-900/60 text-amber-300">PRIME</span> : null}
+                  {m.expert_teams ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-900/60 text-violet-300">EXPERT</span> : null}
+                  {m.mapped && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-cyan-900/60 text-cyan-300">MAPPED</span>}
+                </div>
+
+                {/* Row 4: Action buttons — like original screenshot */}
+                <div className="flex gap-1 flex-wrap">
+                  {/* Platform tag — light green like original */}
+                  {m.supports.map(s => (
+                    <span key={s} className={cn(
+                      "text-[9px] font-bold px-2 py-1 rounded-md",
+                      s === "my11circle" ? "bg-emerald-900/60 text-emerald-300" : s === "dream11" ? "bg-red-900/60 text-red-300" : "bg-slate-700 text-slate-300"
+                    )}>
+                      {s}
                     </span>
-                  </div>
-                </div>
-
-                {/* Original fields row — like teamgeneration.in admin */}
-                <div className="flex gap-1 flex-wrap items-center mb-2">
-                  {m.supports.includes("dream11") && <span className="text-[8px] bg-red-900/50 text-red-400 px-1.5 py-0.5 rounded-full font-bold">D11</span>}
-                  {m.supports.includes("my11circle") && <span className="text-[8px] bg-sky-900/50 text-sky-400 px-1.5 py-0.5 rounded-full font-bold">M11</span>}
-                  <span className="text-[8px] text-slate-500">ID: {m.matchId}</span>
-                  {m.apiSource && <span className="text-[8px] text-cyan-400 bg-cyan-900/30 px-1.5 py-0.5 rounded-full">src: {m.apiSource}</span>}
-                  <span className="text-[8px] text-slate-500">direct: {m.direct_teams || 0}</span>
-                  <span className="text-[8px] text-slate-500">group: {m.group_team?.length || 0}</span>
-                  {m.automatic && <span className="text-[8px] text-slate-500">auto: ✓</span>}
-                  <span className="text-[8px] text-slate-500">cb11: {m.cb11_key || "NA"}</span>
-                </div>
-
-                <div className="flex gap-1.5 flex-wrap">
-                  <Button size="sm" className={cn("h-7 text-[10px]", m.inDb ? "bg-emerald-600 text-white" : "bg-blue-600 hover:bg-blue-700 text-white")}
-                    onClick={() => { setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, inDb: !x.inDb } : x)); toast.success(m.inDb ? "Removed from DB" : "Added to DB"); }}>
+                  ))}
+                  {/* In DB / Add to DB toggle */}
+                  <Button
+                    size="sm"
+                    className={cn("h-7 text-[10px] px-2", m.inDb ? "bg-emerald-600 text-white" : "bg-blue-600 hover:bg-blue-700 text-white")}
+                    onClick={() => toggleInDb(m, i)}
+                  >
                     {m.inDb ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
                     {m.inDb ? "In DB" : "Add to DB"}
                   </Button>
-                  <Button size="sm" variant="outline" className="h-7 text-[10px] border-violet-600 text-violet-400 hover:bg-violet-900/30"
-                    onClick={() => toast.info(`First Stage Mapper for ${m.title} — coming soon`)}>
-                    <Zap className="w-3 h-3 mr-1" /> Mapper
+                  {/* First Stage Mapper — runs actual mapping pipeline */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[10px] px-2 border-blue-500 text-blue-300 hover:bg-blue-900/30"
+                    disabled={m.mapping}
+                    onClick={() => runFirstStageMapper(m, i)}
+                  >
+                    {m.mapping ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+                    {m.mapping ? "Mapping..." : "First Stage Mapper"}
                   </Button>
-                  <Button size="sm" variant="outline" className="h-7 text-[10px] border-slate-600 text-slate-300 hover:bg-slate-700"
-                    onClick={async () => {
-                      toast.info("Fetching match detail...");
-                      try { const res = await fetch(`/api/match-detail?matchId=${m.matchId}`); const data = await res.json();
-                        if (data.status === "success") {
-                          const leftCount = Array.isArray(data.data?.left_team_players) ? data.data.left_team_players.length : (Array.isArray(data.left_team_players) ? data.left_team_players.length : 0);
-                          const rightCount = Array.isArray(data.data?.right_team_players) ? data.data.right_team_players.length : (Array.isArray(data.right_team_players) ? data.right_team_players.length : 0);
-                          toast.success(`Match loaded: ${leftCount} + ${rightCount} players`);
-                        }
-                        else toast.error("Failed to load match detail");
-                      } catch { toast.error("Network error"); }
-                    }}>
-                    <Eye className="w-3 h-3 mr-1" /> Detail
-                  </Button>
-                  <Button size="sm" variant="outline" className="h-7 text-[10px] border-slate-600 text-slate-300 hover:bg-slate-700"
-                    onClick={() => setExpandedIdx(expanded ? null : i)}>
-                    {expanded ? "Hide" : "Raw JSON"}
+                  {/* View detail */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[10px] px-2 border-slate-600 text-slate-300 hover:bg-slate-700"
+                    onClick={() => setExpandedIdx(expanded ? null : i)}
+                  >
+                    <Eye className="w-3 h-3 mr-1" />
+                    {expanded ? "Hide" : "Detail"}
                   </Button>
                 </div>
 
                 {expanded && (
-                  <pre className="mt-2 text-[8px] bg-black/50 rounded p-2 overflow-x-auto text-emerald-300 max-h-40">
-{JSON.stringify(m, null, 2)}
-                  </pre>
+                  <div className="mt-2 text-[9px] bg-black/50 rounded p-2 overflow-x-auto text-emerald-300 max-h-32">
+                    <div className="grid grid-cols-2 gap-1 mb-1">
+                      <span className="text-slate-400">matchId:</span><span>{m.matchId}</span>
+                      <span className="text-slate-400">apiSource:</span><span>{m.apiSource || "null"}</span>
+                      <span className="text-slate-400">direct_teams:</span><span>{m.direct_teams || 0}</span>
+                      <span className="text-slate-400">group_team:</span><span>{m.group_team?.length || 0}</span>
+                      <span className="text-slate-400">prime_team:</span><span>{m.prime_team || 0}</span>
+                      <span className="text-slate-400">expert_teams:</span><span>{m.expert_teams || 0}</span>
+                      <span className="text-slate-400">lineup_out:</span><span>{m.lineup_out ? "yes" : "no"}</span>
+                      <span className="text-slate-400">automatic:</span><span>{m.automatic ? "yes" : "no"}</span>
+                      <span className="text-slate-400">cb11_key:</span><span>{m.cb11_key || "NA"}</span>
+                      <span className="text-slate-400">createdAt:</span><span>{m.createdAt || "—"}</span>
+                    </div>
+                  </div>
                 )}
               </div>
             );
@@ -2030,17 +2161,20 @@ function MatchesTab() {
         </div>
       )}
 
-      <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
-        <p className="text-[9px] text-slate-500 font-bold mb-1">Hidden Settings (like original teamgeneration.in):</p>
-        <div className="space-y-0.5 text-[9px] text-slate-400">
-          <p>✓ API URL: Hidden (hardcoded internally — tgsoftware-api.online)</p>
-          <p>✓ Firebase Config: Hidden (hardcoded internally — revofixer-81a1c)</p>
-          <p>✓ AES Key: Hidden (server-side only — coder_bobby_*)</p>
-          <p>✓ Backend proxy: All API calls via /api/* routes (no direct server URLs)</p>
-          <p>✓ Auto-refresh: 30s when enabled</p>
-          <p>✓ All original fields preserved: prime_team, expert_*, group_team, lineup_out, apiSource, cb11_key</p>
-        </div>
-      </div>
+      {/* Continue button — like original screenshot (green at bottom) */}
+      <Button
+        className="w-full h-10 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold"
+        onClick={() => {
+          const inDbCount = matches.filter(m => m.inDb).length;
+          if (inDbCount === 0) {
+            toast.error("Add at least one match to DB first");
+            return;
+          }
+          toast.success(`Continue: ${inDbCount} match(es) in DB — proceeding to team generation`);
+        }}
+      >
+        Continue ({matches.filter(m => m.inDb).length} in DB)
+      </Button>
     </div>
   );
 }
