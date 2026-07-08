@@ -1760,14 +1760,21 @@ function MatchesTab() {
     try {
       const res = await fetch("/api/matches?sport=cricket");
       const data = await res.json();
-      if (data.status === "success" && Array.isArray(data.matches)) {
-        const adminMatches: AdminMatch[] = data.matches.map((m: any) => ({
+      if (data.status === "success") {
+        const rawMatches = data.matches || data.data || [];
+        if (!Array.isArray(rawMatches) || rawMatches.length === 0) {
+          toast.info("No matches found from backend");
+          setMatches([]);
+          setLoading(false);
+          return;
+        }
+        const adminMatches: AdminMatch[] = rawMatches.map((m: any) => ({
           matchId: String(m.matchId ?? m.id ?? ""),
           title: m.title || m.series || `${m.team1?.shortName || "T1"} vs ${m.team2?.shortName || "T2"}`,
           team1: typeof m.team1 === "string" ? m.team1 : (m.team1?.shortName || m.team1?.name || "T1"),
           team2: typeof m.team2 === "string" ? m.team2 : (m.team2?.shortName || m.team2?.name || "T2"),
           startTime: m.start_time ? (m.start_time < 1e12 ? m.start_time * 1000 : m.start_time) : 0,
-          inDb: Math.random() > 0.5,
+          inDb: Boolean(m.in_db || m.inDb || false),
           supports: m.fantasy_list || [],
         }));
         setMatches(adminMatches);
@@ -1862,7 +1869,11 @@ function MatchesTab() {
                   onClick={async () => {
                     toast.info("Fetching match detail...");
                     try { const res = await fetch(`/api/match-detail?matchId=${m.matchId}`); const data = await res.json();
-                      if (data.status === "success") toast.success(`Match loaded: ${data.left_team_players?.length || 0} + ${data.right_team_players?.length || 0} players`);
+                      if (data.status === "success") {
+                        const leftCount = Array.isArray(data.data?.left_team_players) ? data.data.left_team_players.length : (Array.isArray(data.left_team_players) ? data.left_team_players.length : 0);
+                        const rightCount = Array.isArray(data.data?.right_team_players) ? data.data.right_team_players.length : (Array.isArray(data.right_team_players) ? data.right_team_players.length : 0);
+                        toast.success(`Match loaded: ${leftCount} + ${rightCount} players`);
+                      }
                       else toast.error("Failed to load match detail");
                     } catch { toast.error("Network error"); }
                   }}>
