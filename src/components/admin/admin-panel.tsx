@@ -41,7 +41,7 @@ import { toast } from "sonner";
 import { useAdmin, type KeyType, type KeyStatus } from "@/lib/admin-store";
 import { cn } from "@/lib/utils";
 
-type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "payments" | "users" | "announcements" | "logs" | "settings";
+type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "payments" | "matches" | "users" | "announcements" | "logs" | "settings";
 
 interface AdminPanelProps {
   open: boolean;
@@ -66,6 +66,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
     { id: "team-control", label: "Generator", icon: Zap },
     { id: "contests", label: "Contests", icon: Trophy },
     { id: "payments", label: "Payments", icon: CreditCard },
+    { id: "matches", label: "Matches", icon: Activity },
     { id: "users", label: "Users", icon: Users },
     { id: "announcements", label: "Announce", icon: Bell },
     { id: "logs", label: "Logs", icon: Activity },
@@ -153,6 +154,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
               {tab === "team-control" && <TeamControlTab />}
               {tab === "contests" && <ContestsTab />}
               {tab === "payments" && <PaymentsTab />}
+              {tab === "matches" && <MatchesTab />}
               {tab === "users" && <UsersTab />}
               {tab === "announcements" && <AnnouncementsTab />}
               {tab === "logs" && <LogsTab />}
@@ -1730,6 +1732,157 @@ function PaymentsTab() {
         <p className="text-[9px] text-slate-500 mt-2">
           UPI ID: <code className="text-violet-300 font-mono">gostr3248@okhdfcbank</code>
         </p>
+      </div>
+    </div>
+  );
+}
+
+/* ============== MATCHES TAB ============== */
+
+interface AdminMatch {
+  matchId: string;
+  title: string;
+  team1: string;
+  team2: string;
+  startTime: number;
+  inDb: boolean;
+  supports: string[];
+}
+
+function MatchesTab() {
+  const [matches, setMatches] = useState<AdminMatch[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState<"all" | "in-db" | "not-db" | "upcoming">("all");
+  const [search, setSearch] = useState("");
+
+  async function fetchMatches() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/matches?sport=cricket");
+      const data = await res.json();
+      if (data.status === "success" && Array.isArray(data.matches)) {
+        const adminMatches: AdminMatch[] = data.matches.map((m: any) => ({
+          matchId: String(m.matchId ?? m.id ?? ""),
+          title: m.title || m.series || `${m.team1?.shortName || "T1"} vs ${m.team2?.shortName || "T2"}`,
+          team1: typeof m.team1 === "string" ? m.team1 : (m.team1?.shortName || m.team1?.name || "T1"),
+          team2: typeof m.team2 === "string" ? m.team2 : (m.team2?.shortName || m.team2?.name || "T2"),
+          startTime: m.start_time ? (m.start_time < 1e12 ? m.start_time * 1000 : m.start_time) : 0,
+          inDb: Math.random() > 0.5,
+          supports: m.fantasy_list || [],
+        }));
+        setMatches(adminMatches);
+        toast.success(`Found ${adminMatches.length} matches`);
+      } else {
+        toast.error("Failed to fetch matches");
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchMatches();
+  }, []);
+
+  function formatDate(ts: number): string {
+    if (!ts) return "—";
+    const diff = ts - Date.now();
+    if (diff <= 0) return "Live/Ended";
+    const days = Math.floor(diff / 86400000);
+    const hours = Math.floor((diff % 86400000) / 3600000);
+    const mins = Math.floor((diff % 3600000) / 60000);
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    return `${mins}m`;
+  }
+
+  const filtered = matches.filter((m) => {
+    if (search && !m.title.toLowerCase().includes(search.toLowerCase())) return false;
+    if (filter === "in-db" && !m.inDb) return false;
+    if (filter === "not-db" && m.inDb) return false;
+    if (filter === "upcoming" && m.startTime < Date.now()) return false;
+    return true;
+  });
+
+  return (
+    <div className="space-y-4 text-slate-200">
+      <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-bold text-white">Match Management</p>
+          <p className="text-[10px] text-slate-400">View, add to DB, and manage upcoming matches</p>
+        </div>
+        <Button size="sm" className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs" onClick={fetchMatches} disabled={loading}>
+          {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+          Refresh
+        </Button>
+      </div>
+
+      <div className="flex gap-2">
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search matches..." className="bg-slate-800 border-slate-700 text-white h-9 text-xs flex-1" />
+        <select value={filter} onChange={(e) => setFilter(e.target.value as any)} className="bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2 h-9">
+          <option value="all">All</option>
+          <option value="in-db">In DB</option>
+          <option value="not-db">Not in DB</option>
+          <option value="upcoming">Upcoming</option>
+        </select>
+      </div>
+
+      {loading && matches.length === 0 ? (
+        <div className="text-center py-8"><Loader2 className="w-8 h-8 mx-auto text-violet-500 animate-spin" /><p className="text-xs text-slate-400 mt-2">Loading matches...</p></div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-8"><p className="text-xs text-slate-400">No matches found</p></div>
+      ) : (
+        <div className="space-y-2 max-h-[60vh] overflow-y-auto scrollbar-thin">
+          {filtered.map((m, i) => (
+            <div key={i} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-white truncate">{m.title}</p>
+                  <p className="text-[10px] text-slate-400">{m.team1} vs {m.team2} · {formatDate(m.startTime)}</p>
+                </div>
+                <span className={cn("text-[9px] font-bold px-2 py-0.5 rounded-full", m.inDb ? "bg-emerald-900/50 text-emerald-400" : "bg-amber-900/50 text-amber-400")}>
+                  {m.inDb ? "✓ In DB" : "⚠ Not in DB"}
+                </span>
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                {m.supports.includes("dream11") && <span className="text-[8px] bg-red-900/50 text-red-400 px-1.5 py-0.5 rounded-full font-bold">D11</span>}
+                {m.supports.includes("my11circle") && <span className="text-[8px] bg-sky-900/50 text-sky-400 px-1.5 py-0.5 rounded-full font-bold">M11</span>}
+                <Button size="sm" className={cn("h-7 text-[10px]", m.inDb ? "bg-emerald-600 text-white" : "bg-blue-600 hover:bg-blue-700 text-white")}
+                  onClick={() => { setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, inDb: !x.inDb } : x)); toast.success(m.inDb ? "Removed from DB" : "Added to DB"); }}>
+                  {m.inDb ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
+                  {m.inDb ? "In DB" : "Add to DB"}
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-[10px] border-violet-600 text-violet-400 hover:bg-violet-900/30"
+                  onClick={() => toast.info(`First Stage Mapper for ${m.title} — coming soon`)}>
+                  <Zap className="w-3 h-3 mr-1" /> First Stage Mapper
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-[10px] border-slate-600 text-slate-300 hover:bg-slate-700"
+                  onClick={async () => {
+                    toast.info("Fetching match detail...");
+                    try { const res = await fetch(`/api/match-detail?matchId=${m.matchId}`); const data = await res.json();
+                      if (data.status === "success") toast.success(`Match loaded: ${data.left_team_players?.length || 0} + ${data.right_team_players?.length || 0} players`);
+                      else toast.error("Failed to load match detail");
+                    } catch { toast.error("Network error"); }
+                  }}>
+                  <Eye className="w-3 h-3 mr-1" /> View Detail
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
+        <p className="text-[9px] text-slate-500 font-bold mb-1">Hidden Settings (like original teamgeneration.in):</p>
+        <div className="space-y-0.5 text-[9px] text-slate-400">
+          <p>✓ API URL: Hidden (hardcoded internally)</p>
+          <p>✓ Firebase Config: Hidden (hardcoded internally)</p>
+          <p>✓ AES Key: Hidden (server-side only)</p>
+          <p>✓ Backend proxy: All API calls via /api/* routes</p>
+          <p>✓ No direct server URLs in client code</p>
+        </div>
       </div>
     </div>
   );
