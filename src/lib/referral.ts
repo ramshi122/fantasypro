@@ -216,7 +216,8 @@ export function getReferralStats(): {
   shareUrl: string;
 } {
   const record = getReferralRecord();
-  const shareUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/?ref=${record.referralCode}`;
+  const APP_URL = "https://fantasypro-7x3f.vercel.app";
+  const shareUrl = `${APP_URL}/?ref=${record.referralCode}`;
   const shareText = `🎮 Join Apna Cricket — AI Fantasy Team Generator!\n\nUse my referral code: ${record.referralCode}\n\nGet 1 day bonus on activation!\n${shareUrl}`;
 
   return {
