@@ -181,15 +181,15 @@ export function ApnaTransferModal({
 
       // Try classic endpoint (NO auth needed)
       try {
-        const res = await fetch("https://tgsoftware-api.online/api/classic/dream11/addteam", {
+        const res = await fetch("/api/classic-addteam", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            fantasyApp: selectedApp,
             tgMatchId: matchDbId || matchNumericId,
             playerData: t.playerIds,
             captainData: t.captainId,
             vicecaptainData: t.viceCaptainId,
-            generateLinkFlag: "general",
           }),
         });
         if (res.ok) {

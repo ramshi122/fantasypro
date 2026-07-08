@@ -887,15 +887,8 @@ function SettingsTab() {
         </Button>
       </div>
 
-      {/* API URL */}
-      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-2">
-        <p className="text-xs font-bold text-white">API URL</p>
-        <Input
-          value={apiUrl}
-          onChange={(e) => setApiUrl(e.target.value)}
-          className="bg-slate-900 border-slate-700 text-white h-9 text-sm font-mono"
-        />
-      </div>
+      {/* API URL — hidden from UI, hardcoded internally */}
+      <input type="hidden" value={apiUrl} readOnly />
 
       {/* Firebase */}
       <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-2">
