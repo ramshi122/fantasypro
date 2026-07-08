@@ -1781,6 +1781,7 @@ interface AdminMatch {
 
 function MatchesTab() {
   const [matches, setMatches] = useState<AdminMatch[]>([]);
+  const [addedMatchIds, setAddedMatchIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [platform, setPlatform] = useState<"all" | "my11circle" | "dream11">("my11circle");
   const [filter, setFilter] = useState<"all" | "live" | "upcoming" | "in-db" | "not-db" | "lineup-out" | "prime">("all");
@@ -1790,56 +1791,73 @@ function MatchesTab() {
   const [now, setNow] = useState(Date.now());
   const [showSettings, setShowSettings] = useState(false);
 
+  // Fetch both available matches AND added-to-DB matches (like original APK)
   async function fetchMatches() {
     setLoading(true);
     try {
-      const res = await fetch("/api/matches?sport=cricket");
-      const data = await res.json();
-      if (data.status === "success") {
-        const rawMatches = data.matches || data.data || [];
+      const [availRes, addedRes] = await Promise.all([
+        fetch("/api/matches?sport=cricket"),
+        fetch("/api/matches/added?platform=my11circle"),
+      ]);
+      const availData = await availRes.json();
+      const addedData = await addedRes.json();
+
+      // Build set of added match IDs
+      const addedIds = new Set<string>();
+      if (addedData.status === "success") {
+        (addedData.matchIds || []).forEach((id: any) => addedIds.add(String(id)));
+        (addedData.directMatchIds || []).forEach((id: any) => addedIds.add(String(id)));
+      }
+      setAddedMatchIds(addedIds);
+
+      if (availData.status === "success") {
+        const rawMatches = availData.matches || availData.data || [];
         if (!Array.isArray(rawMatches) || rawMatches.length === 0) {
-          toast.info("No matches found from backend (scraped tgsoftware-api.online)");
+          toast.info("No available matches from backend");
           setMatches([]);
           setLoading(false);
           return;
         }
-        const adminMatches: AdminMatch[] = rawMatches.map((m: any) => ({
-          matchId: String(m.id ?? m._id ?? m.matchId ?? ""),
-          _id: m._id,
-          title: m.series_name || m.title || `${m.left_team_name || "T1"} vs ${m.right_team_name || "T2"}`,
-          team1: m.left_team_name || (typeof m.team1 === "string" ? m.team1 : (m.team1?.shortName || "T1")),
-          team2: m.right_team_name || (typeof m.team2 === "string" ? m.team2 : (m.team2?.shortName || "T2")),
-          team1Img: m.left_team_image,
-          team2Img: m.right_team_image,
-          startTime: m.match_time ? new Date(m.match_time).getTime() : (m.start_time ? (m.start_time < 1e12 ? m.start_time * 1000 : m.start_time) : 0),
-          inDb: Boolean(m.in_db || m.inDb || m.direct_teams > 0 || false),
-          supports: m.fantasy_list || [],
-          tour_id: m.tour_id,
-          sport_index: m.sport_index,
-          lineup_out: m.lineup_out,
-          automatic: m.automatic,
-          match_type: m.match_type,
-          apiSource: m.apiSource,
-          prime_team: m.prime_team,
-          prime_booking: m.prime_booking,
-          group_team: m.group_team,
-          group_booking: m.group_booking,
-          expert_video: m.expert_video,
-          expert_teams: m.expert_teams,
-          expert_prediction: m.expert_prediction,
-          direct_teams: m.direct_teams,
-          cb11_key: m.cb11_key,
-          createdAt: m.createdAt,
-        }));
-        // Preserve inDb/mapped state from previous fetch
+        const adminMatches: AdminMatch[] = rawMatches.map((m: any) => {
+          const mid = String(m.id ?? m._id ?? m.matchId ?? "");
+          return {
+            matchId: mid,
+            _id: m._id,
+            title: m.series_name || m.title || `${m.left_team_name || "T1"} vs ${m.right_team_name || "T2"}`,
+            team1: m.left_team_name || (typeof m.team1 === "string" ? m.team1 : (m.team1?.shortName || "T1")),
+            team2: m.right_team_name || (typeof m.team2 === "string" ? m.team2 : (m.team2?.shortName || "T2")),
+            team1Img: m.left_team_image,
+            team2Img: m.right_team_image,
+            startTime: m.match_time ? new Date(m.match_time).getTime() : (m.start_time ? (m.start_time < 1e12 ? m.start_time * 1000 : m.start_time) : 0),
+            inDb: addedIds.has(mid) || Boolean(m.in_db || m.inDb || m.direct_teams > 0 || false),
+            supports: m.fantasy_list || [],
+            tour_id: m.tour_id,
+            sport_index: m.sport_index,
+            lineup_out: m.lineup_out,
+            automatic: m.automatic,
+            match_type: m.match_type,
+            apiSource: m.apiSource,
+            prime_team: m.prime_team,
+            prime_booking: m.prime_booking,
+            group_team: m.group_team,
+            group_booking: m.group_booking,
+            expert_video: m.expert_video,
+            expert_teams: m.expert_teams,
+            expert_prediction: m.expert_prediction,
+            direct_teams: m.direct_teams,
+            cb11_key: m.cb11_key,
+            createdAt: m.createdAt,
+          };
+        });
+        // Preserve mapped state from previous fetch
         setMatches(prev => {
           const prevMap = new Map(prev.map(p => [p.matchId, p]));
           return adminMatches.map(m => {
             const p = prevMap.get(m.matchId);
-            return p ? { ...m, inDb: p.inDb, mapped: p.mapped } : m;
+            return p ? { ...m, mapped: p.mapped, mapping: p.mapping } : m;
           });
         });
-        toast.success(`Scraped ${adminMatches.length} matches from original backend`);
+        toast.success(`Scraped ${adminMatches.length} matches | ${addedIds.size} in DB`);
       } else {
         toast.error("Failed to fetch matches");
       }
@@ -1951,9 +1969,43 @@ function MatchesTab() {
     }
   }
 
+  // Actually add match to DB via backend (like original APK "Add to DB" button)
+  async function addToDb(m: AdminMatch, i: number) {
+    if (m.inDb) {
+      toast.info(`${m.title} already in DB`);
+      return;
+    }
+    setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, mapping: true } : x));
+    toast.info(`Adding ${m.title} to DB...`);
+    try {
+      const platform = m.supports.includes("my11circle") ? "my11circle" : "jumbo";
+      const res = await fetch("/api/matches/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform, matchId: m.matchId, sport: "cricket" }),
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, inDb: true, mapping: false } : x));
+        setAddedMatchIds(prev => new Set([...prev, m.matchId]));
+        toast.success(`✓ ${m.title} added to main DB!`);
+      } else {
+        setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, mapping: false } : x));
+        toast.error(data.message || "Failed to add match to DB");
+      }
+    } catch (err: any) {
+      setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, mapping: false } : x));
+      toast.error(err?.message || "Network error");
+    }
+  }
+
   function toggleInDb(m: AdminMatch, i: number) {
-    setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, inDb: !x.inDb } : x));
-    toast.success(m.inDb ? `Removed ${m.title} from DB` : `Added ${m.title} to DB`);
+    if (!m.inDb) {
+      addToDb(m, i);
+    } else {
+      setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, inDb: false } : x));
+      toast.success(`Removed ${m.title} from local DB view`);
+    }
   }
 
   return (
