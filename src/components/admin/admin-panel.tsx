@@ -40,6 +40,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useAdmin, type KeyType, type KeyStatus } from "@/lib/admin-store";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { cn } from "@/lib/utils";
 
 type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "payments" | "matches" | "subscriptions" | "users" | "announcements" | "logs" | "settings";
@@ -150,6 +151,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto scrollbar-thin p-4 bg-slate-900">
+              <ErrorBoundary fallback={<div className="p-4 text-center text-red-400 text-xs">Error loading this tab. Try another tab.</div>}>
               {tab === "dashboard" && <DashboardTab />}
               {tab === "licenses" && <LicensesTab />}
               {tab === "devices" && <DevicesTab />}
@@ -162,6 +164,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
               {tab === "announcements" && <AnnouncementsTab />}
               {tab === "logs" && <LogsTab />}
               {tab === "settings" && <SettingsTab />}
+              </ErrorBoundary>
             </div>
           </motion.div>
         </motion.div>
