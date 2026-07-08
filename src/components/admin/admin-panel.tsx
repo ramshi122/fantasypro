@@ -1748,19 +1748,41 @@ function PaymentsTab() {
 
 interface AdminMatch {
   matchId: string;
+  _id?: string;
   title: string;
   team1: string;
   team2: string;
+  team1Img?: string;
+  team2Img?: string;
   startTime: number;
   inDb: boolean;
   supports: string[];
+  // Original teamgeneration.in fields
+  tour_id?: string;
+  sport_index?: number;
+  lineup_out?: number;
+  automatic?: boolean;
+  match_type?: string;
+  apiSource?: string | null;
+  prime_team?: number;
+  prime_booking?: number;
+  group_team?: any[];
+  group_booking?: any[];
+  expert_video?: number;
+  expert_teams?: number;
+  expert_prediction?: number;
+  direct_teams?: number;
+  cb11_key?: string;
+  createdAt?: string;
 }
 
 function MatchesTab() {
   const [matches, setMatches] = useState<AdminMatch[]>([]);
   const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState<"all" | "in-db" | "not-db" | "upcoming">("all");
+  const [filter, setFilter] = useState<"all" | "live" | "upcoming" | "in-db" | "not-db" | "lineup-out" | "prime">("all");
   const [search, setSearch] = useState("");
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [autoRefresh, setAutoRefresh] = useState(false);
 
   async function fetchMatches() {
     setLoading(true);
@@ -1770,22 +1792,41 @@ function MatchesTab() {
       if (data.status === "success") {
         const rawMatches = data.matches || data.data || [];
         if (!Array.isArray(rawMatches) || rawMatches.length === 0) {
-          toast.info("No matches found from backend");
+          toast.info("No matches found from backend (scraped tgsoftware-api.online)");
           setMatches([]);
           setLoading(false);
           return;
         }
         const adminMatches: AdminMatch[] = rawMatches.map((m: any) => ({
           matchId: String(m.id ?? m._id ?? m.matchId ?? ""),
+          _id: m._id,
           title: m.series_name || m.title || `${m.left_team_name || "T1"} vs ${m.right_team_name || "T2"}`,
           team1: m.left_team_name || (typeof m.team1 === "string" ? m.team1 : (m.team1?.shortName || "T1")),
           team2: m.right_team_name || (typeof m.team2 === "string" ? m.team2 : (m.team2?.shortName || "T2")),
+          team1Img: m.left_team_image,
+          team2Img: m.right_team_image,
           startTime: m.match_time ? new Date(m.match_time).getTime() : (m.start_time ? (m.start_time < 1e12 ? m.start_time * 1000 : m.start_time) : 0),
           inDb: Boolean(m.in_db || m.inDb || m.direct_teams > 0 || false),
           supports: m.fantasy_list || [],
+          tour_id: m.tour_id,
+          sport_index: m.sport_index,
+          lineup_out: m.lineup_out,
+          automatic: m.automatic,
+          match_type: m.match_type,
+          apiSource: m.apiSource,
+          prime_team: m.prime_team,
+          prime_booking: m.prime_booking,
+          group_team: m.group_team,
+          group_booking: m.group_booking,
+          expert_video: m.expert_video,
+          expert_teams: m.expert_teams,
+          expert_prediction: m.expert_prediction,
+          direct_teams: m.direct_teams,
+          cb11_key: m.cb11_key,
+          createdAt: m.createdAt,
         }));
         setMatches(adminMatches);
-        toast.success(`Found ${adminMatches.length} matches`);
+        toast.success(`Scraped ${adminMatches.length} matches from original backend`);
       } else {
         toast.error("Failed to fetch matches");
       }
@@ -1800,10 +1841,29 @@ function MatchesTab() {
     fetchMatches();
   }, []);
 
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(fetchMatches, 30000);
+    return () => clearInterval(id);
+  }, [autoRefresh]);
+
+  function isLive(ts: number): boolean {
+    if (!ts) return false;
+    const diff = ts - Date.now();
+    return diff <= 0 && diff > -8 * 3600000; // started within last 8h = live
+  }
+
   function formatDate(ts: number): string {
     if (!ts) return "—";
     const diff = ts - Date.now();
-    if (diff <= 0) return "Live/Ended";
+    if (isLive(ts)) {
+      const mins = Math.floor(-diff / 60000);
+      return `LIVE · ${mins}m ago`;
+    }
+    if (diff <= 0) {
+      const hrs = Math.floor(-diff / 3600000);
+      return `Ended · ${hrs}h ago`;
+    }
     const days = Math.floor(diff / 86400000);
     const hours = Math.floor((diff % 86400000) / 3600000);
     const mins = Math.floor((diff % 3600000) / 60000);
@@ -1813,93 +1873,172 @@ function MatchesTab() {
   }
 
   const filtered = matches.filter((m) => {
-    if (search && !m.title.toLowerCase().includes(search.toLowerCase())) return false;
+    if (search && !m.title.toLowerCase().includes(search.toLowerCase()) && !m.team1.toLowerCase().includes(search.toLowerCase()) && !m.team2.toLowerCase().includes(search.toLowerCase())) return false;
+    if (filter === "live" && !isLive(m.startTime)) return false;
+    if (filter === "upcoming" && m.startTime < Date.now()) return false;
     if (filter === "in-db" && !m.inDb) return false;
     if (filter === "not-db" && m.inDb) return false;
-    if (filter === "upcoming" && m.startTime < Date.now()) return false;
+    if (filter === "lineup-out" && !m.lineup_out) return false;
+    if (filter === "prime" && !m.prime_team) return false;
     return true;
   });
+
+  const stats = {
+    total: matches.length,
+    live: matches.filter(m => isLive(m.startTime)).length,
+    upcoming: matches.filter(m => m.startTime > Date.now()).length,
+    ended: matches.filter(m => m.startTime && m.startTime < Date.now() - 8 * 3600000).length,
+    inDb: matches.filter(m => m.inDb).length,
+    lineupOut: matches.filter(m => m.lineup_out).length,
+    prime: matches.filter(m => m.prime_team).length,
+    d11: matches.filter(m => m.supports.includes("dream11")).length,
+    m11: matches.filter(m => m.supports.includes("my11circle")).length,
+  };
 
   return (
     <div className="space-y-4 text-slate-200">
       <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 flex items-center justify-between">
         <div>
-          <p className="text-sm font-bold text-white">Match Management</p>
-          <p className="text-[10px] text-slate-400">View, add to DB, and manage upcoming matches</p>
+          <p className="text-sm font-bold text-white">Match Management <span className="text-[9px] text-emerald-400 ml-1 bg-emerald-900/40 px-1.5 py-0.5 rounded">SCRAPED LIVE</span></p>
+          <p className="text-[10px] text-slate-400">Direct proxy from original backend (tgsoftware-api.online)</p>
         </div>
-        <Button size="sm" className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs" onClick={fetchMatches} disabled={loading}>
-          {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
-          Refresh
-        </Button>
+        <div className="flex gap-1.5">
+          <Button size="sm" variant="outline" className={cn("h-8 text-xs border-slate-600", autoRefresh ? "bg-emerald-900/40 text-emerald-400 border-emerald-600" : "text-slate-300")} onClick={() => setAutoRefresh(v => !v)}>
+            <RefreshCw className={cn("w-3 h-3 mr-1", autoRefresh && "animate-spin")} /> Auto
+          </Button>
+          <Button size="sm" className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs" onClick={fetchMatches} disabled={loading}>
+            {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+            Refresh
+          </Button>
+        </div>
       </div>
 
-      <div className="flex gap-2">
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search matches..." className="bg-slate-800 border-slate-700 text-white h-9 text-xs flex-1" />
+      {/* Stats row like original admin */}
+      <div className="grid grid-cols-4 gap-2">
+        <div className="bg-slate-800/70 rounded-lg p-2 border border-slate-700/70 text-center">
+          <p className="text-lg font-bold text-white">{stats.total}</p>
+          <p className="text-[9px] text-slate-400">Total</p>
+        </div>
+        <div className="bg-slate-800/70 rounded-lg p-2 border border-red-800/40 text-center">
+          <p className="text-lg font-bold text-red-400">{stats.live}</p>
+          <p className="text-[9px] text-slate-400">Live</p>
+        </div>
+        <div className="bg-slate-800/70 rounded-lg p-2 border border-slate-700/70 text-center">
+          <p className="text-lg font-bold text-emerald-400">{stats.upcoming}</p>
+          <p className="text-[9px] text-slate-400">Upcoming</p>
+        </div>
+        <div className="bg-slate-800/70 rounded-lg p-2 border border-slate-700/70 text-center">
+          <p className="text-lg font-bold text-amber-400">{stats.lineupOut}</p>
+          <p className="text-[9px] text-slate-400">Lineup Out</p>
+        </div>
+      </div>
+
+      <div className="flex gap-2 flex-wrap">
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search team/series..." className="bg-slate-800 border-slate-700 text-white h-9 text-xs flex-1 min-w-[150px]" />
         <select value={filter} onChange={(e) => setFilter(e.target.value as any)} className="bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2 h-9">
-          <option value="all">All</option>
-          <option value="in-db">In DB</option>
-          <option value="not-db">Not in DB</option>
-          <option value="upcoming">Upcoming</option>
+          <option value="all">All ({stats.total})</option>
+          <option value="live">🔴 Live ({stats.live})</option>
+          <option value="upcoming">Upcoming ({stats.upcoming})</option>
+          <option value="in-db">In DB ({stats.inDb})</option>
+          <option value="not-db">Not in DB ({stats.total - stats.inDb})</option>
+          <option value="lineup-out">Lineup Out ({stats.lineupOut})</option>
+          <option value="prime">Prime ({stats.prime})</option>
         </select>
       </div>
 
       {loading && matches.length === 0 ? (
-        <div className="text-center py-8"><Loader2 className="w-8 h-8 mx-auto text-violet-500 animate-spin" /><p className="text-xs text-slate-400 mt-2">Loading matches...</p></div>
+        <div className="text-center py-8"><Loader2 className="w-8 h-8 mx-auto text-violet-500 animate-spin" /><p className="text-xs text-slate-400 mt-2">Scraping original backend...</p></div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-8"><p className="text-xs text-slate-400">No matches found</p></div>
+        <div className="text-center py-8"><p className="text-xs text-slate-400">No matches found for this filter</p></div>
       ) : (
         <div className="space-y-2 max-h-[60vh] overflow-y-auto scrollbar-thin">
-          {filtered.map((m, i) => (
-            <div key={i} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-white truncate">{m.title}</p>
-                  <p className="text-[10px] text-slate-400">{m.team1} vs {m.team2} · {formatDate(m.startTime)}</p>
+          {filtered.map((m, i) => {
+            const live = isLive(m.startTime);
+            const expanded = expandedIdx === i;
+            return (
+              <div key={i} className={cn("bg-slate-800 rounded-xl p-3 border", live ? "border-red-700/70 shadow-lg shadow-red-900/20" : "border-slate-700")}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    {m.team1Img && <img src={m.team1Img} alt={m.team1} className="w-6 h-6 rounded-full object-cover" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white truncate">{m.title}</p>
+                      <p className="text-[10px] text-slate-400">{m.team1} vs {m.team2} · {formatDate(m.startTime)}</p>
+                    </div>
+                    {m.team2Img && <img src={m.team2Img} alt={m.team2} className="w-6 h-6 rounded-full object-cover" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />}
+                  </div>
+                  <div className="flex gap-1 flex-shrink-0">
+                    {live && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-600 text-white animate-pulse">LIVE</span>}
+                    {m.lineup_out ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-900/60 text-emerald-300">LINEUP</span> : null}
+                    {m.prime_team ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-900/60 text-amber-300">PRIME</span> : null}
+                    {m.expert_teams ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-900/60 text-violet-300">EXP</span> : null}
+                    <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded-full", m.inDb ? "bg-emerald-900/50 text-emerald-400" : "bg-amber-900/50 text-amber-400")}>
+                      {m.inDb ? "DB" : "—"}
+                    </span>
+                  </div>
                 </div>
-                <span className={cn("text-[9px] font-bold px-2 py-0.5 rounded-full", m.inDb ? "bg-emerald-900/50 text-emerald-400" : "bg-amber-900/50 text-amber-400")}>
-                  {m.inDb ? "✓ In DB" : "⚠ Not in DB"}
-                </span>
+
+                {/* Original fields row — like teamgeneration.in admin */}
+                <div className="flex gap-1 flex-wrap items-center mb-2">
+                  {m.supports.includes("dream11") && <span className="text-[8px] bg-red-900/50 text-red-400 px-1.5 py-0.5 rounded-full font-bold">D11</span>}
+                  {m.supports.includes("my11circle") && <span className="text-[8px] bg-sky-900/50 text-sky-400 px-1.5 py-0.5 rounded-full font-bold">M11</span>}
+                  <span className="text-[8px] text-slate-500">ID: {m.matchId}</span>
+                  {m.apiSource && <span className="text-[8px] text-cyan-400 bg-cyan-900/30 px-1.5 py-0.5 rounded-full">src: {m.apiSource}</span>}
+                  <span className="text-[8px] text-slate-500">direct: {m.direct_teams || 0}</span>
+                  <span className="text-[8px] text-slate-500">group: {m.group_team?.length || 0}</span>
+                  {m.automatic && <span className="text-[8px] text-slate-500">auto: ✓</span>}
+                  <span className="text-[8px] text-slate-500">cb11: {m.cb11_key || "NA"}</span>
+                </div>
+
+                <div className="flex gap-1.5 flex-wrap">
+                  <Button size="sm" className={cn("h-7 text-[10px]", m.inDb ? "bg-emerald-600 text-white" : "bg-blue-600 hover:bg-blue-700 text-white")}
+                    onClick={() => { setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, inDb: !x.inDb } : x)); toast.success(m.inDb ? "Removed from DB" : "Added to DB"); }}>
+                    {m.inDb ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
+                    {m.inDb ? "In DB" : "Add to DB"}
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-7 text-[10px] border-violet-600 text-violet-400 hover:bg-violet-900/30"
+                    onClick={() => toast.info(`First Stage Mapper for ${m.title} — coming soon`)}>
+                    <Zap className="w-3 h-3 mr-1" /> Mapper
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-7 text-[10px] border-slate-600 text-slate-300 hover:bg-slate-700"
+                    onClick={async () => {
+                      toast.info("Fetching match detail...");
+                      try { const res = await fetch(`/api/match-detail?matchId=${m.matchId}`); const data = await res.json();
+                        if (data.status === "success") {
+                          const leftCount = Array.isArray(data.data?.left_team_players) ? data.data.left_team_players.length : (Array.isArray(data.left_team_players) ? data.left_team_players.length : 0);
+                          const rightCount = Array.isArray(data.data?.right_team_players) ? data.data.right_team_players.length : (Array.isArray(data.right_team_players) ? data.right_team_players.length : 0);
+                          toast.success(`Match loaded: ${leftCount} + ${rightCount} players`);
+                        }
+                        else toast.error("Failed to load match detail");
+                      } catch { toast.error("Network error"); }
+                    }}>
+                    <Eye className="w-3 h-3 mr-1" /> Detail
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-7 text-[10px] border-slate-600 text-slate-300 hover:bg-slate-700"
+                    onClick={() => setExpandedIdx(expanded ? null : i)}>
+                    {expanded ? "Hide" : "Raw JSON"}
+                  </Button>
+                </div>
+
+                {expanded && (
+                  <pre className="mt-2 text-[8px] bg-black/50 rounded p-2 overflow-x-auto text-emerald-300 max-h-40">
+{JSON.stringify(m, null, 2)}
+                  </pre>
+                )}
               </div>
-              <div className="flex gap-1.5 flex-wrap">
-                {m.supports.includes("dream11") && <span className="text-[8px] bg-red-900/50 text-red-400 px-1.5 py-0.5 rounded-full font-bold">D11</span>}
-                {m.supports.includes("my11circle") && <span className="text-[8px] bg-sky-900/50 text-sky-400 px-1.5 py-0.5 rounded-full font-bold">M11</span>}
-                <Button size="sm" className={cn("h-7 text-[10px]", m.inDb ? "bg-emerald-600 text-white" : "bg-blue-600 hover:bg-blue-700 text-white")}
-                  onClick={() => { setMatches(prev => prev.map((x, idx) => idx === i ? { ...x, inDb: !x.inDb } : x)); toast.success(m.inDb ? "Removed from DB" : "Added to DB"); }}>
-                  {m.inDb ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
-                  {m.inDb ? "In DB" : "Add to DB"}
-                </Button>
-                <Button size="sm" variant="outline" className="h-7 text-[10px] border-violet-600 text-violet-400 hover:bg-violet-900/30"
-                  onClick={() => toast.info(`First Stage Mapper for ${m.title} — coming soon`)}>
-                  <Zap className="w-3 h-3 mr-1" /> First Stage Mapper
-                </Button>
-                <Button size="sm" variant="outline" className="h-7 text-[10px] border-slate-600 text-slate-300 hover:bg-slate-700"
-                  onClick={async () => {
-                    toast.info("Fetching match detail...");
-                    try { const res = await fetch(`/api/match-detail?matchId=${m.matchId}`); const data = await res.json();
-                      if (data.status === "success") {
-                        const leftCount = Array.isArray(data.data?.left_team_players) ? data.data.left_team_players.length : (Array.isArray(data.left_team_players) ? data.left_team_players.length : 0);
-                        const rightCount = Array.isArray(data.data?.right_team_players) ? data.data.right_team_players.length : (Array.isArray(data.right_team_players) ? data.right_team_players.length : 0);
-                        toast.success(`Match loaded: ${leftCount} + ${rightCount} players`);
-                      }
-                      else toast.error("Failed to load match detail");
-                    } catch { toast.error("Network error"); }
-                  }}>
-                  <Eye className="w-3 h-3 mr-1" /> View Detail
-                </Button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
         <p className="text-[9px] text-slate-500 font-bold mb-1">Hidden Settings (like original teamgeneration.in):</p>
         <div className="space-y-0.5 text-[9px] text-slate-400">
-          <p>✓ API URL: Hidden (hardcoded internally)</p>
-          <p>✓ Firebase Config: Hidden (hardcoded internally)</p>
-          <p>✓ AES Key: Hidden (server-side only)</p>
-          <p>✓ Backend proxy: All API calls via /api/* routes</p>
-          <p>✓ No direct server URLs in client code</p>
+          <p>✓ API URL: Hidden (hardcoded internally — tgsoftware-api.online)</p>
+          <p>✓ Firebase Config: Hidden (hardcoded internally — revofixer-81a1c)</p>
+          <p>✓ AES Key: Hidden (server-side only — coder_bobby_*)</p>
+          <p>✓ Backend proxy: All API calls via /api/* routes (no direct server URLs)</p>
+          <p>✓ Auto-refresh: 30s when enabled</p>
+          <p>✓ All original fields preserved: prime_team, expert_*, group_team, lineup_out, apiSource, cb11_key</p>
         </div>
       </div>
     </div>
