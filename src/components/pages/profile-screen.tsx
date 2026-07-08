@@ -622,17 +622,14 @@ function FeatureMatrixSection() {
   ];
 
   const features = [
-    { label: "Team Generation", key: "teamGeneration", type: "boolean" },
-    { label: "Single Transfer", key: "singleTransferPerDay", type: "limit" },
-    { label: "Bulk Add Teams", key: "bulkAddLimit", type: "limit" },
-    { label: "Per-Team Replace", key: "perTeamReplaceMode", type: "boolean" },
-    { label: "Bulk Replace All", key: "bulkReplaceAll", type: "boolean" },
-    { label: "Multi-Account", key: "multiAccount", type: "boolean" },
-    { label: "Dream11 Transfer", key: "dream11Transfer", type: "boolean" },
-    { label: "My11Circle Transfer", key: "my11CircleTransfer", type: "boolean" },
-    { label: "Elite AI (25 checks)", key: "eliteAI", type: "boolean" },
-    { label: "Rank 1-40 Teams", key: "rank1to40Teams", type: "boolean" },
+    { label: "Team Generation", key: "teamGenerationLimit", type: "limit" },
+    { label: "Dream11 Transfer", key: "dream11Transfer", type: "transfer" },
+    { label: "My11Circle Transfer", key: "my11CircleTransfer", type: "transfer" },
     { label: "Contest Join", key: "contestJoin", type: "boolean" },
+    { label: "Expert Teams", key: "expertTeams", type: "boolean" },
+    { label: "Prime Teams", key: "primeTeams", type: "boolean" },
+    { label: "Elite AI", key: "eliteAI", type: "boolean" },
+    { label: "Multi-Platform", key: "multiPlatform", type: "boolean" },
     { label: "Referral Program", key: "referralProgram", type: "boolean" },
   ];
 
@@ -665,12 +662,23 @@ function FeatureMatrixSection() {
         const f = getTierFeatures(tier.id);
         for (const feature of features) {
           const val = (f as any)[feature.key];
+          if (val === undefined || val === null) {
+            values[tier.id][feature.key] = "❌";
+            continue;
+          }
           if (feature.type === "boolean") {
             values[tier.id][feature.key] = val ? "✅" : "❌";
           } else if (feature.type === "limit") {
             if (val === 0) values[tier.id][feature.key] = "❌";
             else if (val === -1) values[tier.id][feature.key] = "∞";
-            else values[tier.id][feature.key] = val.toString();
+            else values[tier.id][feature.key] = String(val);
+          } else if (feature.type === "transfer") {
+            // transfer values: "locked" | "3/day" | "enabled" | "unlimited"
+            if (val === "locked") values[tier.id][feature.key] = "❌";
+            else if (val === "3/day") values[tier.id][feature.key] = "3/day";
+            else if (val === "unlimited") values[tier.id][feature.key] = "∞";
+            else if (val === "enabled") values[tier.id][feature.key] = "✅";
+            else values[tier.id][feature.key] = String(val);
           }
         }
       }
