@@ -634,6 +634,8 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 onTransfer={(app) => handleTransfer(t, app)}
                 onLinkClick={() => setShowOtpLogin(true)}
                 onJoinContests={() => setShowFreeContests(true)}
+                licenseTier={license.licenseKeyType}
+                isLicensed={license.isLicensed}
               />
             </motion.div>
           ))}
@@ -838,6 +840,8 @@ function TransferButtons({
   onTransfer,
   onLinkClick,
   onJoinContests,
+  licenseTier,
+  isLicensed,
 }: {
   team: TeamRow;
   match: MatchInfo;
@@ -845,8 +849,17 @@ function TransferButtons({
   onTransfer: (app: FantasyApp) => void;
   onLinkClick: () => void;
   onJoinContests: () => void;
+  licenseTier: string | null;
+  isLicensed: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+
+  // Tier checks
+  const my11Tiers = ["match_full", "weekly", "monthly", "elite", "lifetime"];
+  const contestTiers = ["match_basic", "match_full", "weekly", "monthly", "elite", "lifetime"];
+  const canMy11 = isLicensed && licenseTier && my11Tiers.includes(licenseTier);
+  const canContest = isLicensed && licenseTier && contestTiers.includes(licenseTier);
+  const isTrial = licenseTier === "trial";
 
   function buildTeamCode() {
     const players = (team.players || []).map((p) => p.player_fixed_id ?? p.pid ?? p.name).join(",");
@@ -861,8 +874,50 @@ function TransferButtons({
     });
   }
 
+  function handleDream11() {
+    if (!isLicensed) {
+      toast.error("Activate license to transfer");
+      return;
+    }
+    if (isTrial) {
+      const today = new Date().toDateString();
+      const count = parseInt(localStorage.getItem(`apna-cricket-d11-transfers-${today}`) || "0");
+      if (count >= 3) {
+        toast.error("Trial limit: 3 transfers/day. Upgrade for unlimited.");
+        return;
+      }
+      localStorage.setItem(`apna-cricket-d11-transfers-${today}`, String(count + 1));
+    }
+    linked ? onTransfer("dream11") : onLinkClick();
+  }
+
+  function handleMy11() {
+    if (!isLicensed) {
+      toast.error("Activate license to transfer");
+      return;
+    }
+    if (!canMy11) {
+      toast.error("My11Circle requires 24 Hour pass (₹99) or higher");
+      return;
+    }
+    linked ? onTransfer("my11circle") : onLinkClick();
+  }
+
+  function handleJoin() {
+    if (!isLicensed) {
+      toast.error("Activate license to join contests");
+      return;
+    }
+    if (!canContest) {
+      toast.error("Contest join requires 1 Match pass (₹49) or higher");
+      return;
+    }
+    onJoinContests();
+  }
+
   return (
     <div className="grid grid-cols-4 gap-1.5">
+      {/* Copy — always available */}
       <Button
         size="sm"
         variant="outline"
@@ -872,34 +927,49 @@ function TransferButtons({
         {copied ? <Check className="w-3.5 h-3.5 mr-0.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 mr-0.5" />}
         {copied ? "Copied" : "Copy"}
       </Button>
+
+      {/* Dream11 — locked for unlicensed, 3/day for trial */}
       <Button
         size="sm"
         className={cn(
           "h-9 text-[11px] text-white",
+          !isLicensed ? "bg-slate-300 text-slate-500 dark:bg-slate-700" :
           team.transferred ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
         )}
-        onClick={() => (linked ? onTransfer("dream11") : onLinkClick())}
+        onClick={handleDream11}
         disabled={team.transferred}
       >
-        {team.transferred ? <Check className="w-3.5 h-3.5 mr-0.5" /> : <Send className="w-3.5 h-3.5 mr-0.5" />}
-        {team.transferred ? "Sent" : "Dream11"}
+        {!isLicensed ? <Lock className="w-3.5 h-3.5 mr-0.5" /> :
+         team.transferred ? <Check className="w-3.5 h-3.5 mr-0.5" /> : <Send className="w-3.5 h-3.5 mr-0.5" />}
+        {!isLicensed ? "🔒" : team.transferred ? "Sent" : "Dream11"}
       </Button>
+
+      {/* My11Circle — locked for trial + match_basic */}
       <Button
         size="sm"
-        className="h-9 text-[11px] bg-sky-600 hover:bg-sky-700 text-white"
-        onClick={() => (linked ? onTransfer("my11circle") : onLinkClick())}
+        className={cn(
+          "h-9 text-[11px] text-white",
+          !canMy11 ? "bg-slate-300 text-slate-500 dark:bg-slate-700" :
+          team.transferred ? "bg-emerald-600" : "bg-sky-600 hover:bg-sky-700"
+        )}
+        onClick={handleMy11}
         disabled={team.transferred}
       >
-        <ExternalLink className="w-3.5 h-3.5 mr-0.5" />
-        My11
+        {!canMy11 ? <Lock className="w-3.5 h-3.5 mr-0.5" /> : <ExternalLink className="w-3.5 h-3.5 mr-0.5" />}
+        {!canMy11 ? "🔒" : "My11"}
       </Button>
+
+      {/* Join Contest — locked for trial */}
       <Button
         size="sm"
-        className="h-9 text-[11px] bg-amber-500 hover:bg-amber-600 text-white"
-        onClick={onJoinContests}
+        className={cn(
+          "h-9 text-[11px] text-white",
+          !canContest ? "bg-slate-300 text-slate-500 dark:bg-slate-700" : "bg-amber-500 hover:bg-amber-600"
+        )}
+        onClick={handleJoin}
       >
-        <Gift className="w-3.5 h-3.5 mr-0.5" />
-        Join
+        {!canContest ? <Lock className="w-3.5 h-3.5 mr-0.5" /> : <Gift className="w-3.5 h-3.5 mr-0.5" />}
+        {!canContest ? "🔒" : "Join"}
       </Button>
     </div>
   );
