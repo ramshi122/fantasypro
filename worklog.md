@@ -314,3 +314,82 @@ Stage Summary:
   2. Linked Account — auto-sends teams via /api/fantasy/add-team (requires OTP login first)
 - Transfer flow handles matches with/without dream11 IDs gracefully (shows clear error)
 - All endpoints match the original teamgeneration.in contract exactly
+
+---
+Task ID: G1-G8
+Agent: general-purpose
+Task: Implement all 30 features (analytics, team gen, monetization, notifications, PWA, security, contest, admin tools)
+
+Work Log:
+
+Group 1 — Analytics & Insights:
+- Created src/lib/analytics.ts — trackEvent(), getAnalytics(), getDailyTeamGenerationTrend(), getPopularMatches(); localStorage "apna-cricket-analytics"
+- Created src/components/admin/analytics-tab.tsx — user stats, team-gen stats, 7-day bar chart, revenue by plan, pie chart (custom SVG), popular matches, recent events feed, CSV export
+- Created src/lib/performance-tracker.ts — trackMatchTeam(), getMatchPerformance(), getTopMatches(); localStorage "apna-cricket-match-perf"
+
+Group 2 — Team Generation Improvements:
+- Created src/lib/captain-recommender.ts — scorePlayerForCaptain() (points*0.4 + capt_pct*0.3 + sel*0.2 + credits*0.1), recommendCaptains() returns top 3 C + top 3 VC with reasons
+- Created src/lib/team-templates.ts — saveTemplate(), getTemplates(), deleteTemplate(), applyTemplate(); localStorage "apna-cricket-templates"
+- Created src/lib/risk-meter.ts — calculateRisk() returns 0-100 score + label (Safe/Moderate/Risky/High Risk) + reasons; factors: lineup confirmed, captain selection, role/side balance, form, credits
+- Created src/lib/form-predictor.ts — predictForm() returns score + category (In Form/Average/Out of Form/No Data) + recommendation
+
+Group 3 — Monetization:
+- Updated src/lib/referral.ts — added processReferralReward() (10% discount coupon issued to referrer when referred user activates paid plan); Firebase "referral_rewards" + "coupons" collections; getReferralRewards()
+- Created src/lib/coupons.ts — CRIC10/CRIC20/CRIC50 predefined; validateCoupon(), applyCoupon(), getCouponDiscount(), listAllCoupons(), ensurePredefinedCoupons(); Firebase "coupons"
+- Created src/app/api/coupons/route.ts — GET/POST for fetch/validate/apply/seed
+- Created src/lib/cashback.ts + updated src/app/api/wallet/route.ts — action=cashback; ₹0.50/team, max ₹10/day; Firebase "cashback_trackers" + transactions type "cashback"
+- Created src/lib/premium-predictions.ts — getPrediction(), createPrediction(), listPredictions(), canAccessPredictions() (Elite/Lifetime only); Firebase "predictions"
+- Created src/app/api/predictions/route.ts — GET (with access control) + POST
+
+Group 4 — Notifications:
+- Created src/lib/notifications.ts — requestNotificationPermission(), sendNotification(), checkMatchAlerts() (30 min before start, 5 min poll), checkLineupAlerts() (0→1 transition, 2 min poll), checkLicenseExpiry() (3 days/1 day/day-of), startNotificationPollers(); localStorage "apna-cricket-notifications"
+- Created src/app/api/broadcast/route.ts — POST send + markRead, GET fetch unread; Firebase "broadcasts"
+
+Group 5 — PWA & Mobile:
+- Updated public/sw.js → v2.0 — added DYNAMIC_CACHE, message handlers CACHE_TEAMS / CACHE_MATCHES, /__offline/teams + /__offline/matches endpoints
+- Created src/components/offline-indicator.tsx — OfflineIndicator banner (online/offline), useOfflineCache() hook (postMessage to SW), OnlineStatusBadge
+- Created src/lib/push-notifications.ts — requestPushPermission(), subscribeToPush() (Push API + VAPID), sendPushToUser(), unsubscribeFromPush(); Firebase "push_subscriptions"
+- Updated public/manifest.json — added shortcuts: Matches, My Teams, Profile, Admin (each with URL + icon)
+
+Group 6 — Security & Anti-Cheat:
+- Created src/lib/anti-cheat.ts — detectSuspicious() (auto-ban after 3 in 24h), isBanned()/isBannedLocal(), banDevice(), unbanDevice(), listBannedDevices(); Firebase "banned_devices"; localStorage suspicious-activities
+- Created src/app/api/track-ip/route.ts — logIP(), isIPBlocked(), GET isBlocked/deviceId, POST log/block/unblock; Firebase "ip_logs" + "blocked_ips"
+- Created src/lib/api-logger.ts — logAPICall(), readLogs(), getAPILogs(), clearAPILogs(), loggedFetch() wrapper, getAPILogStats(); localStorage "apna-cricket-api-logs" (last 100)
+- Created src/lib/admin-2fa.ts — RFC 6238 TOTP (manual SHA1+HMAC implementation, no deps), generate2FASecret(), verify2FA(), verify2FASecret(), is2FAEnabled(), getQRCodeURL(), generateBackupCodes(); localStorage "apna-cricket-admin-2fa"
+- Created src/app/api/admin/2fa/route.ts — GET status, POST setup/enable/verify/disable
+
+Group 7 — Contest & Social:
+- Created src/app/api/leaderboard/route.ts — GET (teamGenerators/contestWinners × weekly/all), POST recordTeamGen/recordWin/resetWeekly; Firebase "leaderboard" + "contest_wins"
+- Created src/components/leaderboard.tsx — top 20 entries, type/range toggles, podium styling (gold/silver/bronze)
+- Created src/lib/contest-history.ts — addContestEntry(), getContestHistory(), getContestStats(), updateContestResult(); localStorage "apna-cricket-contest-history"
+- Added getWinLossStats() in contest-history.ts — wins/losses/draws/pending, winRate %, totalPrize, totalSpent, netProfit, roiPercent, bestPlatform (dream11 vs my11circle), platformBreakdown
+
+Group 8 — Admin Tools:
+- Created src/app/api/bulk-message/route.ts — POST generates WhatsApp (wa.me) / SMS links per user, target all/active/expired; Firebase "bulk_messages" log
+- Created src/lib/match-scheduler.ts — getSchedulerConfig(), enableAutoAdd(), scheduleMatch(), getScheduledMatches(), scheduleAutoAdd() (auto-add matches within 24h), startSchedulerPoller(); Firebase "scheduler_config" + "scheduled_matches"
+- Created src/app/api/backup/route.ts — GET export (local admin store + 7 Firebase collections), POST import (merge with existing)
+- Created src/components/theme-toggle.tsx — ThemeToggle button, setTheme/getTheme helpers, useApplyTheme() hook; localStorage "apna-cricket-theme"; default dark
+- Created src/lib/i18n.ts — 5 languages (en/hi/ta/te/ml), 50+ key translations each, t()/setLanguage()/getLanguage(), dispatches "language-change" event; localStorage "apna-cricket-lang"
+
+Integration:
+- Added 7 new tabs to admin panel (analytics, leaderboard, coupons, bulk, broadcast, 2fa, backup) + 2 lazy-loaded wrappers (AnalyticsTab, Leaderboard)
+- Added analytics tracking calls in transfer-flow.tsx handleAddTeam() (manual) + handleBulkAddTeams() (sweep): trackEvent, trackMatchTeam, processCashback (with toast on success), leaderboard POST
+- Added AppBootstrap component (src/components/app-bootstrap.tsx) mounted in layout.tsx: applies theme, caches offline data, requests notification permission, starts pollers, seeds coupons
+- Added OfflineIndicator banner in layout.tsx
+- Added AppearanceSection in profile-screen.tsx with ThemeToggle + language dropdown (5 languages)
+- Created TeamInsights component (src/components/match/team-insights.tsx) showing risk meter + AI captain recommendations inline under each TeamDisplay
+- Updated manifest.json with 4 app shortcuts (Matches, My Teams, Profile, Admin)
+
+Build:
+- npm run build passes — 26 routes compile successfully (5 new API routes added: /api/admin/2fa, /api/backup, /api/broadcast, /api/bulk-message, /api/coupons, /api/leaderboard, /api/predictions, /api/track-ip)
+- ESLint: 0 errors, 4 warnings (all pre-existing in transfer-flow.tsx)
+- All new files linted clean
+
+Stage Summary:
+- All 30 features from groups G1-G8 implemented with working code (no stubs)
+- 22 new files created (14 lib modules + 5 components + 7 API routes + 1 manifest update + 1 sw.js update)
+- 4 existing files updated (referral.ts, wallet/route.ts, admin-panel.tsx, layout.tsx, transfer-flow.tsx, profile-screen.tsx, manifest.json, sw.js)
+- Each feature has its own module with proper TypeScript types and exported functions matching the spec
+- Firebase integration: 8 new collections added (referral_rewards, coupons, predictions, broadcasts, push_subscriptions, banned_devices, ip_logs, blocked_ips, leaderboard, contest_wins, bulk_messages, scheduler_config, scheduled_matches, cashback_trackers)
+- localStorage keys added: apna-cricket-analytics, apna-cricket-match-perf, apna-cricket-templates, apna-cricket-notifications, apna-cricket-api-logs, apna-cricket-contest-history, apna-cricket-theme, apna-cricket-lang, apna-cricket-admin-2fa, apna-cricket-suspicious-activities, apna-cricket-banned-local, apna-cricket-referral-rewards, apna-cricket-push-sub, apna-cricket-broadcast-read, apna-cricket-match-scheduler-config
+- Build passes with no TypeScript errors

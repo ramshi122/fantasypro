@@ -1,0 +1,2002 @@
+     1→"use client";
+     2→
+     3→import { useEffect, useState } from "react";
+     4→import { motion, AnimatePresence } from "framer-motion";
+     5→import {
+     6→  Activity,
+     7→  AlertTriangle,
+     8→  Ban,
+     9→  Bell,
+    10→  Check,
+    11→  CheckCircle2,
+    12→  ChevronRight,
+    13→  Copy,
+    14→  CreditCard,
+    15→  Crown,
+    16→  Delete,
+    17→  Download,
+    18→  Eye,
+    19→  EyeOff,
+    20→  Key,
+    21→  Loader2,
+    22→  Lock,
+    23→  LogOut,
+    24→  Power,
+    25→  Plus,
+    26→  RefreshCw,
+    27→  Send,
+    28→  Settings,
+    29→  Shield,
+    30→  ShieldCheck,
+    31→  Smartphone,
+    32→  Trash2,
+    33→  Trophy,
+    34→  Unlock,
+    35→  User,
+    36→  Users,
+    37→  X,
+    38→  Zap,
+    39→} from "lucide-react";
+    40→import { Button } from "@/components/ui/button";
+    41→import { Input } from "@/components/ui/input";
+    42→import { toast } from "sonner";
+    43→import { useAdmin, type KeyType, type KeyStatus } from "@/lib/admin-store";
+    44→import { ErrorBoundary } from "@/components/error-boundary";
+    45→import { cn } from "@/lib/utils";
+    46→
+    47→type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "payments" | "matches" | "subscriptions" | "users" | "announcements" | "logs" | "settings";
+    48→
+    49→interface AdminPanelProps {
+    50→  open: boolean;
+    51→  onClose: () => void;
+    52→}
+    53→
+    54→export function AdminPanel({ open, onClose }: AdminPanelProps) {
+    55→  const admin = useAdmin();
+    56→  const [tab, setTab] = useState<Tab>("dashboard");
+    57→
+    58→  // Login gate
+    59→  if (!admin.isAdminAuthenticated) {
+    60→    return <AdminLoginModal open={open} onClose={onClose} />;
+    61→  }
+    62→
+    63→  if (!open) return null;
+    64→
+    65→  const tabs: Array<{ id: Tab; label: string; icon: typeof Key }> = [
+    66→    { id: "dashboard", label: "Dashboard", icon: Activity },
+    67→    { id: "licenses", label: "Licenses", icon: Key },
+    68→    { id: "devices", label: "Devices", icon: Smartphone },
+    69→    { id: "team-control", label: "Generator", icon: Zap },
+    70→    { id: "contests", label: "Contests", icon: Trophy },
+    71→    { id: "payments", label: "Payments", icon: CreditCard },
+    72→    { id: "matches", label: "Matches", icon: Activity },
+    73→    { id: "subscriptions", label: "Subs", icon: Crown },
+    74→    { id: "users", label: "Users", icon: Users },
+    75→    { id: "announcements", label: "Announce", icon: Bell },
+    76→    { id: "logs", label: "Logs", icon: Activity },
+    77→    { id: "settings", label: "Settings", icon: Settings },
+    78→  ];
+    79→
+    80→  return (
+    81→    <AnimatePresence>
+    82→      {open && (
+    83→        <motion.div
+    84→          initial={{ opacity: 0 }}
+    85→          animate={{ opacity: 1 }}
+    86→          exit={{ opacity: 0 }}
+    87→          className="fixed inset-0 z-[90] bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4"
+    88→          onClick={onClose}
+    89→        >
+    90→          <motion.div
+    91→            initial={{ scale: 0.95, opacity: 0 }}
+    92→            animate={{ scale: 1, opacity: 1 }}
+    93→            exit={{ scale: 0.95, opacity: 0 }}
+    94→            className="bg-slate-900 dark:bg-slate-950 w-full max-w-5xl h-[92vh] rounded-2xl border border-violet-800/40 shadow-2xl flex flex-col overflow-hidden"
+    95→            onClick={(e) => e.stopPropagation()}
+    96→          >
+    97→            {/* Header */}
+    98→            <div className="bg-gradient-to-r from-violet-900 via-purple-900 to-fuchsia-900 text-white p-4 flex items-center justify-between">
+    99→              <div className="flex items-center gap-2.5">
+   100→                <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur-md flex items-center justify-center">
+   101→                  <Shield className="w-5 h-5" />
+   102→                </div>
+   103→                <div>
+   104→                  <h2 className="font-black text-base flex items-center gap-2">
+   105→                    APNA CRICKET ADMIN
+   106→                    <span className="text-[9px] bg-emerald-500 px-1.5 py-0.5 rounded-full font-bold">LIVE</span>
+   107→                  </h2>
+   108→                  <p className="text-[10px] text-white/70">Hidden admin mode · {admin.adminUsername}</p>
+   109→                </div>
+   110→              </div>
+   111→              <div className="flex items-center gap-2">
+   112→                <Button
+   113→                  size="sm"
+   114→                  variant="ghost"
+   115→                  className="text-white hover:bg-white/20 h-8 text-xs"
+   116→                  onClick={() => {
+   117→                    admin.logout();
+   118→                    onClose();
+   119→                    toast.success("Admin logged out");
+   120→                  }}
+   121→                >
+   122→                  <LogOut className="w-3.5 h-3.5 mr-1" />
+   123→                  Logout
+   124→                </Button>
+   125→                <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20">
+   126→                  <X className="w-5 h-5" />
+   127→                </button>
+   128→              </div>
+   129→            </div>
+   130→
+   131→            {/* Tab bar */}
+   132→            <div className="bg-slate-800/80 border-b border-slate-700 px-2 flex gap-1 overflow-x-auto no-scrollbar">
+   133→              {tabs.map((t) => {
+   134→                const Icon = t.icon;
+   135→                return (
+   136→                  <button
+   137→                    key={t.id}
+   138→                    onClick={() => setTab(t.id)}
+   139→                    className={cn(
+   140→                      "flex items-center gap-1.5 px-3 py-2.5 text-xs font-bold whitespace-nowrap border-b-2 transition-colors",
+   141→                      tab === t.id
+   142→                        ? "border-violet-500 text-white bg-slate-800"
+   143→                        : "border-transparent text-slate-400 hover:text-white hover:bg-slate-800/50"
+   144→                    )}
+   145→                  >
+   146→                    <Icon className="w-3.5 h-3.5" />
+   147→                    {t.label}
+   148→                  </button>
+   149→                );
+   150→              })}
+   151→            </div>
+   152→
+   153→            {/* Content */}
+   154→            <div className="flex-1 overflow-y-auto scrollbar-thin p-4 bg-slate-900">
+   155→              <ErrorBoundary fallback={<div className="p-4 text-center text-red-400 text-xs">Error loading this tab. Try another tab.</div>}>
+   156→              {tab === "dashboard" && <DashboardTab />}
+   157→              {tab === "licenses" && <LicensesTab />}
+   158→              {tab === "devices" && <DevicesTab />}
+   159→              {tab === "team-control" && <TeamControlTab />}
+   160→              {tab === "contests" && <ContestsTab />}
+   161→              {tab === "payments" && <PaymentsTab />}
+   162→              {tab === "matches" && <MatchesTab />}
+   163→              {tab === "subscriptions" && <SubscriptionsTab />}
+   164→              {tab === "users" && <UsersTab />}
+   165→              {tab === "announcements" && <AnnouncementsTab />}
+   166→              {tab === "logs" && <LogsTab />}
+   167→              {tab === "settings" && <SettingsTab />}
+   168→              </ErrorBoundary>
+   169→            </div>
+   170→          </motion.div>
+   171→        </motion.div>
+   172→      )}
+   173→    </AnimatePresence>
+   174→  );
+   175→}
+   176→
+   177→/* ---------- Login Modal ---------- */
+   178→
+   179→function AdminLoginModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+   180→  const admin = useAdmin();
+   181→  const [password, setPassword] = useState("");
+   182→  const [show, setShow] = useState(false);
+   183→  const [loading, setLoading] = useState(false);
+   184→
+   185→  if (!open) return null;
+   186→
+   187→  function handleLogin() {
+   188→    if (!password.trim()) {
+   189→      toast.error("Enter password");
+   190→      return;
+   191→    }
+   192→    setLoading(true);
+   193→    setTimeout(() => {
+   194→      const ok = admin.login("", password);
+   195→      setLoading(false);
+   196→      if (ok) {
+   197→        toast.success("Admin login successful");
+   198→      } else {
+   199→        toast.error("Invalid password");
+   200→      }
+   201→    }, 400);
+   202→  }
+   203→
+   204→  return (
+   205→    <AnimatePresence>
+   206→      {open && (
+   207→        <motion.div
+   208→          initial={{ opacity: 0 }}
+   209→          animate={{ opacity: 1 }}
+   210→          exit={{ opacity: 0 }}
+   211→          className="fixed inset-0 z-[90] bg-black/80 backdrop-blur-md flex items-center justify-center p-4"
+   212→          onClick={onClose}
+   213→        >
+   214→          <motion.div
+   215→            initial={{ scale: 0.9, opacity: 0 }}
+   216→            animate={{ scale: 1, opacity: 1 }}
+   217→            exit={{ scale: 0.9, opacity: 0 }}
+   218→            className="bg-slate-900 w-full max-w-sm rounded-2xl border border-violet-800/40 shadow-2xl overflow-hidden"
+   219→            onClick={(e) => e.stopPropagation()}
+   220→          >
+   221→            {/* Header */}
+   222→            <div className="bg-gradient-to-br from-violet-900 via-purple-900 to-fuchsia-900 text-white p-5 text-center relative overflow-hidden">
+   223→              <div className="absolute -top-8 -right-8 w-32 h-32 bg-white/10 rounded-full" />
+   224→              <div className="absolute -bottom-8 -left-8 w-32 h-32 bg-white/5 rounded-full" />
+   225→              <motion.div
+   226→                initial={{ scale: 0 }}
+   227→                animate={{ scale: 1 }}
+   228→                transition={{ type: "spring", stiffness: 200 }}
+   229→                className="w-14 h-14 mx-auto rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center mb-2"
+   230→              >
+   231→                <Shield className="w-7 h-7" />
+   232→              </motion.div>
+   233→              <h2 className="font-black text-lg">APNA CRICKET ADMIN</h2>
+   234→              <p className="text-[11px] text-white/70 mt-0.5">Restricted access · Password protected</p>
+   235→            </div>
+   236→
+   237→            {/* Form — password only */}
+   238→            <div className="p-5 space-y-3">
+   239→              <div>
+   240→                <label className="text-[11px] font-bold text-slate-300 mb-1 block">ADMIN PASSWORD</label>
+   241→                <div className="relative">
+   242→                  <Input
+   243→                    type={show ? "text" : "password"}
+   244→                    value={password}
+   245→                    onChange={(e) => setPassword(e.target.value)}
+   246→                    placeholder="Enter password"
+   247→                    className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 h-12 text-base pr-10"
+   248→                    onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+   249→                    autoFocus
+   250→                  />
+   251→                  <button
+   252→                    onClick={() => setShow((s) => !s)}
+   253→                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400"
+   254→                  >
+   255→                    {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+   256→                  </button>
+   257→                </div>
+   258→              </div>
+   259→              <Button
+   260→                onClick={handleLogin}
+   261→                disabled={loading}
+   262→                className="w-full h-11 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white font-bold text-base"
+   263→              >
+   264→                {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Lock className="w-4 h-4 mr-2" />}
+   265→                {loading ? "Authenticating..." : "Login"}
+   266→              </Button>
+   267→              <Button variant="ghost" size="sm" className="w-full text-slate-400" onClick={onClose}>
+   268→                Close
+   269→              </Button>
+   270→            </div>
+   271→          </motion.div>
+   272→        </motion.div>
+   273→      )}
+   274→    </AnimatePresence>
+   275→  );
+   276→}
+   277→
+   278→/* ---------- Dashboard Tab ---------- */
+   279→
+   280→function DashboardTab() {
+   281→  // Select raw data and compute stats in useMemo to avoid infinite loop
+   282→  const keys = useAdmin((s) => s.keys);
+   283→  const devices = useAdmin((s) => s.devices);
+   284→  const users = useAdmin((s) => s.users);
+   285→  const logs = useAdmin((s) => s.logs);
+   286→  const [syncing, setSyncing] = useState(false);
+   287→
+   288→  // Sync keys from Firebase — ensures all admin panels show SAME keys
+   289→  async function syncFromFirebase() {
+   290→    setSyncing(true);
+   291→    try {
+   292→      const { db } = await import("@/lib/firebase");
+   293→      if (!db) {
+   294→        toast.error("Firebase not configured");
+   295→        return;
+   296→      }
+   297→      const { collection, getDocs } = await import("firebase/firestore");
+   298→      const { syncKeyToFirestore, bulkSyncKeysToFirestore } = await import("@/lib/firebase-license");
+   299→
+   300→      // 1. Fetch all keys from Firebase
+   301→      const snap = await getDocs(collection(db, "license_keys"));
+   302→      const firebaseKeys: any[] = [];
+   303→      snap.forEach((docSnap) => {
+   304→        firebaseKeys.push({ key: docSnap.id, ...docSnap.data() });
+   305→      });
+   306→
+   307→      // 2. Get local keys
+   308→      const localKeys = useAdmin.getState().keys;
+   309→      const firebaseKeySet = new Set(firebaseKeys.map((k: any) => k.key));
+   310→
+   311→      // 3. Sync local-only keys UP to Firebase
+   312→      const localOnlyKeys = localKeys.filter((k) => !firebaseKeySet.has(k.key));
+   313→      if (localOnlyKeys.length > 0) {
+   314→        await bulkSyncKeysToFirestore(localOnlyKeys);
+   315→      }
+   316→
+   317→      // 4. Merge Firebase keys DOWN to local
+   318→      const localKeyMap = new Map(localKeys.map((k) => [k.key, k]));
+   319→      const mergedKeys = [
+   320→        ...localKeys,
+   321→        ...firebaseKeys.filter((fk) => !localKeyMap.has(fk.key)).map((fk) => ({
+   322→          key: fk.key,
+   323→          type: fk.type || "trial",
+   324→          status: fk.status || "active",
+   325→          createdAt: fk.createdAt || Date.now(),
+   326→          expiresAt: fk.expiresAt || null,
+   327→          deviceIds: fk.deviceIds || [],
+   328→          verifications: fk.verifications || 0,
+   329→          userName: fk.userName || fk.mobile || "",
+   330→          mobile: fk.mobile || "",
+   331→        })),
+   332→      ];
+   333→
+   334→      useAdmin.setState({ keys: mergedKeys });
+   335→      toast.success(`✓ Synced: ${localKeys.length} local + ${firebaseKeys.length} Firebase = ${mergedKeys.length} total`);
+   336→    } catch (err: any) {
+   337→      toast.error(err?.message || "Sync failed");
+   338→    } finally {
+   339→      setSyncing(false);
+   340→    }
+   341→  }
+   342→
+   343→  const stats = (() => {
+   344→    const now = Date.now();
+   345→    const todayStart = new Date().setHours(0, 0, 0, 0);
+   346→    return {
+   347→      totalKeys: keys.length,
+   348→      activeKeys: keys.filter((k) => k.status === "active" && (!k.expiresAt || k.expiresAt > now)).length,
+   349→      usedKeys: keys.filter((k) => k.status === "used").length,
+   350→      expiredKeys: keys.filter((k) => k.status === "expired" || (k.expiresAt && k.expiresAt < now)).length,
+   351→      activeDevices: devices.filter((d) => d.status === "allowed").length,
+   352→      todayVerifications: logs.filter((l) => l.type === "key_verification" && l.timestamp >= todayStart).length,
+   353→      totalUsers: users.length,
+   354→      teamsGeneratedToday: logs.filter((l) => l.type === "team_generation" && l.timestamp >= todayStart).length,
+   355→    };
+   356→  })();
+   357→
+   358→  const cards = [
+   359→    { label: "Total Keys", value: stats.totalKeys, icon: Key, color: "from-violet-500 to-purple-600" },
+   360→    { label: "Active Keys", value: stats.activeKeys, icon: ShieldCheck, color: "from-emerald-500 to-green-600" },
+   361→    { label: "Used Keys", value: stats.usedKeys, icon: Check, color: "from-sky-500 to-blue-600" },
+   362→    { label: "Expired Keys", value: stats.expiredKeys, icon: AlertTriangle, color: "from-amber-500 to-orange-600" },
+   363→    { label: "Active Devices", value: stats.activeDevices, icon: Smartphone, color: "from-pink-500 to-rose-600" },
+   364→    { label: "Today Verifications", value: stats.todayVerifications, icon: Activity, color: "from-cyan-500 to-teal-600" },
+   365→    { label: "Total Users", value: stats.totalUsers, icon: Users, color: "from-indigo-500 to-violet-600" },
+   366→    { label: "Teams Today", value: stats.teamsGeneratedToday, icon: Zap, color: "from-fuchsia-500 to-pink-600" },
+   367→  ];
+   368→  return (
+   369→    <div className="space-y-4">
+   370→      <div className="flex items-center justify-between">
+   371→        <h3 className="text-sm font-bold text-white">Dashboard Overview</h3>
+   372→        <Button
+   373→          size="sm"
+   374→          className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs"
+   375→          onClick={syncFromFirebase}
+   376→          disabled={syncing}
+   377→        >
+   378→          {syncing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+   379→          Sync from Firebase
+   380→        </Button>
+   381→      </div>
+   382→      <div className="bg-emerald-900/20 border border-emerald-800/50 rounded-lg p-2 text-[10px] text-emerald-300">
+   383→        ✓ All admin panels now sync from Firebase — keys, plans, and data are the SAME across all devices/APKs
+   384→      </div>
+   385→      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+   386→        {cards.map((c) => {
+   387→          const Icon = c.icon;
+   388→          return (
+   389→            <div key={c.label} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+   390→              <div className={cn("w-8 h-8 rounded-lg bg-gradient-to-br flex items-center justify-center mb-2", c.color)}>
+   391→                <Icon className="w-4 h-4 text-white" />
+   392→              </div>
+   393→              <p className="text-2xl font-black text-white">{c.value}</p>
+   394→              <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">{c.label}</p>
+   395→            </div>
+   396→          );
+   397→        })}
+   398→      </div>
+   399→    </div>
+   400→  );
+   401→}
+   402→
+   403→/* ---------- Licenses Tab ---------- */
+   404→
+   405→function LicensesTab() {
+   406→  const admin = useAdmin();
+   407→  const [search, setSearch] = useState("");
+   408→  const [bulkCount, setBulkCount] = useState(10);
+   409→  const [bulkType, setBulkType] = useState<KeyType>("weekly");
+   410→  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+   411→
+   412→  const filtered = admin.keys.filter(
+   413→    (k) =>
+   414→      k.key.toLowerCase().includes(search.toLowerCase()) ||
+   415→      k.userName?.toLowerCase().includes(search.toLowerCase())
+   416→  );
+   417→
+   418→  const keyTypes: KeyType[] = ["trial", "match_basic", "match_full", "weekly", "monthly", "elite", "lifetime"];
+   419→  const statusColors: Record<KeyStatus, string> = {
+   420→    active: "bg-emerald-500",
+   421→    used: "bg-sky-500",
+   422→    expired: "bg-amber-500",
+   423→    suspended: "bg-red-500",
+   424→  };
+   425→
+   426→  return (
+   427→    <div className="space-y-4">
+   428→      <div className="flex items-center justify-between flex-wrap gap-2">
+   429→        <h3 className="text-sm font-bold text-white">License Management</h3>
+   430→        <div className="flex gap-2 flex-wrap">
+   431→          <select
+   432→            value={bulkType}
+   433→            onChange={(e) => setBulkType(e.target.value as KeyType)}
+   434→            className="bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2 h-8"
+   435→          >
+   436→            {keyTypes.map((t) => (
+   437→              <option key={t} value={t}>{t}</option>
+   438→            ))}
+   439→          </select>
+   440→          <select
+   441→            value={bulkCount}
+   442→            onChange={(e) => setBulkCount(Number(e.target.value))}
+   443→            className="bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2 h-8"
+   444→          >
+   445→            <option value={1}>Single</option>
+   446→            <option value={10}>10 Keys</option>
+   447→            <option value={50}>50 Keys</option>
+   448→            <option value={100}>100 Keys</option>
+   449→            <option value={500}>500 Keys</option>
+   450→          </select>
+   451→          <Button
+   452→            size="sm"
+   453→            className="bg-violet-600 hover:bg-violet-700 text-white h-8 text-xs"
+   454→            onClick={() => {
+   455→              if (bulkCount === 1) {
+   456→                const k = admin.generateKey(bulkType);
+   457→                toast.success(`Generated: ${k}`);
+   458→              } else {
+   459→                const keys = admin.generateBulkKeys(bulkCount, bulkType);
+   460→                toast.success(`Generated ${keys.length} keys`);
+   461→              }
+   462→            }}
+   463→          >
+   464→            <Key className="w-3 h-3 mr-1" />
+   465→            Generate
+   466→          </Button>
+   467→          <Button
+   468→            size="sm"
+   469→            className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs"
+   470→            onClick={() => {
+   471→              const fixed = admin.validateAllKeys();
+   472→              if (fixed > 0) {
+   473→                toast.success(`✅ Validated all keys — ${fixed} key(s) fixed (expired/suspended re-activated, expiry extended)`);
+   474→              } else {
+   475→                toast.success(`✅ All ${admin.keys.length} keys are already valid`);
+   476→              }
+   477→            }}
+   478→            title="Re-activate any expired/suspended keys and extend past-expiry dates"
+   479→          >
+   480→            <CheckCircle2 className="w-3 h-3 mr-1" />
+   481→            Validate All
+   482→          </Button>
+   483→          <Button
+   484→            size="sm"
+   485→            className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs"
+   486→            onClick={async () => {
+   487→              toast.info("Syncing keys to Firebase...");
+   488→              try {
+   489→                const { initFirebase, bulkSyncKeysToFirestore } = await import("@/lib/firebase-license");
+   490→                initFirebase(admin.settings.firebaseConfig);
+   491→                const res = await bulkSyncKeysToFirestore(admin.keys);
+   492→                if (res.synced > 0) {
+   493→                  toast.success(`✅ Synced ${res.synced}/${admin.keys.length} keys to Firebase`);
+   494→                } else {
+   495→                  toast.error("❌ Firebase not configured — add config in Settings tab");
+   496→                }
+   497→              } catch (err: any) {
+   498→                toast.error(err?.message || "Sync failed");
+   499→              }
+   500→            }}
+   501→            title="Upload all local keys to Firebase Firestore"
+   502→          >
+   503→            <ShieldCheck className="w-3 h-3 mr-1" />
+   504→            Sync Firebase
+   505→          </Button>
+   506→          <Button
+   507→            size="sm"
+   508→            className="bg-red-600 hover:bg-red-700 text-white h-8 text-xs"
+   509→            onClick={async () => {
+   510→              if (!confirm("Suspend ALL active keys in Firebase? Users will be locked out immediately.")) return;
+   511→              toast.info("Suspending all keys in Firebase...");
+   512→              try {
+   513→                const { initFirebase, suspendAllKeysInFirestore } = await import("@/lib/firebase-license");
+   514→                initFirebase(admin.settings.firebaseConfig);
+   515→                const res = await suspendAllKeysInFirestore();
+   516→                if (res.suspended > 0) {
+   517→                  toast.success(`🚫 Suspended ${res.suspended} keys in Firebase`);
+   518→                } else {
+   519→                  toast.error("❌ No keys suspended — Firebase not configured or no active keys");
+   520→                }
+   521→              } catch (err: any) {
+   522→                toast.error(err?.message || "Suspend failed");
+   523→              }
+   524→            }}
+   525→            title="Suspend ALL active keys in Firebase (emergency)"
+   526→          >
+   527→            <Ban className="w-3 h-3 mr-1" />
+   528→            Ban All
+   529→          </Button>
+   530→        </div>
+   531→
+   532→        {/* Firebase status indicator */}
+   533→        <div className="flex items-center gap-2 text-[10px] text-slate-400">
+   534→          <span className={cn(
+   535→            "w-2 h-2 rounded-full",
+   536→            admin.settings.firebaseConfig ? "bg-emerald-500" : "bg-slate-600"
+   537→          )} />
+   538→          {admin.settings.firebaseConfig
+   539→            ? "Firebase configured — keys sync on generate"
+   540→            : "Firebase NOT configured — keys saved locally only. Add config in Settings."}
+   541→        </div>
+   542→      </div>
+   543→
+   544→      {/* Search */}
+   545→      <Input
+   546→        value={search}
+   547→        onChange={(e) => setSearch(e.target.value)}
+   548→        placeholder="Search by key or user..."
+   549→        className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 h-9 text-sm"
+   550→      />
+   551→
+   552→      {/* Keys list */}
+   553→      <div className="space-y-2 max-h-[60vh] overflow-y-auto scrollbar-thin">
+   554→        {filtered.length === 0 ? (
+   555→          <p className="text-center text-slate-500 py-8 text-sm">No keys found</p>
+   556→        ) : (
+   557→          filtered.map((k) => (
+   558→            <div key={k.key} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+   559→              <div className="flex items-center justify-between flex-wrap gap-2">
+   560→                <div className="flex-1 min-w-0">
+   561→                  <div className="flex items-center gap-2 flex-wrap">
+   562→                    <code className="text-xs font-mono text-violet-300 font-bold">{k.key}</code>
+   563→                    <span className={cn("text-[8px] font-bold text-white px-1.5 py-0.5 rounded-full uppercase", statusColors[k.status])}>
+   564→                      {k.status}
+   565→                    </span>
+   566→                    <span className="text-[8px] font-bold text-slate-400 bg-slate-700 px-1.5 py-0.5 rounded-full uppercase">
+   567→                      {k.type}
+   568→                    </span>
+   569→                  </div>
+   570→                  <p className="text-[10px] text-slate-500 mt-1">
+   571→                    {k.userName ? `User: ${k.userName} · ` : ""}
+   572→                    Devices: {k.deviceIds.length} · Verifications: {k.verifications}
+   573→                    {k.expiresAt && ` · Expires: ${new Date(k.expiresAt).toLocaleDateString()}`}
+   574→                  </p>
+   575→                </div>
+   576→                <div className="flex gap-1">
+   577→                  <ActionBtn label="Copy" icon={Copy} onClick={() => { navigator.clipboard.writeText(k.key); toast.success("Key copied"); }} />
+   578→                  {k.status === "suspended" ? (
+   579→                    <ActionBtn label="Activate" icon={Unlock} onClick={() => admin.activateKey(k.key)} color="emerald" />
+   580→                  ) : (
+   581→                    <ActionBtn label="Suspend" icon={Ban} onClick={() => admin.suspendKey(k.key)} color="amber" />
+   582→                  )}
+   583→                  <ActionBtn label="Extend" icon={Power} onClick={() => { admin.extendExpiry(k.key, 7); toast.success("Extended 7 days"); }} color="sky" />
+   584→                  <ActionBtn label="Reset" icon={Smartphone} onClick={() => admin.resetDevice(k.key)} color="violet" />
+   585→                  <ActionBtn label="Delete" icon={Trash2} onClick={() => admin.deleteKey(k.key)} color="red" />
+   586→                </div>
+   587→              </div>
+   588→            </div>
+   589→          ))
+   590→        )}
+   591→      </div>
+   592→    </div>
+   593→  );
+   594→}
+   595→
+   596→function ActionBtn({
+   597→  label,
+   598→  icon: Icon,
+   599→  onClick,
+   600→  color = "slate",
+   601→}: {
+   602→  label: string;
+   603→  icon: typeof Key;
+   604→  onClick: () => void;
+   605→  color?: "slate" | "emerald" | "amber" | "sky" | "violet" | "red";
+   606→}) {
+   607→  const colors = {
+   608→    slate: "bg-slate-700 hover:bg-slate-600 text-slate-200",
+   609→    emerald: "bg-emerald-600 hover:bg-emerald-700 text-white",
+   610→    amber: "bg-amber-600 hover:bg-amber-700 text-white",
+   611→    sky: "bg-sky-600 hover:bg-sky-700 text-white",
+   612→    violet: "bg-violet-600 hover:bg-violet-700 text-white",
+   613→    red: "bg-red-600 hover:bg-red-700 text-white",
+   614→  };
+   615→  return (
+   616→    <button
+   617→      onClick={onClick}
+   618→      className={cn("px-2 h-7 rounded-md text-[10px] font-bold flex items-center gap-1 transition-colors", colors[color])}
+   619→      title={label}
+   620→    >
+   621→      <Icon className="w-2.5 h-2.5" />
+   622→      {label}
+   623→    </button>
+   624→  );
+   625→}
+   626→
+   627→/* ---------- Devices Tab ---------- */
+   628→
+   629→function DevicesTab() {
+   630→  const admin = useAdmin();
+   631→  const [search, setSearch] = useState("");
+   632→  const filtered = admin.devices.filter(
+   633→    (d) =>
+   634→      d.deviceId.toLowerCase().includes(search.toLowerCase()) ||
+   635→      d.userName?.toLowerCase().includes(search.toLowerCase()) ||
+   636→      d.licenseKey?.toLowerCase().includes(search.toLowerCase())
+   637→  );
+   638→  return (
+   639→    <div className="space-y-4">
+   640→      <h3 className="text-sm font-bold text-white">Device Binding Manager</h3>
+   641→      <Input
+   642→        value={search}
+   643→        onChange={(e) => setSearch(e.target.value)}
+   644→        placeholder="Search by device ID, user, or license..."
+   645→        className="bg-slate-800 border-slate-700 text-white h-9 text-sm"
+   646→      />
+   647→      <div className="space-y-2 max-h-[60vh] overflow-y-auto scrollbar-thin">
+   648→        {filtered.map((d) => (
+   649→          <div key={d.deviceId} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+   650→            <div className="flex items-center justify-between flex-wrap gap-2">
+   651→              <div className="flex-1 min-w-0">
+   652→                <div className="flex items-center gap-2">
+   653→                  <code className="text-xs font-mono text-violet-300">{d.deviceId}</code>
+   654→                  <span className={cn("text-[8px] font-bold text-white px-1.5 py-0.5 rounded-full uppercase", d.status === "banned" ? "bg-red-500" : "bg-emerald-500")}>
+   655→                    {d.status}
+   656→                  </span>
+   657→                </div>
+   658→                <p className="text-[10px] text-slate-500 mt-1">
+   659→                  {d.userName ? `User: ${d.userName} · ` : ""}
+   660→                  {d.licenseKey ? `License: ${d.licenseKey} · ` : ""}
+   661→                  Last: {d.lastLogin ? new Date(d.lastLogin).toLocaleString() : "Never"}
+   662→                </p>
+   663→              </div>
+   664→              <div className="flex gap-1">
+   665→                <ActionBtn label="Unbind" icon={Delete} onClick={() => admin.unbindDevice(d.deviceId)} color="amber" />
+   666→                <ActionBtn label="Logout" icon={LogOut} onClick={() => admin.forceLogout(d.deviceId)} color="sky" />
+   667→                {d.status === "banned" ? (
+   668→                  <ActionBtn label="Allow" icon={Unlock} onClick={() => admin.allowDevice(d.deviceId)} color="emerald" />
+   669→                ) : (
+   670→                  <ActionBtn label="Ban" icon={Ban} onClick={() => admin.banDevice(d.deviceId)} color="red" />
+   671→                )}
+   672→              </div>
+   673→            </div>
+   674→          </div>
+   675→        ))}
+   676→      </div>
+   677→    </div>
+   678→  );
+   679→}
+   680→
+   681→/* ---------- Team Control Tab ---------- */
+   682→
+   683→function TeamControlTab() {
+   684→  const admin = useAdmin();
+   685→  const features: Array<{ key: keyof typeof admin.settings.teamGenerator; label: string }> = [
+   686→    { key: "enabled", label: "Team Generator" },
+   687→    { key: "autoTeamGenerator", label: "Auto Team Generator" },
+   688→    { key: "glGenerator", label: "GL Generator" },
+   689→    { key: "groupCombination", label: "Group Combination" },
+   690→    { key: "cheatSheet", label: "Cheat Sheet" },
+   691→    { key: "dtAnalysis", label: "DT Analysis" },
+   692→    { key: "transferTeam", label: "Transfer Team" },
+   693→    { key: "autoPick", label: "Auto Pick" },
+   694→  ];
+   695→  return (
+   696→    <div className="space-y-4">
+   697→      <h3 className="text-sm font-bold text-white">Team Generator Control</h3>
+   698→
+   699→      {/* Emergency disable */}
+   700→      <div className="bg-red-950/40 border border-red-800 rounded-xl p-3">
+   701→        <p className="text-xs font-bold text-red-300 mb-2">Emergency Control</p>
+   702→        <Button
+   703→          size="sm"
+   704→          className="bg-red-600 hover:bg-red-700 text-white h-8 text-xs"
+   705→          onClick={() => {
+   706→            const features = admin.settings.teamGenerator;
+   707→            const allOn = Object.values(features).every(Boolean);
+   708→            if (allOn) {
+   709→              (Object.keys(features) as Array<keyof typeof features>).forEach((k) => {
+   710→                if (!features[k]) admin.toggleFeature(k);
+   711→                else admin.toggleFeature(k);
+   712→              });
+   713→              toast.success("All features disabled");
+   714→            } else {
+   715→              (Object.keys(features) as Array<keyof typeof features>).forEach((k) => {
+   716→                if (!features[k]) admin.toggleFeature(k);
+   717→              });
+   718→              toast.success("All features enabled");
+   719→            }
+   720→          }}
+   721→        >
+   722→          <Power className="w-3 h-3 mr-1" />
+   723→          Disable Entire Team Generator
+   724→        </Button>
+   725→      </div>
+   726→
+   727→      {/* Master switches */}
+   728→      <div className="space-y-2">
+   729→        {features.map((f) => {
+   730→          const enabled = admin.settings.teamGenerator[f.key];
+   731→          return (
+   732→            <label key={f.key} className="flex items-center justify-between bg-slate-800 rounded-xl p-3 border border-slate-700 cursor-pointer">
+   733→              <div className="flex items-center gap-2">
+   734→                <Zap className={cn("w-4 h-4", enabled ? "text-emerald-400" : "text-slate-500")} />
+   735→                <span className="text-xs font-semibold text-white">Enable {f.label}</span>
+   736→              </div>
+   737→              <button
+   738→                onClick={() => admin.toggleFeature(f.key)}
+   739→                className={cn(
+   740→                  "w-10 h-5 rounded-full transition-colors relative",
+   741→                  enabled ? "bg-emerald-500" : "bg-slate-600"
+   742→                )}
+   743→              >
+   744→                <div className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform", enabled ? "translate-x-5" : "translate-x-0.5")} />
+   745→              </button>
+   746→            </label>
+   747→          );
+   748→        })}
+   749→      </div>
+   750→    </div>
+   751→  );
+   752→}
+   753→
+   754→/* ---------- Users Tab ---------- */
+   755→
+   756→function UsersTab() {
+   757→  const admin = useAdmin();
+   758→  return (
+   759→    <div className="space-y-4">
+   760→      <h3 className="text-sm font-bold text-white">User Management</h3>
+   761→      <div className="space-y-2 max-h-[65vh] overflow-y-auto scrollbar-thin">
+   762→        {admin.users.map((u) => (
+   763→          <div key={u.id} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+   764→            <div className="flex items-center justify-between flex-wrap gap-2">
+   765→              <div className="flex-1 min-w-0">
+   766→                <div className="flex items-center gap-2">
+   767→                  <span className="text-sm font-bold text-white">{u.name}</span>
+   768→                  {u.banned && (
+   769→                    <span className="text-[8px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full">BANNED</span>
+   770→                  )}
+   771→                </div>
+   772→                <p className="text-[10px] text-slate-500 mt-0.5">
+   773→                  Device: {u.device || "—"} · License: {u.license || "—"} · Last: {new Date(u.lastActive).toLocaleDateString()}
+   774→                </p>
+   775→              </div>
+   776→              <div className="flex gap-1">
+   777→                {u.banned ? (
+   778→                  <ActionBtn label="Unban" icon={Unlock} onClick={() => admin.unbanUser(u.id)} color="emerald" />
+   779→                ) : (
+   780→                  <ActionBtn label="Ban" icon={Ban} onClick={() => admin.banUser(u.id)} color="red" />
+   781→                )}
+   782→                <ActionBtn label="Reset" icon={Key} onClick={() => admin.resetUserLicense(u.id)} color="amber" />
+   783→                <ActionBtn label="Delete" icon={Trash2} onClick={() => admin.deleteUser(u.id)} color="red" />
+   784→              </div>
+   785→            </div>
+   786→          </div>
+   787→        ))}
+   788→      </div>
+   789→    </div>
+   790→  );
+   791→}
+   792→
+   793→/* ---------- Announcements Tab ---------- */
+   794→
+   795→function AnnouncementsTab() {
+   796→  const admin = useAdmin();
+   797→  const [title, setTitle] = useState("");
+   798→  const [message, setMessage] = useState("");
+   799→  const [target, setTarget] = useState<"all" | "premium" | "selected">("all");
+   800→
+   801→  return (
+   802→    <div className="space-y-4">
+   803→      <h3 className="text-sm font-bold text-white">Announcement Panel</h3>
+   804→      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-3">
+   805→        <Input
+   806→          value={title}
+   807→          onChange={(e) => setTitle(e.target.value)}
+   808→          placeholder="Announcement title (e.g. Server Maintenance)"
+   809→          className="bg-slate-900 border-slate-700 text-white h-9 text-sm"
+   810→        />
+   811→        <textarea
+   812→          value={message}
+   813→          onChange={(e) => setMessage(e.target.value)}
+   814→          placeholder="Message..."
+   815→          className="w-full min-h-[80px] bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
+   816→        />
+   817→        <div className="flex gap-2">
+   818→          {(["all", "premium", "selected"] as const).map((t) => (
+   819→            <button
+   820→              key={t}
+   821→              onClick={() => setTarget(t)}
+   822→              className={cn(
+   823→                "px-3 py-1.5 rounded-lg text-xs font-bold capitalize",
+   824→                target === t ? "bg-violet-600 text-white" : "bg-slate-700 text-slate-300"
+   825→              )}
+   826→            >
+   827→              {t}
+   828→            </button>
+   829→          ))}
+   830→        </div>
+   831→        <Button
+   832→          className="w-full bg-violet-600 hover:bg-violet-700 text-white h-10"
+   833→          onClick={() => {
+   834→            if (!title.trim() || !message.trim()) {
+   835→              toast.error("Enter title and message");
+   836→              return;
+   837→            }
+   838→            admin.sendAnnouncement(title, message, target);
+   839→            toast.success(`Announcement sent to ${target} users`);
+   840→            setTitle("");
+   841→            setMessage("");
+   842→          }}
+   843→        >
+   844→          <Send className="w-4 h-4 mr-2" />
+   845→          Send Announcement
+   846→        </Button>
+   847→      </div>
+   848→
+   849→      {/* History */}
+   850→      <div className="space-y-2">
+   851→        <p className="text-xs font-bold text-slate-400">Sent Announcements</p>
+   852→        {admin.announcements.length === 0 ? (
+   853→          <p className="text-center text-slate-500 py-4 text-sm">No announcements sent</p>
+   854→        ) : (
+   855→          admin.announcements.map((a) => (
+   856→            <div key={a.id} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+   857→              <div className="flex items-center gap-2 mb-1">
+   858→                <Bell className="w-3.5 h-3.5 text-violet-400" />
+   859→                <p className="text-xs font-bold text-white">{a.title}</p>
+   860→                <span className="text-[8px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded-full uppercase">{a.target}</span>
+   861→              </div>
+   862→              <p className="text-[11px] text-slate-400">{a.message}</p>
+   863→              <p className="text-[9px] text-slate-600 mt-1">{new Date(a.createdAt).toLocaleString()}</p>
+   864→            </div>
+   865→          ))
+   866→        )}
+   867→      </div>
+   868→    </div>
+   869→  );
+   870→}
+   871→
+   872→/* ---------- Logs Tab ---------- */
+   873→
+   874→function LogsTab() {
+   875→  const admin = useAdmin();
+   876→  const [filter, setFilter] = useState<"today" | "7days" | "30days">("today");
+   877→  const now = Date.now();
+   878→  const cutoff = filter === "today" ? new Date().setHours(0, 0, 0, 0) : now - (filter === "7days" ? 7 : 30) * 86400000;
+   879→  const logs = admin.logs.filter((l) => l.timestamp >= cutoff);
+   880→
+   881→  const typeColors: Record<string, string> = {
+   882→    key_verification: "bg-emerald-500",
+   883→    login_attempt: "bg-sky-500",
+   884→    team_generation: "bg-violet-500",
+   885→    device_binding: "bg-amber-500",
+   886→    admin_action: "bg-fuchsia-500",
+   887→    error: "bg-red-500",
+   888→  };
+   889→
+   890→  return (
+   891→    <div className="space-y-4">
+   892→      <div className="flex items-center justify-between">
+   893→        <h3 className="text-sm font-bold text-white">Live Activity Logs</h3>
+   894→        <div className="flex gap-1">
+   895→          {(["today", "7days", "30days"] as const).map((f) => (
+   896→            <button
+   897→              key={f}
+   898→              onClick={() => setFilter(f)}
+   899→              className={cn("px-2 py-1 rounded-md text-[10px] font-bold", filter === f ? "bg-violet-600 text-white" : "bg-slate-800 text-slate-400")}
+   900→            >
+   901→              {f === "today" ? "Today" : f === "7days" ? "7 Days" : "30 Days"}
+   902→            </button>
+   903→          ))}
+   904→        </div>
+   905→      </div>
+   906→      <div className="space-y-1.5 max-h-[65vh] overflow-y-auto scrollbar-thin">
+   907→        {logs.length === 0 ? (
+   908→          <p className="text-center text-slate-500 py-8 text-sm">No logs in this period</p>
+   909→        ) : (
+   910→          logs.map((l) => (
+   911→            <div key={l.id} className="bg-slate-800 rounded-lg p-2.5 border border-slate-700 flex items-start gap-2">
+   912→              <span className={cn("w-2 h-2 rounded-full mt-1.5 flex-shrink-0", typeColors[l.type] || "bg-slate-500")} />
+   913→              <div className="flex-1 min-w-0">
+   914→                <p className="text-[11px] text-white">{l.message}</p>
+   915→                <p className="text-[9px] text-slate-500 mt-0.5">
+   916→                  {new Date(l.timestamp).toLocaleString()} · {l.type.replace(/_/g, " ")}
+   917→                </p>
+   918→              </div>
+   919→            </div>
+   920→          ))
+   921→        )}
+   922→      </div>
+   923→      <Button variant="outline" size="sm" className="text-slate-400" onClick={() => { admin.clearLogs(); toast.success("Logs cleared"); }}>
+   924→        <Trash2 className="w-3 h-3 mr-1" />
+   925→        Clear All Logs
+   926→      </Button>
+   927→    </div>
+   928→  );
+   929→}
+   930→
+   931→/* ---------- Settings Tab ---------- */
+   932→
+   933→function SettingsTab() {
+   934→  const admin = useAdmin();
+   935→  const [newPassword, setNewPassword] = useState("");
+   936→  const [apiUrl, setApiUrl] = useState(admin.settings.apiUrl);
+   937→  const [firebase, setFirebase] = useState(admin.settings.firebaseConfig);
+   938→  const [prefix, setPrefix] = useState(admin.settings.licensePrefix);
+   939→
+   940→  return (
+   941→    <div className="space-y-4">
+   942→      <h3 className="text-sm font-bold text-white">Admin Settings</h3>
+   943→
+   944→      {/* Change password */}
+   945→      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-2">
+   946→        <p className="text-xs font-bold text-white">Change Admin Password</p>
+   947→        <Input
+   948→          type="password"
+   949→          value={newPassword}
+   950→          onChange={(e) => setNewPassword(e.target.value)}
+   951→          placeholder="New password"
+   952→          className="bg-slate-900 border-slate-700 text-white h-9 text-sm"
+   953→        />
+   954→        <Button
+   955→          size="sm"
+   956→          className="bg-violet-600 hover:bg-violet-700 text-white h-8 text-xs"
+   957→          onClick={() => {
+   958→            if (!newPassword.trim()) { toast.error("Enter new password"); return; }
+   959→            admin.changePassword(newPassword);
+   960→            setNewPassword("");
+   961→            toast.success("Password changed");
+   962→          }}
+   963→        >
+   964→          <Lock className="w-3 h-3 mr-1" />
+   965→          Update Password
+   966→        </Button>
+   967→      </div>
+   968→
+   969→      {/* API URL — hidden from UI (like original teamgeneration.in) */}
+   970→      <input type="hidden" value={apiUrl} readOnly />
+   971→
+   972→      {/* Firebase Config — hidden from UI, hardcoded internally */}
+   973→      <input type="hidden" value={firebase} readOnly />
+   974→
+   975→      {/* License prefix */}
+   976→      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-2">
+   977→        <p className="text-xs font-bold text-white">License Prefix</p>
+   978→        <Input
+   979→          value={prefix}
+   980→          onChange={(e) => setPrefix(e.target.value.toUpperCase())}
+   981→          placeholder="CRICB"
+   982→          className="bg-slate-900 border-slate-700 text-white h-9 text-sm font-mono uppercase"
+   983→        />
+   984→        <p className="text-[10px] text-slate-500">Current prefix: <span className="font-mono text-violet-300">{admin.settings.licensePrefix}</span></p>
+   985→      </div>
+   986→
+   987→      <Button
+   988→        className="w-full bg-violet-600 hover:bg-violet-700 text-white h-10"
+   989→        onClick={() => {
+   990→          admin.updateSettings({ apiUrl, firebaseConfig: firebase, licensePrefix: prefix || "CRICB" });
+   991→          toast.success("Settings saved");
+   992→        }}
+   993→      >
+   994→        <Check className="w-4 h-4 mr-2" />
+   995→        Save All Settings
+   996→      </Button>
+   997→    </div>
+   998→  );
+   999→}
+  1000→
+  1001→/* ============== CONTESTS TAB ============== */
+  1002→
+  1003→type FantasyAppSlug = "dream11" | "my11circle";
+  1004→
+  1005→interface FreeContest {
+  1006→  contestId: string;
+  1007→  contestName?: string;
+  1008→  totalPrizeAmount?: number;
+  1009→  prizeDisplayText?: string;
+  1010→  maxAllowedTeams?: number;
+  1011→  maxJoinTeamCount?: number;
+  1012→  joinedTeamIds?: number[];
+  1013→  joinedCount?: number;
+  1014→  availableSlots?: number;
+  1015→  notJoinedTeamIds?: number[];
+  1016→  canJoinMore?: boolean;
+  1017→  [k: string]: unknown;
+  1018→}
+  1019→
+  1020→interface MyTeam {
+  1021→  teamId: string;
+  1022→  teamNo: number | null;
+  1023→  fantasyApp: string;
+  1024→}
+  1025→
+  1026→interface JoinResult {
+  1027→  status: string;
+  1028→  message: string;
+  1029→  contestId: string;
+  1030→  joinResults: Array<{ teamId: number; success: boolean; error?: string; message?: string }>;
+  1031→  summary: {
+  1032→    successCount: number;
+  1033→    failedCount: number;
+  1034→    totalCount?: number;
+  1035→    batches?: number;
+  1036→    batchSize?: number;
+  1037→    shuffled?: boolean;
+  1038→  };
+  1039→  needsReauth?: boolean;
+  1040→}
+  1041→
+  1042→function ContestsTab() {
+  1043→  const [selectedApp, setSelectedApp] = useState<FantasyAppSlug>("my11circle");
+  1044→  const [jwtToken, setJwtToken] = useState("");
+  1045→  const [authToken, setAuthToken] = useState("");
+  1046→  const [matchId, setMatchId] = useState("");
+  1047→  const [contestId, setContestId] = useState("");
+  1048→  const [teamIds, setTeamIds] = useState("");
+  1049→  const [loading, setLoading] = useState(false);
+  1050→  const [freeContests, setFreeContests] = useState<FreeContest[]>([]);
+  1051→  const [myTeams, setMyTeams] = useState<MyTeam[]>([]);
+  1052→  const [joinResult, setJoinResult] = useState<JoinResult | null>(null);
+  1053→
+  1054→  // Load JWT from localStorage on mount
+  1055→  useEffect(() => {
+  1056→    if (typeof window !== "undefined") {
+  1057→      const t = localStorage.getItem("user_token") || "";
+  1058→      setJwtToken(t);
+  1059→    }
+  1060→  }, []);
+  1061→
+  1062→  function handleSaveJwt() {
+  1063→    if (typeof window !== "undefined") {
+  1064→      if (jwtToken.trim()) {
+  1065→        localStorage.setItem("user_token", jwtToken.trim());
+  1066→        toast.success("JWT token saved");
+  1067→      } else {
+  1068→        localStorage.removeItem("user_token");
+  1069→        toast.info("JWT token cleared");
+  1070→      }
+  1071→    }
+  1072→  }
+  1073→
+  1074→  // Fetch user's already-created teams for this match
+  1075→  async function handleFetchMyTeams() {
+  1076→    if (!authToken.trim() || !matchId.trim()) {
+  1077→      toast.error("Auth token and Match ID required");
+  1078→      return;
+  1079→    }
+  1080→    setLoading(true);
+  1081→    setMyTeams([]);
+  1082→    try {
+  1083→      const headers: Record<string, string> = { "Content-Type": "application/json" };
+  1084→      if (jwtToken.trim()) headers.Authorization = `Bearer ${jwtToken.trim()}`;
+  1085→
+  1086→      const res = await fetch(`/api/contest/my-teams`, {
+  1087→        method: "POST",
+  1088→        headers,
+  1089→        body: JSON.stringify({
+  1090→          fantasyApp: selectedApp,
+  1091→          authToken: authToken.trim(),
+  1092→          matchId: matchId.trim(),
+  1093→        }),
+  1094→      });
+  1095→      const data = await res.json();
+  1096→      if (data.status === "success" && Array.isArray(data.teams)) {
+  1097→        setMyTeams(data.teams);
+  1098→        // Auto-fill the Team IDs field with all team IDs
+  1099→        const ids = data.teams.map((t: MyTeam) => t.teamId).filter(Boolean);
+  1100→        if (ids.length > 0) {
+  1101→          setTeamIds(ids.join(","));
+  1102→          toast.success(`Found ${ids.length} teams — auto-filled Team IDs`);
+  1103→        } else {
+  1104→          toast.info("No teams found for this match");
+  1105→        }
+  1106→      } else {
+  1107→        toast.error(data.message || "Failed to fetch teams");
+  1108→      }
+  1109→    } catch (err: any) {
+  1110→      toast.error(err?.message || "Network error");
+  1111→    } finally {
+  1112→      setLoading(false);
+  1113→    }
+  1114→  }
+  1115→
+  1116→  // Fetch free contests
+  1117→  async function handleFetchContests() {
+  1118→    if (!authToken.trim() || !matchId.trim()) {
+  1119→      toast.error("Auth token and Match ID required");
+  1120→      return;
+  1121→    }
+  1122→    setLoading(true);
+  1123→    setFreeContests([]);
+  1124→    try {
+  1125→      const headers: Record<string, string> = { "Content-Type": "application/json" };
+  1126→      if (jwtToken.trim()) headers.Authorization = `Bearer ${jwtToken.trim()}`;
+  1127→
+  1128→      const ids = teamIds.split(",").map(t => parseInt(t.trim())).filter(n => !isNaN(n));
+  1129→
+  1130→      const res = await fetch(`/api/contest/free-status`, {
+  1131→        method: "POST",
+  1132→        headers,
+  1133→        body: JSON.stringify({
+  1134→          fantasyApp: selectedApp,
+  1135→          authToken: authToken.trim(),
+  1136→          matchId: matchId.trim(),
+  1137→          allTeamIds: ids,
+  1138→        }),
+  1139→      });
+  1140→      const data = await res.json();
+  1141→      if (data.status === "success" && Array.isArray(data.contests)) {
+  1142→        setFreeContests(data.contests);
+  1143→        toast.success(`Found ${data.contests.length} free contests`);
+  1144→      } else {
+  1145→        toast.error(data.message || "Failed to fetch contests");
+  1146→      }
+  1147→    } catch (err: any) {
+  1148→      toast.error(err?.message || "Network error");
+  1149→    } finally {
+  1150→      setLoading(false);
+  1151→    }
+  1152→  }
+  1153→
+  1154→  // Join a contest — uses /api/contest/join which now batches + shuffles
+  1155→  async function handleJoinContest(cid?: string) {
+  1156→    const cId = cid || contestId.trim();
+  1157→    if (!authToken.trim() || !matchId.trim() || !cId) {
+  1158→      toast.error("Auth token, Match ID, Contest ID required");
+  1159→      return;
+  1160→    }
+  1161→    const ids = teamIds.split(",").map(t => parseInt(t.trim())).filter(n => !isNaN(n));
+  1162→    if (ids.length === 0) {
+  1163→      toast.error("Team IDs required (comma-separated) — or click 'Fetch My Teams'");
+  1164→      return;
+  1165→    }
+  1166→    setLoading(true);
+  1167→    setJoinResult(null);
+  1168→    try {
+  1169→      const headers: Record<string, string> = { "Content-Type": "application/json" };
+  1170→      if (jwtToken.trim()) headers.Authorization = `Bearer ${jwtToken.trim()}`;
+  1171→
+  1172→      const res = await fetch(`/api/contest/join`, {
+  1173→        method: "POST",
+  1174→        headers,
+  1175→        body: JSON.stringify({
+  1176→          fantasyApp: selectedApp,
+  1177→          authToken: authToken.trim(),
+  1178→          matchId: matchId.trim(),
+  1179→          contestId: cId,
+  1180→          teamIds: ids,
+  1181→        }),
+  1182→      });
+  1183→      const data = await res.json();
+  1184→      setJoinResult(data);
+  1185→      if (data.status === "success" || data.status === "partial") {
+  1186→        const s = data.summary || {};
+  1187→        const batchesInfo = s.batches ? ` · ${s.batches} batches · shuffled` : "";
+  1188→        if (data.status === "success") {
+  1189→          toast.success(`✓ Joined ${s.successCount}/${s.totalCount || ids.length} teams${batchesInfo}`);
+  1190→        } else {
+  1191→          toast.warning(`⚠ Partial: ${s.successCount} joined, ${s.failedCount} failed${batchesInfo}`);
+  1192→        }
+  1193→      } else if (data.needsReauth) {
+  1194→        toast.error("Session expired — re-link via OTP");
+  1195→      } else {
+  1196→        toast.error(data.message || "Failed to join contest");
+  1197→      }
+  1198→    } catch (err: any) {
+  1199→      toast.error(err?.message || "Network error");
+  1200→    } finally {
+  1201→      setLoading(false);
+  1202→    }
+  1203→  }
+  1204→
+  1205→  return (
+  1206→    <div className="space-y-4 text-slate-200">
+  1207→      {/* JWT Token Section */}
+  1208→      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+  1209→        <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-2">
+  1210→          <Shield className="w-4 h-4 text-amber-400" />
+  1211→          JWT Token (Admin Auth)
+  1212→        </h3>
+  1213→        <p className="text-[10px] text-slate-400 mb-2">
+  1214→          Backend JWT token for admin API calls. Stored in localStorage as &quot;user_token&quot;.
+  1215→        </p>
+  1216→        <div className="flex gap-2">
+  1217→          <Input
+  1218→            value={jwtToken}
+  1219→            onChange={(e) => setJwtToken(e.target.value)}
+  1220→            placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+  1221→            className="bg-slate-900 border-slate-700 text-white h-9 text-xs font-mono"
+  1222→            type="password"
+  1223→          />
+  1224→          <Button
+  1225→            size="sm"
+  1226→            className="bg-amber-600 hover:bg-amber-700 text-white h-9 text-xs"
+  1227→            onClick={handleSaveJwt}
+  1228→          >
+  1229→            Save
+  1230→          </Button>
+  1231→        </div>
+  1232→        {jwtToken && (
+  1233→          <p className="text-[9px] text-emerald-400 mt-1">✓ JWT token active</p>
+  1234→        )}
+  1235→      </div>
+  1236→
+  1237→      {/* App Selector */}
+  1238→      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+  1239→        <h3 className="text-sm font-bold text-white mb-2">Select Platform</h3>
+  1240→        <div className="grid grid-cols-2 gap-2">
+  1241→          <button
+  1242→            onClick={() => setSelectedApp("dream11")}
+  1243→            className={cn(
+  1244→              "h-10 rounded-xl text-xs font-bold transition-all border-2",
+  1245→              selectedApp === "dream11"
+  1246→                ? "bg-red-600 text-white border-transparent"
+  1247→                : "bg-slate-900 border-slate-700 text-slate-300"
+  1248→            )}
+  1249→          >
+  1250→            🏏 Dream11
+  1251→          </button>
+  1252→          <button
+  1253→            onClick={() => setSelectedApp("my11circle")}
+  1254→            className={cn(
+  1255→              "h-10 rounded-xl text-xs font-bold transition-all border-2",
+  1256→              selectedApp === "my11circle"
+  1257→                ? "bg-sky-600 text-white border-transparent"
+  1258→                : "bg-slate-900 border-slate-700 text-slate-300"
+  1259→            )}
+  1260→          >
+  1261→            ⭕ My11Circle
+  1262→          </button>
+  1263→        </div>
+  1264→      </div>
+  1265→
+  1266→      {/* Contest Form */}
+  1267→      <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 space-y-3">
+  1268→        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+  1269→          <Trophy className="w-4 h-4 text-violet-400" />
+  1270→          Join Contest — {selectedApp === "dream11" ? "Dream11" : "My11Circle"}
+  1271→        </h3>
+  1272→
+  1273→        <div>
+  1274→          <label className="text-[10px] text-slate-400 mb-1 block">Fantasy Auth Token (OTP-linked)</label>
+  1275→          <Input
+  1276→            value={authToken}
+  1277→            onChange={(e) => setAuthToken(e.target.value)}
+  1278→            placeholder="Token from OTP login..."
+  1279→            className="bg-slate-900 border-slate-700 text-white h-9 text-xs font-mono"
+  1280→          />
+  1281→        </div>
+  1282→
+  1283→        <div className="grid grid-cols-2 gap-2">
+  1284→          <div>
+  1285→            <label className="text-[10px] text-slate-400 mb-1 block">Match ID</label>
+  1286→            <Input
+  1287→              value={matchId}
+  1288→              onChange={(e) => setMatchId(e.target.value)}
+  1289→              placeholder="113526"
+  1290→              className="bg-slate-900 border-slate-700 text-white h-9 text-xs"
+  1291→            />
+  1292→          </div>
+  1293→          <div>
+  1294→            <label className="text-[10px] text-slate-400 mb-1 block">Contest ID</label>
+  1295→            <Input
+  1296→              value={contestId}
+  1297→              onChange={(e) => setContestId(e.target.value)}
+  1298→              placeholder="contest123"
+  1299→              className="bg-slate-900 border-slate-700 text-white h-9 text-xs"
+  1300→            />
+  1301→          </div>
+  1302→        </div>
+  1303→
+  1304→        <div>
+  1305→          <div className="flex items-center justify-between mb-1">
+  1306→            <label className="text-[10px] text-slate-400">Team IDs (comma-separated)</label>
+  1307→            <button
+  1308→              onClick={handleFetchMyTeams}
+  1309→              disabled={loading || !authToken.trim() || !matchId.trim()}
+  1310→              className="text-[10px] text-sky-400 hover:text-sky-300 disabled:opacity-40 flex items-center gap-1 font-bold"
+  1311→            >
+  1312→              {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+  1313→              Fetch My Teams
+  1314→            </button>
+  1315→          </div>
+  1316→          <Input
+  1317→            value={teamIds}
+  1318→            onChange={(e) => setTeamIds(e.target.value)}
+  1319→            placeholder="1,2,3,4,5,...,40  (or click Fetch My Teams)"
+  1320→            className="bg-slate-900 border-slate-700 text-white h-9 text-xs font-mono"
+  1321→          />
+  1322→          {myTeams.length > 0 && (
+  1323→            <p className="text-[9px] text-emerald-400 mt-1">
+  1324→              ✓ {myTeams.length} teams found · auto-filled
+  1325→            </p>
+  1326→          )}
+  1327→        </div>
+  1328→
+  1329→        <div className="grid grid-cols-2 gap-2">
+  1330→          <Button
+  1331→            className="bg-violet-600 hover:bg-violet-700 text-white h-10 text-xs"
+  1332→            onClick={handleFetchContests}
+  1333→            disabled={loading}
+  1334→          >
+  1335→            {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Trophy className="w-3 h-3 mr-1" />}
+  1336→            Fetch Free Contests
+  1337→          </Button>
+  1338→          <Button
+  1339→            className="bg-emerald-600 hover:bg-emerald-700 text-white h-10 text-xs"
+  1340→            onClick={() => handleJoinContest()}
+  1341→            disabled={loading}
+  1342→          >
+  1343→            {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Send className="w-3 h-3 mr-1" />}
+  1344→            Join All Teams
+  1345→          </Button>
+  1346→        </div>
+  1347→
+  1348→        {/* Random Mixed Auto Join — fetch + shuffle + join all in one click */}
+  1349→        <Button
+  1350→          className="w-full bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white h-11 text-xs font-bold"
+  1351→          onClick={async () => {
+  1352→            if (!authToken.trim() || !matchId.trim() || !contestId.trim()) {
+  1353→              toast.error("Auth token, Match ID, Contest ID required");
+  1354→              return;
+  1355→            }
+  1356→            setLoading(true);
+  1357→            toast.info("Fetching all teams + shuffling + joining...");
+  1358→            try {
+  1359→              const headers: Record<string, string> = { "Content-Type": "application/json" };
+  1360→              if (jwtToken.trim()) headers.Authorization = `Bearer ${jwtToken.trim()}`;
+  1361→
+  1362→              // 1. Fetch all teams
+  1363→              const teamsRes = await fetch(`/api/contest/my-teams`, {
+  1364→                method: "POST",
+  1365→                headers,
+  1366→                body: JSON.stringify({
+  1367→                  fantasyApp: selectedApp,
+  1368→                  authToken: authToken.trim(),
+  1369→                  matchId: matchId.trim(),
+  1370→                }),
+  1371→              });
+  1372→              const teamsData = await teamsRes.json();
+  1373→              if (teamsData.status !== "success" || !teamsData.teams?.length) {
+  1374→                toast.error("No teams found — create teams first");
+  1375→                setLoading(false);
+  1376→                return;
+  1377→              }
+  1378→
+  1379→              const allIds = teamsData.teams.map((t: any) => parseInt(t.teamId)).filter((n: number) => !isNaN(n));
+  1380→              if (allIds.length === 0) {
+  1381→                toast.error("No valid team IDs found");
+  1382→                setLoading(false);
+  1383→                return;
+  1384→              }
+  1385→
+  1386→              toast.info(`Found ${allIds.length} teams — shuffling randomly...`);
+  1387→
+  1388→              // 2. Shuffle randomly (Fisher-Yates)
+  1389→              const shuffled = [...allIds];
+  1390→              for (let i = shuffled.length - 1; i > 0; i--) {
+  1391→                const j = Math.floor(Math.random() * (i + 1));
+  1392→                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  1393→              }
+  1394→
+  1395→              // 3. Join all shuffled teams to contest
+  1396→              const joinRes = await fetch(`/api/contest/join`, {
+  1397→                method: "POST",
+  1398→                headers,
+  1399→                body: JSON.stringify({
+  1400→                  fantasyApp: selectedApp,
+  1401→                  authToken: authToken.trim(),
+  1402→                  matchId: matchId.trim(),
+  1403→                  contestId: contestId.trim(),
+  1404→                  teamIds: shuffled,
+  1405→                }),
+  1406→              });
+  1407→              const joinData = await joinRes.json();
+  1408→              setJoinResult(joinData);
+  1409→
+  1410→              if (joinData.status === "success" || joinData.status === "partial") {
+  1411→                const s = joinData.summary || {};
+  1412→                const batchesInfo = s.batches ? ` · ${s.batches} batches · shuffled` : "";
+  1413→                toast.success(`✓ Random Mixed Join: ${s.successCount}/${s.totalCount || shuffled.length} teams${batchesInfo}`);
+  1414→              } else if (joinData.needsReauth) {
+  1415→                toast.error("Session expired — re-link via OTP");
+  1416→              } else {
+  1417→                toast.error(joinData.message || "Random join failed");
+  1418→              }
+  1419→            } catch (err: any) {
+  1420→              toast.error(err?.message || "Random join error");
+  1421→            } finally {
+  1422→              setLoading(false);
+  1423→            }
+  1424→          }}
+  1425→          disabled={loading}
+  1426→        >
+  1427→          {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+  1428→          Random Mixed Auto Join (All 40 Teams Shuffled)
+  1429→        </Button>
+  1430→
+  1431→        {/* Lineup filter info */}
+  1432→        <div className="bg-amber-950/40 border border-amber-800/50 rounded-lg p-2.5">
+  1433→          <p className="text-[10px] text-amber-300 font-bold mb-1">
+  1434→            📋 Lineup Filter (After Lineup Announced)
+  1435→          </p>
+  1436→          <p className="text-[9px] text-amber-200/70">
+  1437→            After lineup is announced, only playing 11 players are shown (11+11 = 22 players).
+  1438→            Teams with non-playing players are auto-filtered.
+  1439→          </p>
+  1440→        </div>
+  1441→
+  1442→        {/* Batch info banner */}
+  1443→        <div className="bg-sky-950/40 border border-sky-800/50 rounded-lg p-2.5">
+  1444→          <p className="text-[10px] text-sky-300 font-bold flex items-center gap-1.5">
+  1445→            <RefreshCw className="w-3 h-3" />
+  1446→            Smart Batch Join Active
+  1447→          </p>
+  1448→          <p className="text-[9px] text-sky-200/70 mt-0.5">
+  1449→            Teams are shuffled randomly + sent in batches of 20. All 40 teams will be joined (not just 1-20).
+  1450→          </p>
+  1451→        </div>
+  1452→      </div>
+  1453→
+  1454→      {/* Free Contests List */}
+  1455→      {freeContests.length > 0 && (
+  1456→        <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+  1457→          <h3 className="text-sm font-bold text-white mb-2">Free Contests ({freeContests.length})</h3>
+  1458→          <div className="space-y-2 max-h-60 overflow-y-auto">
+  1459→            {freeContests.map((c, i) => (
+  1460→              <div key={i} className="bg-slate-900 rounded-lg p-2.5 border border-slate-700">
+  1461→                <div className="flex items-center justify-between">
+  1462→                  <div className="flex-1 min-w-0">
+  1463→                    <p className="text-[11px] font-bold text-white truncate">
+  1464→                      {c.contestName || `Contest ${c.contestId}`}
+  1465→                    </p>
+  1466→                    <p className="text-[9px] text-slate-400">
+  1467→                      ID: {c.contestId} · Prize: {c.prizeDisplayText || c.totalPrizeAmount || "N/A"}
+  1468→                    </p>
+  1469→                    <p className="text-[9px] text-slate-500">
+  1470→                      Joined: {c.joinedCount || 0} · Slots: {c.availableSlots ?? "N/A"}
+  1471→                    </p>
+  1472→                  </div>
+  1473→                  <Button
+  1474→                    size="sm"
+  1475→                    className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 text-[10px] flex-shrink-0"
+  1476→                    onClick={() => {
+  1477→                      setContestId(c.contestId);
+  1478→                      handleJoinContest(c.contestId);
+  1479→                    }}
+  1480→                    disabled={loading}
+  1481→                  >
+  1482→                    Join All
+  1483→                  </Button>
+  1484→                </div>
+  1485→              </div>
+  1486→            ))}
+  1487→          </div>
+  1488→        </div>
+  1489→      )}
+  1490→
+  1491→      {/* Join Result */}
+  1492→      {joinResult && (
+  1493→        <div className={cn(
+  1494→          "rounded-xl p-4 border",
+  1495→          joinResult.status === "success"
+  1496→            ? "bg-emerald-950/30 border-emerald-700"
+  1497→            : joinResult.status === "partial"
+  1498→            ? "bg-amber-950/30 border-amber-700"
+  1499→            : "bg-red-950/30 border-red-700"
+  1500→        )}>
+  1501→          <h3 className={cn(
+  1502→            "text-sm font-bold mb-2 flex items-center gap-2",
+  1503→            joinResult.status === "success"
+  1504→              ? "text-emerald-400"
+  1505→              : joinResult.status === "partial"
+  1506→              ? "text-amber-400"
+  1507→              : "text-red-400"
+  1508→          )}>
+  1509→            {joinResult.status === "success"
+  1510→              ? <CheckCircle2 className="w-4 h-4" />
+  1511→              : <AlertTriangle className="w-4 h-4" />}
+  1512→            Join Result — {joinResult.status.toUpperCase()}
+  1513→          </h3>
+  1514→          <p className="text-[10px] text-slate-300 mb-2">{joinResult.message}</p>
+  1515→
+  1516→          {joinResult.summary && (
+  1517→            <>
+  1518→              <div className="grid grid-cols-3 gap-2 text-[10px] mb-2">
+  1519→                <div className="bg-slate-900 rounded p-2 text-center">
+  1520→                  <p className="text-emerald-400 font-black text-lg">{joinResult.summary.successCount}</p>
+  1521→                  <p className="text-slate-500 uppercase">Success</p>
+  1522→                </div>
+  1523→                <div className="bg-slate-900 rounded p-2 text-center">
+  1524→                  <p className="text-red-400 font-black text-lg">{joinResult.summary.failedCount}</p>
+  1525→                  <p className="text-slate-500 uppercase">Failed</p>
+  1526→                </div>
+  1527→                <div className="bg-slate-900 rounded p-2 text-center">
+  1528→                  <p className="text-sky-400 font-black text-lg">{joinResult.summary.totalCount || (joinResult.summary.successCount + joinResult.summary.failedCount)}</p>
+  1529→                  <p className="text-slate-500 uppercase">Total</p>
+  1530→                </div>
+  1531→              </div>
+  1532→              {joinResult.summary.batches && (
+  1533→                <p className="text-[9px] text-sky-300 mb-2">
+  1534→                  🔄 {joinResult.summary.batches} batches × {joinResult.summary.batchSize} teams
+  1535→                  {joinResult.summary.shuffled ? " · shuffled randomly" : ""}
+  1536→                </p>
+  1537→              )}
+  1538→            </>
+  1539→          )}
+  1540→
+  1541→          {joinResult.joinResults && joinResult.joinResults.length > 0 && (
+  1542→            <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+  1543→              <p className="text-[9px] text-slate-400 font-bold">Per-team results:</p>
+  1544→              {joinResult.joinResults.map((r: any, i: number) => (
+  1545→                <div key={i} className="flex items-center justify-between text-[9px] bg-slate-900/50 rounded px-2 py-1">
+  1546→                  <span className="text-slate-300">Team {r.teamId}</span>
+  1547→                  <span className={r.success ? "text-emerald-400" : "text-red-400"}>
+  1548→                    {r.success ? "✓ Joined" : `✗ ${r.error || "Failed"}`}
+  1549→                  </span>
+  1550→                </div>
+  1551→              ))}
+  1552→            </div>
+  1553→          )}
+  1554→
+  1555→          {joinResult.needsReauth && (
+  1556→            <p className="text-[10px] text-amber-400 mt-2 font-bold">
+  1557→              ⚠️ Session expired — re-link via OTP
+  1558→            </p>
+  1559→          )}
+  1560→        </div>
+  1561→      )}
+  1562→
+  1563→      {/* Backend endpoints info */}
+  1564→      <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
+  1565→        <p className="text-[9px] text-slate-500 font-bold mb-1">Backend Endpoints:</p>
+  1566→        <div className="space-y-0.5 text-[9px] text-slate-400 font-mono">
+  1567→          <p>Dream11: /api/dream11/contest/all-free-status + /join-contest</p>
+  1568→          <p>My11Circle: /api/my11circle/contest/all-free-status + /join-contest</p>
+  1569→          <p>List Teams: /api/fantasy/list-of-teams</p>
+  1570→          <p>JWT: Bearer token in Authorization header</p>
+  1571→        </div>
+  1572→      </div>
+  1573→    </div>
+  1574→  );
+  1575→}
+  1576→
+  1577→/* ============== PAYMENTS TAB ============== */
+  1578→
+  1579→interface PaymentOrder {
+  1580→  orderId: string;
+  1581→  mobile: string;
+  1582→  plan: string;
+  1583→  amount: number;
+  1584→  keyType: string;
+  1585→  label: string;
+  1586→  status: string;
+  1587→  licenseKey: string | null;
+  1588→  expiresAt: number | null;
+  1589→  paymentId: string | null;
+  1590→  createdAt: number;
+  1591→  completedAt: number | null;
+  1592→  failedAt: number | null;
+  1593→}
+  1594→
+  1595→function PaymentsTab() {
+  1596→  const [payments, setPayments] = useState<PaymentOrder[]>([]);
+  1597→  const [loading, setLoading] = useState(false);
+  1598→  const [filter, setFilter] = useState<"all" | "pending" | "completed" | "failed">("all");
+  1599→  const [summary, setSummary] = useState({ total: 0, pending: 0, completed: 0, failed: 0, totalRevenue: 0 });
+  1600→
+  1601→  async function fetchPayments() {
+  1602→    setLoading(true);
+  1603→    try {
+  1604→      const statusParam = filter === "all" ? "" : `?status=${filter}`;
+  1605→      const res = await fetch(`/api/payment/list${statusParam}`);
+  1606→      const data = await res.json();
+  1607→      if (data.status === "success") {
+  1608→        setPayments(data.payments || []);
+  1609→        setSummary(data.summary || { total: 0, pending: 0, completed: 0, failed: 0, totalRevenue: 0 });
+  1610→      } else {
+  1611→        toast.error(data.message || "Failed to fetch payments");
+  1612→      }
+  1613→    } catch (err: any) {
+  1614→      toast.error(err?.message || "Network error");
+  1615→    } finally {
+  1616→      setLoading(false);
+  1617→    }
+  1618→  }
+  1619→
+  1620→  useEffect(() => {
+  1621→    fetchPayments();
+  1622→  }, [filter]);
+  1623→
+  1624→  function formatDate(ts: number | null): string {
+  1625→    if (!ts) return "—";
+  1626→    return new Date(ts).toLocaleString("en-IN", {
+  1627→      day: "2-digit", month: "short", year: "numeric",
+  1628→      hour: "2-digit", minute: "2-digit",
+  1629→    });
+  1630→  }
+  1631→
+  1632→  const statusColors: Record<string, string> = {
+  1633→    pending: "bg-amber-500",
+  1634→    completed: "bg-emerald-500",
+  1635→    failed: "bg-red-500",
+  1636→  };
+  1637→
+  1638→  return (
+  1639→    <div className="space-y-4 text-slate-200">
+  1640→      {/* Summary cards */}
+  1641→      <div className="grid grid-cols-4 gap-2">
+  1642→        <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 text-center">
+  1643→          <p className="text-2xl font-black text-white">{summary.total}</p>
+  1644→          <p className="text-[9px] text-slate-400 uppercase">Total</p>
+  1645→        </div>
+  1646→        <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 text-center">
+  1647→          <p className="text-2xl font-black text-amber-400">{summary.pending}</p>
+  1648→          <p className="text-[9px] text-slate-400 uppercase">Pending</p>
+  1649→        </div>
+  1650→        <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 text-center">
+  1651→          <p className="text-2xl font-black text-emerald-400">{summary.completed}</p>
+  1652→          <p className="text-[9px] text-slate-400 uppercase">Completed</p>
+  1653→        </div>
+  1654→        <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 text-center">
+  1655→          <p className="text-2xl font-black text-violet-400">₹{summary.totalRevenue}</p>
+  1656→          <p className="text-[9px] text-slate-400 uppercase">Revenue</p>
+  1657→        </div>
+  1658→      </div>
+  1659→
+  1660→      {/* Filter buttons */}
+  1661→      <div className="flex gap-1.5">
+  1662→        {(["all", "pending", "completed", "failed"] as const).map((f) => (
+  1663→          <button
+  1664→            key={f}
+  1665→            onClick={() => setFilter(f)}
+  1666→            className={cn(
+  1667→              "px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border-2",
+  1668→              filter === f
+  1669→                ? "bg-violet-600 text-white border-transparent"
+  1670→                : "bg-slate-800 border-slate-700 text-slate-300"
+  1671→            )}
+  1672→          >
+  1673→            {f.toUpperCase()}
+  1674→          </button>
+  1675→        ))}
+  1676→        <button
+  1677→          onClick={fetchPayments}
+  1678→          className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-sky-600 text-white ml-auto flex items-center gap-1"
+  1679→        >
+  1680→          {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+  1681→          Refresh
+  1682→        </button>
+  1683→      </div>
+  1684→
+  1685→      {/* Payments list */}
+  1686→      {loading && payments.length === 0 ? (
+  1687→        <div className="text-center py-8">
+  1688→          <Loader2 className="w-8 h-8 mx-auto text-violet-500 animate-spin" />
+  1689→          <p className="text-xs text-slate-400 mt-2">Loading payments...</p>
+  1690→        </div>
+  1691→      ) : payments.length === 0 ? (
+  1692→        <div className="text-center py-8">
+  1693→          <CreditCard className="w-10 h-10 mx-auto text-slate-600 mb-2" />
+  1694→          <p className="text-xs text-slate-400">No payments found</p>
+  1695→        </div>
+  1696→      ) : (
+  1697→        <div className="space-y-2 max-h-[60vh] overflow-y-auto scrollbar-thin">
+  1698→          {payments.map((p, i) => (
+  1699→            <div key={i} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+  1700→              <div className="flex items-center justify-between mb-2">
+  1701→                <div className="flex items-center gap-2">
+  1702→                  <span className={cn(
+  1703→                    "w-2 h-2 rounded-full",
+  1704→                    statusColors[p.status] || "bg-slate-500"
+  1705→                  )} />
+  1706→                  <code className="text-[10px] text-slate-400 font-mono">{p.orderId}</code>
+  1707→                </div>
+  1708→                <span className={cn(
+  1709→                  "text-[9px] font-bold px-2 py-0.5 rounded-full uppercase",
+  1710→                  p.status === "completed" && "bg-emerald-900/50 text-emerald-400",
+  1711→                  p.status === "pending" && "bg-amber-900/50 text-amber-400",
+  1712→                  p.status === "failed" && "bg-red-900/50 text-red-400",
+  1713→                )}>
+  1714→                  {p.status}
+  1715→                </span>
+  1716→              </div>
+  1717→
+  1718→              <div className="grid grid-cols-2 gap-2 text-[10px]">
+  1719→                <div>
+  1720→                  <p className="text-slate-500">Mobile</p>
+  1721→                  <p className="text-white font-bold">+91 {p.mobile}</p>
+  1722→                </div>
+  1723→                <div>
+  1724→                  <p className="text-slate-500">Plan</p>
+  1725→                  <p className="text-white font-bold">{p.label}</p>
+  1726→                </div>
+  1727→                <div>
+  1728→                  <p className="text-slate-500">Amount</p>
+  1729→                  <p className="text-emerald-400 font-black">₹{p.amount}</p>
+  1730→                </div>
+  1731→                <div>
+  1732→                  <p className="text-slate-500">Created</p>
+  1733→                  <p className="text-white">{formatDate(p.createdAt)}</p>
+  1734→                </div>
+  1735→                {p.licenseKey && (
+  1736→                  <div className="col-span-2">
+  1737→                    <p className="text-slate-500">License Key</p>
+  1738→                    <code className="text-violet-400 font-mono font-bold">{p.licenseKey}</code>
+  1739→                  </div>
+  1740→                )}
+  1741→                {p.completedAt && (
+  1742→                  <div>
+  1743→                    <p className="text-slate-500">Completed</p>
+  1744→                    <p className="text-emerald-400">{formatDate(p.completedAt)}</p>
+  1745→                  </div>
+  1746→                )}
+  1747→                {p.paymentId && (
+  1748→                  <div>
+  1749→                    <p className="text-slate-500">Payment ID</p>
+  1750→                    <code className="text-slate-300 font-mono text-[9px]">{p.paymentId}</code>
+  1751→                  </div>
+  1752→                )}
+  1753→              </div>
+  1754→
+  1755→              {/* Admin verification info */}
+  1756→              {p.status === "completed" && (
+  1757→                <div className="mt-2 bg-emerald-950/30 border border-emerald-800/50 rounded-lg p-2">
+  1758→                  <p className="text-[9px] text-emerald-400 font-bold flex items-center gap-1">
+  1759→                    <CheckCircle2 className="w-3 h-3" />
+  1760→                    Payment confirmed — Key auto-activated
+  1761→                  </p>
+  1762→                  {p.expiresAt && (
+  1763→                    <p className="text-[9px] text-emerald-300/70 mt-0.5">
+  1764→                      Expires: {formatDate(p.expiresAt)}
+  1765→                    </p>
+  1766→                  )}
+  1767→                </div>
+  1768→              )}
+  1769→
+  1770→              {p.status === "pending" && (
+  1771→                <div className="mt-2 bg-amber-950/30 border border-amber-800/50 rounded-lg p-2">
+  1772→                  <p className="text-[9px] text-amber-400 font-bold flex items-center gap-1">
+  1773→                    <AlertTriangle className="w-3 h-3" />
+  1774→                    Awaiting payment confirmation from user
+  1775→                  </p>
+  1776→                  <p className="text-[9px] text-amber-300/70 mt-0.5">
+  1777→                    User must click "Yes, Payment Successful" to activate key
+  1778→                  </p>
+  1779→                </div>
+  1780→              )}
+  1781→
+  1782→              {p.status === "failed" && (
+  1783→                <div className="mt-2 bg-red-950/30 border border-red-800/50 rounded-lg p-2">
+  1784→                  <p className="text-[9px] text-red-400 font-bold flex items-center gap-1">
+  1785→                    <X className="w-3 h-3" />
+  1786→                    Payment failed — No key generated
+  1787→                  </p>
+  1788→                  <p className="text-[9px] text-red-300/70 mt-0.5">
+  1789→                    Failed at: {formatDate(p.failedAt)}
+  1790→                  </p>
+  1791→                </div>
+  1792→              )}
+  1793→            </div>
+  1794→          ))}
+  1795→        </div>
+  1796→      )}
+  1797→
+  1798→      {/* Payment info */}
+  1799→      <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
+  1800→        <p className="text-[9px] text-slate-500 font-bold mb-1">Payment Flow:</p>
+  1801→        <div className="space-y-0.5 text-[9px] text-slate-400">
+  1802→          <p>1. User clicks "Buy Now" on plan card</p>
+  1803→          <p>2. UPI payment screen opens → pays to gostr3248@okhdfcbank</p>
+  1804→          <p>3. User clicks "I've Paid — Verify & Activate"</p>
+  1805→          <p>4. Confirmation: "Yes, Payment Successful" or "Payment Failed"</p>
+  1806→          <p>5. ✅ Success → Key auto-generated + auto-activated</p>
+  1807→          <p>5. ❌ Failed → No key generated — user can retry</p>
+  1808→        </div>
+  1809→        <p className="text-[9px] text-slate-500 mt-2">
+  1810→          UPI ID: <code className="text-violet-300 font-mono">gostr3248@okhdfcbank</code>
+  1811→        </p>
+  1812→      </div>
+  1813→    </div>
+  1814→  );
+  1815→}
+  1816→
+  1817→/* ============== MATCHES TAB ============== */
+  1818→
+  1819→interface AdminMatch {
+  1820→  matchId: string;
+  1821→  _id?: string;
+  1822→  title: string;
+  1823→  team1: string;
+  1824→  team2: string;
+  1825→  team1Img?: string;
+  1826→  team2Img?: string;
+  1827→  startTime: number;
+  1828→  inDb: boolean;
+  1829→  supports: string[];
+  1830→  // Original teamgeneration.in fields
+  1831→  tour_id?: string;
+  1832→  sport_index?: number;
+  1833→  lineup_out?: number;
+  1834→  automatic?: boolean;
+  1835→  match_type?: string;
+  1836→  apiSource?: string | null;
+  1837→  prime_team?: number;
+  1838→  prime_booking?: number;
+  1839→  group_team?: any[];
+  1840→  group_booking?: any[];
+  1841→  expert_video?: number;
+  1842→  expert_teams?: number;
+  1843→  expert_prediction?: number;
+  1844→  direct_teams?: number;
+  1845→  cb11_key?: string;
+  1846→  createdAt?: string;
+  1847→  // Local UI state
+  1848→  mapping?: boolean;
+  1849→  mapped?: boolean;
+  1850→}
+  1851→
+  1852→function MatchesTab() {
+  1853→  const [matches, setMatches] = useState<AdminMatch[]>([]);
+  1854→  const [addedMatchIds, setAddedMatchIds] = useState<Set<string>>(new Set());
+  1855→  const [loading, setLoading] = useState(false);
+  1856→  const [platform, setPlatform] = useState<"all" | "my11circle" | "dream11" | "jumbo">("my11circle");
+  1857→  const [filter, setFilter] = useState<"all" | "live" | "upcoming" | "in-db" | "not-db" | "lineup-out" | "prime">("all");
+  1858→  const [search, setSearch] = useState("");
+  1859→  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  1860→  const [autoRefresh, setAutoRefresh] = useState(false);
+  1861→  const [now, setNow] = useState(Date.now());
+  1862→  const [showSettings, setShowSettings] = useState(false);
+  1863→
+  1864→  // Fetch both available matches AND added-to-DB matches (like original APK)
+  1865→  async function fetchMatches() {
+  1866→    setLoading(true);
+  1867→    try {
+  1868→      const [availRes, addedRes] = await Promise.all([
+  1869→        fetch("/api/matches?sport=cricket"),
+  1870→        fetch("/api/matches/added?platform=my11circle"),
+  1871→      ]);
+  1872→      const availData = await availRes.json();
+  1873→      const addedData = await addedRes.json();
+  1874→
+  1875→      // Build set of added match IDs
+  1876→      const addedIds = new Set<string>();
+  1877→      if (addedData.status === "success") {
+  1878→        (addedData.matchIds || []).forEach((id: any) => addedIds.add(String(id)));
+  1879→        (addedData.directMatchIds || []).forEach((id: any) => addedIds.add(String(id)));
+  1880→      }
+  1881→      setAddedMatchIds(addedIds);
+  1882→
+  1883→      if (availData.status === "success") {
+  1884→        const rawMatches = availData.matches || availData.data || [];
+  1885→        const adminMatches: AdminMatch[] = rawMatches.map((m: any) => {
+  1886→          const mid = String(m.id ?? m._id ?? m.matchId ?? "");
+  1887→          return {
+  1888→            matchId: mid,
+  1889→            _id: m._id,
+  1890→            title: m.series_name || m.title || `${m.left_team_name || "T1"} vs ${m.right_team_name || "T2"}`,
+  1891→            team1: m.left_team_name || (typeof m.team1 === "string" ? m.team1 : (m.team1?.shortName || "T1")),
+  1892→            team2: m.right_team_name || (typeof m.team2 === "string" ? m.team2 : (m.team2?.shortName || "T2")),
+  1893→            team1Img: m.left_team_image,
+  1894→            team2Img: m.right_team_image,
+  1895→            startTime: m.match_time ? new Date(m.match_time).getTime() : (m.start_time ? (m.start_time < 1e12 ? m.start_time * 1000 : m.start_time) : 0),
+  1896→            inDb: addedIds.has(mid) || Boolean(m.in_db || m.inDb || m.direct_teams > 0 || false),
+  1897→            supports: Array.from(new Set([...(m.fantasy_list || []), "dream11", "my11circle", "jumbo", "myteam11", "vision11"])),
+  1898→            tour_id: m.tour_id,
+  1899→            sport_index: m.sport_index,
+  1900→            lineup_out: m.lineup_out,
+  1901→            automatic: m.automatic,
+  1902→            match_type: m.match_type,
+  1903→            apiSource: m.apiSource,
+  1904→            prime_team: m.prime_team,
+  1905→            prime_booking: m.prime_booking,
+  1906→            group_team: m.group_team,
+  1907→            group_booking: m.group_booking,
+  1908→            expert_video: m.expert_video,
+  1909→            expert_teams: m.expert_teams,
+  1910→            expert_prediction: m.expert_prediction,
+  1911→            direct_teams: m.direct_teams,
+  1912→            cb11_key: m.cb11_key,
+  1913→            createdAt: m.createdAt,
+  1914→          };
+  1915→        });
+  1916→
+  1917→        // Also add DB matches that aren't in available list (ended matches still in DB)
+  1918→        if (addedData.status === "success" && Array.isArray(addedData.data)) {
+  1919→          const existingIds = new Set(adminMatches.map(m => m.matchId));
+  1920→          for (const dbM of addedData.data) {
+  1921→            const mid = String(dbM.matchId);
+  1922→            if (!existingIds.has(mid) && mid) {
+  1923→              adminMatches.push({
+  1924→                matchId: mid,
+  1925→                title: dbM.teams || `${dbM.team1 || "T1"} vs ${dbM.team2 || "T2"}`,
+  1926→                team1: dbM.team1 || "",
+  1927→                team2: dbM.team2 || "",
+  1928→                startTime: dbM.startTime || 0,
+  1929→                inDb: true,
+  1930→                supports: [dbM.source || "my11circle"],
+  1931→                match_type: "normal",
+  1932→                apiSource: dbM.source || "my11circle",
+  1933→              });
+  1934→            }
+  1935→          }
+  1936→        }
+  1937→
+  1938→        // Sort: upcoming first, then by startTime
+  1939→        adminMatches.sort((a, b) => {
+  1940→          if (!a.startTime) return 1;
+  1941→          if (!b.startTime) return -1;
+  1942→          return a.startTime - b.startTime;
+  1943→        });
+  1944→
+  1945→        // Preserve mapped state from previous fetch
+  1946→        setMatches(prev => {
+  1947→          const prevMap = new Map(prev.map(p => [p.matchId, p]));
+  1948→          return adminMatches.map(m => {
+  1949→            const p = prevMap.get(m.matchId);
+  1950→            return p ? { ...m, mapped: p.mapped, mapping: p.mapping } : m;
+  1951→          });
+  1952→        });
+  1953→        toast.success(`Scraped ${adminMatches.length} matches | ${addedIds.size} in DB`);
+  1954→      } else {
+  1955→        toast.error("Failed to fetch matches");
+  1956→      }
+  1957→    } catch (err: any) {
+  1958→      toast.error(err?.message || "Network error");
+  1959→    } finally {
+  1960→      setLoading(false);
+  1961→    }
+  1962→  }
+  1963→
+  1964→  useEffect(() => {
+  1965→    fetchMatches();
+  1966→  }, []);
+  1967→
+  1968→  // Live countdown timer — updates every second like original teamgeneration.in
+  1969→  useEffect(() => {
+  1970→    const id = setInterval(() => setNow(Date.now()), 1000);
+  1971→    return () => clearInterval(id);
+  1972→  }, []);
+  1973→
+  1974→  useEffect(() => {
+  1975→    if (!autoRefresh) return;
+  1976→    const id = setInterval(fetchMatches, 30000);
+  1977→    return () => clearInterval(id);
+  1978→  }, [autoRefresh]);
+  1979→
+  1980→  function isLive(ts: number): boolean {
+  1981→    if (!ts) return false;
+  1982→    const diff = ts - now;
+  1983→    return diff <= 0 && diff > -8 * 3600000; // started within last 8h = live
+  1984→  }
+  1985→
+  1986→  // Format with seconds — like "1h 22m 52s" (matches original screenshot)
+  1987→  function formatCountdown(ts: number): string {
+  1988→    if (!ts) return "—";
+  1989→    const diff = ts - now;
+  1990→    if (isLive(ts)) {
+  1991→      const mins = Math.floor(-diff / 60000);
+  1992→      const secs = Math.floor((-diff % 60000) / 1000);
+  1993→      return `LIVE ${mins}m ${secs}s`;
+  1994→    }
+  1995→    if (diff <= 0) {
+  1996→      const hrs = Math.floor(-diff / 3600000);
+  1997→      return `Ended ${hrs}h ago`;
+  1998→    }
+  1999→    const days = Math.floor(diff / 86400000);
+  2000→    const hours = Math.floor((diff % 86400000) / 3600000);
+
+[showing lines 1-2000 of 2652; use offset=2001 with limit to continue reading]

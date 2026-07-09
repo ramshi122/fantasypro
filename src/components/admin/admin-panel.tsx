@@ -6,6 +6,7 @@ import {
   Activity,
   AlertTriangle,
   Ban,
+  BarChart3,
   Bell,
   Check,
   CheckCircle2,
@@ -29,6 +30,7 @@ import {
   Shield,
   ShieldCheck,
   Smartphone,
+  Tag,
   Trash2,
   Trophy,
   Unlock,
@@ -44,7 +46,7 @@ import { useAdmin, type KeyType, type KeyStatus } from "@/lib/admin-store";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { cn } from "@/lib/utils";
 
-type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "payments" | "matches" | "subscriptions" | "users" | "announcements" | "logs" | "settings";
+type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "payments" | "matches" | "subscriptions" | "users" | "announcements" | "logs" | "settings" | "analytics" | "broadcast" | "leaderboard" | "2fa" | "backup" | "bulk" | "coupons";
 
 interface AdminPanelProps {
   open: boolean;
@@ -64,16 +66,23 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
 
   const tabs: Array<{ id: Tab; label: string; icon: typeof Key }> = [
     { id: "dashboard", label: "Dashboard", icon: Activity },
+    { id: "analytics", label: "Analytics", icon: BarChart3 },
     { id: "licenses", label: "Licenses", icon: Key },
     { id: "devices", label: "Devices", icon: Smartphone },
     { id: "team-control", label: "Generator", icon: Zap },
     { id: "contests", label: "Contests", icon: Trophy },
+    { id: "leaderboard", label: "Leaderboard", icon: Trophy },
     { id: "payments", label: "Payments", icon: CreditCard },
+    { id: "coupons", label: "Coupons", icon: Tag },
     { id: "matches", label: "Matches", icon: Activity },
     { id: "subscriptions", label: "Subs", icon: Crown },
     { id: "users", label: "Users", icon: Users },
+    { id: "bulk", label: "Bulk Msg", icon: Send },
+    { id: "broadcast", label: "Broadcast", icon: Bell },
     { id: "announcements", label: "Announce", icon: Bell },
+    { id: "2fa", label: "2FA", icon: Shield },
     { id: "logs", label: "Logs", icon: Activity },
+    { id: "backup", label: "Backup", icon: Download },
     { id: "settings", label: "Settings", icon: Settings },
   ];
 
@@ -154,16 +163,23 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
             <div className="flex-1 overflow-y-auto scrollbar-thin p-4 bg-slate-900">
               <ErrorBoundary fallback={<div className="p-4 text-center text-red-400 text-xs">Error loading this tab. Try another tab.</div>}>
               {tab === "dashboard" && <DashboardTab />}
+              {tab === "analytics" && <AnalyticsTabWrapper />}
               {tab === "licenses" && <LicensesTab />}
               {tab === "devices" && <DevicesTab />}
               {tab === "team-control" && <TeamControlTab />}
               {tab === "contests" && <ContestsTab />}
+              {tab === "leaderboard" && <LeaderboardTabWrapper />}
               {tab === "payments" && <PaymentsTab />}
+              {tab === "coupons" && <CouponsTab />}
               {tab === "matches" && <MatchesTab />}
               {tab === "subscriptions" && <SubscriptionsTab />}
               {tab === "users" && <UsersTab />}
+              {tab === "bulk" && <BulkMessageTab />}
+              {tab === "broadcast" && <BroadcastTab />}
               {tab === "announcements" && <AnnouncementsTab />}
+              {tab === "2fa" && <TwoFactorTab />}
               {tab === "logs" && <LogsTab />}
+              {tab === "backup" && <BackupTab />}
               {tab === "settings" && <SettingsTab />}
               </ErrorBoundary>
             </div>
@@ -2645,6 +2661,415 @@ function SubscriptionsTab() {
           <p>🆓 FREE · 🎟 1 Match ₹49 · ⏰ 24h ₹99 · ⭐ Pro ₹299 · 👑 Elite ₹999 · 💎 Lifetime</p>
           <p>👑 Prime Plan — Add prime access · 📱 Mobile Number — User registered</p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ====================================================================
+ * New tabs added for G1-G8 features
+ * ================================================================= */
+
+function AnalyticsTabWrapper() {
+  // Lazy-load to keep initial bundle smaller
+  const [Comp, setComp] = useState<React.ComponentType | null>(null);
+  useEffect(() => {
+    import("./analytics-tab").then((m) => setComp(() => m.AnalyticsTab));
+  }, []);
+  if (!Comp) return <div className="text-center py-8"><Loader2 className="w-6 h-6 mx-auto text-violet-500 animate-spin" /></div>;
+  return <Comp />;
+}
+
+function LeaderboardTabWrapper() {
+  const [Comp, setComp] = useState<React.ComponentType | null>(null);
+  useEffect(() => {
+    import("../leaderboard").then((m) => setComp(() => m.Leaderboard));
+  }, []);
+  if (!Comp) return <div className="text-center py-8"><Loader2 className="w-6 h-6 mx-auto text-violet-500 animate-spin" /></div>;
+  return <Comp />;
+}
+
+function CouponsTab() {
+  const [coupons, setCoupons] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  async function fetchCoupons() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/coupons");
+      const data = await res.json();
+      if (data.status === "success") setCoupons(data.coupons || []);
+    } catch {
+      /* ignore */
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { fetchCoupons(); }, []);
+
+  async function seed() {
+    await fetch("/api/coupons", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "seed" }),
+    });
+    fetchCoupons();
+    toast.success("Predefined coupons seeded");
+  }
+
+  return (
+    <div className="space-y-4 text-slate-200">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold flex items-center gap-1.5"><Tag className="w-4 h-4 text-violet-400" /> Coupons</h3>
+        <div className="flex gap-1.5">
+          <Button size="sm" variant="ghost" className="h-7 text-[10px]" onClick={seed}>Seed Defaults</Button>
+          <Button size="sm" className="h-7 text-[10px] bg-sky-600 text-white" onClick={fetchCoupons}>
+            {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} Refresh
+          </Button>
+        </div>
+      </div>
+      {coupons.length === 0 ? (
+        <p className="text-center text-slate-500 text-xs py-8">No coupons. Click "Seed Defaults" to create CRIC10/20/50.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {coupons.map((c) => (
+            <div key={c.code} className="bg-slate-800 rounded-lg p-2.5 border border-slate-700 flex items-center gap-3">
+              <div className="w-16 h-12 rounded-lg bg-gradient-to-br from-violet-600 to-fuchsia-600 flex items-center justify-center text-white font-black text-xs">
+                {c.code}
+              </div>
+              <div className="flex-1">
+                <p className="text-[11px] font-bold text-slate-100">
+                  {c.discountType === "percent" ? `${c.value}% off` : `₹${c.value} off`}
+                </p>
+                <p className="text-[9px] text-slate-400">
+                  Used: {c.usedCount || 0}/{c.maxUses || "∞"} · Until {c.validUntil ? new Date(c.validUntil).toLocaleDateString("en-IN") : "—"}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BulkMessageTab() {
+  const [message, setMessage] = useState("");
+  const [target, setTarget] = useState<"all" | "active" | "expired">("all");
+  const [channel, setChannel] = useState<"whatsapp" | "sms">("whatsapp");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+
+  async function send() {
+    if (!message.trim()) { toast.error("Enter message"); return; }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/bulk-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, target, channel }),
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        setResult(data);
+        toast.success(`Generated ${data.recipientCount} ${channel} links`);
+      } else {
+        toast.error(data.message || "Failed");
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3 text-slate-200">
+      <h3 className="text-sm font-bold flex items-center gap-1.5"><Send className="w-4 h-4 text-violet-400" /> Bulk WhatsApp / SMS</h3>
+      <textarea
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        placeholder="Type your broadcast message..."
+        rows={3}
+        className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-xs p-2 rounded-lg"
+      />
+      <div className="flex gap-1.5 flex-wrap">
+        {(["all", "active", "expired"] as const).map((t) => (
+          <button key={t} onClick={() => setTarget(t)}
+            className={cn("px-2 py-1 rounded text-[10px] font-bold", target === t ? "bg-violet-600 text-white" : "bg-slate-800 text-slate-300")}>
+            {t.toUpperCase()}
+          </button>
+        ))}
+        <div className="flex-1" />
+        {(["whatsapp", "sms"] as const).map((c) => (
+          <button key={c} onClick={() => setChannel(c)}
+            className={cn("px-2 py-1 rounded text-[10px] font-bold", channel === c ? "bg-emerald-600 text-white" : "bg-slate-800 text-slate-300")}>
+            {c.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      <Button size="sm" className="bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white w-full" disabled={loading} onClick={send}>
+        {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Send className="w-3 h-3 mr-1" />}
+        Generate Links
+      </Button>
+      {result && (
+        <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+          <p className="text-[10px] font-bold text-emerald-400 mb-2">✓ {result.recipientCount} links generated ({result.channel})</p>
+          <div className="space-y-1 max-h-60 overflow-y-auto">
+            {result.links.slice(0, 50).map((l: any, i: number) => (
+              <a key={i} href={l.url} target="_blank" rel="noopener noreferrer"
+                className="block bg-slate-900/60 rounded p-2 text-[10px] hover:bg-slate-900">
+                <span className="font-bold text-slate-100">{l.name || "User"}</span> · <span className="text-slate-400">{l.mobile}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BroadcastTab() {
+  const [message, setMessage] = useState("");
+  const [target, setTarget] = useState<"all" | "active" | "expired">("all");
+  const [type, setType] = useState<"info" | "warning" | "success">("info");
+  const [loading, setLoading] = useState(false);
+
+  async function send() {
+    if (!message.trim()) { toast.error("Enter message"); return; }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, target, type }),
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        toast.success("Broadcast sent");
+        setMessage("");
+      } else toast.error(data.message || "Failed");
+    } catch (err: any) {
+      toast.error(err?.message || "Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3 text-slate-200">
+      <h3 className="text-sm font-bold flex items-center gap-1.5"><Bell className="w-4 h-4 text-violet-400" /> In-App Broadcast</h3>
+      <p className="text-[10px] text-slate-400">Send an in-app notification banner to users on next app load.</p>
+      <textarea
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        placeholder="Broadcast message..."
+        rows={3}
+        className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-xs p-2 rounded-lg"
+      />
+      <div className="flex gap-1.5 flex-wrap">
+        {(["all", "active", "expired"] as const).map((t) => (
+          <button key={t} onClick={() => setTarget(t)}
+            className={cn("px-2 py-1 rounded text-[10px] font-bold", target === t ? "bg-violet-600 text-white" : "bg-slate-800 text-slate-300")}>
+            {t.toUpperCase()}
+          </button>
+        ))}
+        <div className="flex-1" />
+        {(["info", "warning", "success"] as const).map((t) => (
+          <button key={t} onClick={() => setType(t)}
+            className={cn("px-2 py-1 rounded text-[10px] font-bold",
+              type === t ? (t === "info" ? "bg-sky-600" : t === "warning" ? "bg-amber-600" : "bg-emerald-600") + " text-white" : "bg-slate-800 text-slate-300")}>
+            {t.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      <Button size="sm" className="bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white w-full" disabled={loading} onClick={send}>
+        {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Send className="w-3 h-3 mr-1" />}
+        Send Broadcast
+      </Button>
+    </div>
+  );
+}
+
+function TwoFactorTab() {
+  const [status, setStatus] = useState(false);
+  const [secret, setSecret] = useState("");
+  const [qrUrl, setQrUrl] = useState("");
+  const [token, setToken] = useState("");
+  const [backupCodes, setBackupCodes] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/admin/2fa").then(r => r.json()).then(d => setStatus(d.enabled));
+  }, []);
+
+  async function setup() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/2fa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "setup" }),
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        setSecret(data.secret);
+        setQrUrl(data.qrUrl);
+        toast.success("Scan QR with Google Authenticator");
+      } else toast.error(data.message);
+    } finally { setLoading(false); }
+  }
+
+  async function enable() {
+    if (!/^\d{6}$/.test(token)) { toast.error("Enter 6-digit code"); return; }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/2fa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "enable", token, secret }),
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        setBackupCodes(data.backupCodes || []);
+        setStatus(true);
+        setSecret("");
+        setQrUrl("");
+        setToken("");
+        toast.success("2FA enabled");
+      } else toast.error(data.message);
+    } finally { setLoading(false); }
+  }
+
+  async function disable() {
+    setLoading(true);
+    try {
+      await fetch("/api/admin/2fa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "disable" }),
+      });
+      setStatus(false);
+      toast.success("2FA disabled");
+    } finally { setLoading(false); }
+  }
+
+  return (
+    <div className="space-y-4 text-slate-200">
+      <h3 className="text-sm font-bold flex items-center gap-1.5"><Shield className="w-4 h-4 text-violet-400" /> Two-Factor Authentication</h3>
+      <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+        <p className="text-[10px] text-slate-400 mb-2">Status: <span className={status ? "text-emerald-400 font-bold" : "text-slate-300 font-bold"}>{status ? "ENABLED" : "DISABLED"}</span></p>
+        {!status && !secret && (
+          <Button size="sm" className="bg-violet-600 text-white" disabled={loading} onClick={setup}>
+            <Shield className="w-3 h-3 mr-1" /> Setup 2FA
+          </Button>
+        )}
+        {secret && (
+          <div className="space-y-2">
+            <p className="text-[10px] text-slate-300">1. Scan this QR code in Google Authenticator:</p>
+            <div className="bg-white p-3 rounded text-[9px] break-all text-slate-900 font-mono">{qrUrl}</div>
+            <p className="text-[10px] text-slate-400">Or enter manually: <span className="font-mono text-violet-400">{secret}</span></p>
+            <p className="text-[10px] text-slate-300 mt-2">2. Enter the 6-digit code from your authenticator:</p>
+            <Input
+              value={token}
+              onChange={(e) => setToken(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              placeholder="123456"
+              className="bg-slate-900 border-slate-700 text-white text-center tracking-widest"
+              maxLength={6}
+            />
+            <Button size="sm" className="bg-emerald-600 text-white w-full" disabled={loading} onClick={enable}>
+              <Check className="w-3 h-3 mr-1" /> Enable 2FA
+            </Button>
+          </div>
+        )}
+        {status && (
+          <Button size="sm" variant="outline" className="border-red-600 text-red-400" disabled={loading} onClick={disable}>
+            Disable 2FA
+          </Button>
+        )}
+        {backupCodes.length > 0 && (
+          <div className="mt-3 bg-amber-500/10 border border-amber-500/30 rounded p-2">
+            <p className="text-[10px] font-bold text-amber-400 mb-1">⚠ Save these backup codes (one-time use):</p>
+            <div className="grid grid-cols-2 gap-1 text-[10px] font-mono text-amber-300">
+              {backupCodes.map((c, i) => <div key={i}>{c}</div>)}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BackupTab() {
+  const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
+
+  async function exportData() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/backup");
+      const data = await res.json();
+      if (data.status === "success") {
+        const blob = new Blob([JSON.stringify(data.data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `apna-cricket-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success("Backup exported");
+      } else toast.error(data.message);
+    } finally { setLoading(false); }
+  }
+
+  async function importData(file: File) {
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const res = await fetch("/api/backup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "import", data }),
+      });
+      const result = await res.json();
+      if (result.status === "success") {
+        toast.success(`Imported: ${result.result.keys} keys, ${result.result.users} users, ${result.result.firebase} firebase docs`);
+      } else toast.error(result.message);
+    } catch (err: any) {
+      toast.error(err?.message || "Invalid JSON file");
+    } finally { setImporting(false); }
+  }
+
+  return (
+    <div className="space-y-3 text-slate-200">
+      <h3 className="text-sm font-bold flex items-center gap-1.5"><Download className="w-4 h-4 text-violet-400" /> Backup &amp; Restore</h3>
+      <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 space-y-2">
+        <p className="text-[10px] text-slate-400">Export all keys, users, devices, settings, and Firebase collections as a JSON file.</p>
+        <Button size="sm" className="bg-violet-600 text-white w-full" disabled={loading} onClick={exportData}>
+          {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Download className="w-3 h-3 mr-1" />}
+          Export Backup
+        </Button>
+      </div>
+      <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 space-y-2">
+        <p className="text-[10px] text-slate-400">Restore from a previously exported JSON file. Existing entries will be preserved.</p>
+        <label className="block">
+          <input
+            type="file"
+            accept=".json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) importData(f);
+              e.target.value = "";
+            }}
+          />
+          <span className="block w-full text-center px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold cursor-pointer">
+            {importing ? <Loader2 className="w-3 h-3 mr-1 inline animate-spin" /> : null}
+            Choose JSON &amp; Restore
+          </span>
+        </label>
       </div>
     </div>
   );

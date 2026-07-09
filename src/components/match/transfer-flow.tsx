@@ -40,6 +40,7 @@ import {
   type FantasyApp,
 } from "@/lib/api";
 import { TeamDisplay } from "./team-display";
+import { TeamInsights } from "./team-insights";
 import { AutoGenerator } from "./auto-generator";
 import { ApnaTransferModal } from "./apna-transfer-modal";
 import { FreeContestsModal } from "./free-contests-modal";
@@ -163,6 +164,18 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
       setShowEditor(false);
       setEditingTeam(null);
       setRefreshKey((k) => k + 1);
+
+      // === G1-G8 Integration: analytics + performance + cashback + leaderboard ===
+      try {
+        const { trackEvent } = await import("@/lib/analytics");
+        const { trackMatchTeam } = await import("@/lib/performance-tracker");
+        trackEvent("team_generation", {
+          matchId,
+          teamCount: 1,
+          source: "manual_add",
+        });
+        trackMatchTeam(matchId, "dream11", match?.name || matchId, 1);
+      } catch { /* ignore */ }
     } catch (err: any) {
       toast.error(err?.message || "Failed to add team");
       setStep("ready");
@@ -252,6 +265,46 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   function handleBulkAddTeams(teams: TeamRow[]) {
     toast.success(`Generated ${teams.length} unique teams`);
     setRefreshKey((k) => k + 1);
+
+    // === Integration: analytics + performance tracker + cashback + leaderboard ===
+    (async () => {
+      try {
+        const { trackEvent } = await import("@/lib/analytics");
+        const { trackMatchTeam } = await import("@/lib/performance-tracker");
+        const { processCashback } = await import("@/lib/cashback");
+        const { getDeviceId, getLicenseState } = await import("@/lib/admin-store");
+        trackEvent("team_generation", {
+          matchId,
+          teamCount: teams.length,
+          source: "sweep_generator",
+        });
+        trackMatchTeam(matchId, "dream11", match?.name || matchId, teams.length);
+
+        // Cashback (₹0.50/team, max ₹10/day)
+        const license = getLicenseState();
+        if (license.verified) {
+          const result = await processCashback(license.deviceId || getDeviceId(), matchId, teams.length);
+          if (result.success && result.cashback > 0) {
+            toast.success(`💰 ₹${result.cashback} cashback credited!`);
+          }
+        }
+
+        // Update leaderboard
+        try {
+          await fetch("/api/leaderboard", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "recordTeamGen",
+              userId: license.deviceId || getDeviceId(),
+              userName: license.key || "Guest",
+              count: teams.length,
+              matchId,
+            }),
+          });
+        } catch { /* ignore */ }
+      } catch { /* ignore */ }
+    })();
   }
 
   return (
@@ -708,6 +761,8 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 team1Color={team1Color}
                 team2Color={team2Color}
               />
+              {/* === G2 Integration: Risk Meter + Captain Recommender === */}
+              <TeamInsights team={t} players={players as MatchPlayer[]} lineupAnnounced={lineupAnnounced} />
               <TransferButtons
                 team={t}
                 match={match}

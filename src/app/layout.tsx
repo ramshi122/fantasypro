@@ -5,6 +5,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { ServiceWorkerRegister } from "@/components/service-worker-register";
 import { SecurityOverlay } from "@/components/security-overlay";
+import { OfflineIndicator } from "@/components/offline-indicator";
+import { AppBootstrap } from "@/components/app-bootstrap";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -61,6 +63,8 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
+        <OfflineIndicator />
+        <AppBootstrap />
         {children}
         <ServiceWorkerRegister />
         <SecurityOverlay />

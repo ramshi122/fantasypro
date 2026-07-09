@@ -261,3 +261,138 @@ export function clearPendingReferralCode(): void {
   if (typeof window === "undefined") return;
   localStorage.removeItem("apna-cricket-pending-referral");
 }
+
+/* ========================================================================
+ * REFERRAL REWARDS (Task G3.8)
+ * When a referred user activates a paid plan, the referrer gets a 10%
+ * discount coupon. Track conversions in Firebase "referral_rewards".
+ * ====================================================================== */
+
+const REFERRAL_REWARDS_COLLECTION = "referral_rewards";
+
+export interface ReferralReward {
+  rewardId: string;
+  referrerMobile: string;
+  referrerCode: string;
+  refereeUserId: string;
+  planType: string;
+  amountPaid: number;
+  discountCouponCode: string;
+  discountPercent: number;
+  createdAt: number;
+  status: "issued" | "redeemed" | "expired";
+}
+
+/**
+ * Generate a deterministic discount coupon for the referrer.
+ * Format: REF<8 chars>
+ */
+function generateRewardCoupon(referrerCode: string): string {
+  const seed = referrerCode.replace(/[^A-Z0-9]/gi, "");
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash) + seed.charCodeAt(i);
+    hash = hash & hash;
+  }
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "REF";
+  const abs = Math.abs(hash);
+  for (let i = 0; i < 8; i++) {
+    out += chars[abs % chars.length];
+    hash = Math.floor(abs / chars.length) + i * 11;
+  }
+  return out;
+}
+
+/**
+ * Process a referral reward when a referred user activates a paid plan.
+ * - Issues a 10% discount coupon to the referrer
+ * - Stores the reward in Firebase "referral_rewards"
+ * - Also stores a coupon entry in Firebase "coupons" collection
+ *
+ * @returns the reward record or null on failure
+ */
+export async function processReferralReward(
+  referrerMobile: string,
+  planType: string,
+  amount: number,
+  refereeUserId?: string
+): Promise<ReferralReward | null> {
+  if (!referrerMobile || amount <= 0) return null;
+
+  try {
+    // Look up the referrer's referral record via mobile
+    // Stored locally too as fallback
+    const record = getReferralRecord();
+    const referrerCode =
+      record.referralCode ||
+      generateReferralCode(refereeUserId || referrerMobile);
+
+    const couponCode = generateRewardCoupon(referrerCode);
+    const discountPercent = 10;
+
+    const reward: ReferralReward = {
+      rewardId: `RW_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      referrerMobile,
+      referrerCode,
+      refereeUserId: refereeUserId || "unknown",
+      planType,
+      amountPaid: amount,
+      discountCouponCode: couponCode,
+      discountPercent,
+      createdAt: Date.now(),
+      status: "issued",
+    };
+
+    // Persist locally so user sees their rewards
+    const localRewards = JSON.parse(
+      localStorage.getItem("apna-cricket-referral-rewards") || "[]"
+    );
+    localRewards.unshift(reward);
+    localStorage.setItem(
+      "apna-cricket-referral-rewards",
+      JSON.stringify(localRewards.slice(0, 100))
+    );
+
+    // Sync to Firebase
+    if (db) {
+      await setDoc(doc(db, REFERRAL_REWARDS_COLLECTION, reward.rewardId), {
+        ...reward,
+        updatedAt: serverTimestamp(),
+      }).catch((err) => console.log("[Referral] Reward sync failed:", err));
+
+      // Also create a coupon entry
+      const { setDoc: setDocC, doc: docC } = await import("firebase/firestore");
+      await setDocC(docC(db, "coupons", couponCode), {
+        code: couponCode,
+        discountType: "percent",
+        value: discountPercent,
+        maxUses: 1,
+        usedCount: 0,
+        validUntil: Date.now() + 30 * 86400000, // valid 30 days
+        source: "referral",
+        referrerMobile,
+        createdAt: Date.now(),
+      }).catch((err) => console.log("[Referral] Coupon sync failed:", err));
+    }
+
+    return reward;
+  } catch (err) {
+    console.error("[Referral] processReferralReward failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Get all referral rewards earned by this user.
+ */
+export function getReferralRewards(): ReferralReward[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(
+      localStorage.getItem("apna-cricket-referral-rewards") || "[]"
+    );
+  } catch {
+    return [];
+  }
+}

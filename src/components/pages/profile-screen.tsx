@@ -35,6 +35,8 @@ import { UserLoginButton } from "@/components/auth/mobile-login-modal";
 import { motion, AnimatePresence } from "framer-motion";
 import { useHiddenTrigger } from "@/lib/use-hidden-trigger";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { LANGUAGES, setLanguage, getLanguage, type Language } from "@/lib/i18n";
 
 const APP_META: Record<FantasyApp, { label: string; emoji: string; color: string }> = {
   dream11: { label: "Dream11", emoji: "🏏", color: "from-red-500 to-rose-600" },
@@ -194,6 +196,8 @@ export function ProfileScreen({ onAdminTrigger }: { onAdminTrigger?: () => void 
       </div>
 
       {/* Other sections */}
+      <AppearanceSection />
+
       {sections.map((section) => (
         <div key={section.title} className="space-y-2">
           <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-1">
@@ -282,6 +286,57 @@ function StatCard({
       <Icon className="w-4 h-4 text-violet-500 mx-auto mb-1" />
       <p className="text-sm font-black text-foreground">{value}</p>
       <p className="text-[10px] text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
+/* ============== Appearance (Theme + Language) ============== */
+
+function AppearanceSection() {
+  const [lang, setLang] = useState<Language>(() => (typeof window !== "undefined" ? getLanguage() : "en"));
+
+  useEffect(() => {
+    // Sync if storage changed in another tab
+    function onStorage(e: StorageEvent) {
+      if (e.key === "apna-cricket-lang") setLang(getLanguage());
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  function changeLanguage(l: Language) {
+    setLanguage(l);
+    setLang(l);
+    toast.success(`Language: ${LANGUAGES.find((x) => x.code === l)?.native || l}`);
+  }
+
+  return (
+    <div className="space-y-2">
+      <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-1">
+        Appearance &amp; Language
+      </h3>
+      <div className="bg-white dark:bg-card rounded-2xl border border-violet-100 dark:border-violet-900/30 overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-violet-50 dark:border-violet-900/20">
+          <Settings className="w-5 h-5 text-violet-500" />
+          <span className="flex-1 text-left text-sm font-medium text-foreground">Theme</span>
+          <ThemeToggle />
+        </div>
+        <div className="flex items-center gap-3 px-4 py-3.5">
+          <span className="text-base">🌐</span>
+          <span className="flex-1 text-left text-sm font-medium text-foreground">Language</span>
+          <select
+            value={lang}
+            onChange={(e) => changeLanguage(e.target.value as Language)}
+            className="bg-slate-100 dark:bg-slate-800 text-foreground text-xs font-bold px-2 py-1.5 rounded-lg border border-violet-100 dark:border-violet-900/30 cursor-pointer"
+          >
+            {LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.native}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
     </div>
   );
 }

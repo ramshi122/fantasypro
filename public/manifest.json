@@ -6,6 +6,8 @@
   "display": "standalone",
   "background_color": "#7C3AED",
   "theme_color": "#7C3AED",
+  "orientation": "portrait",
+  "categories": ["sports", "entertainment", "games"],
   "icons": [
     {
       "src": "/logo.png",
@@ -24,6 +26,36 @@
       "sizes": "400x688",
       "type": "image/png",
       "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Matches",
+      "short_name": "Matches",
+      "description": "View upcoming and live matches",
+      "url": "/?shortcut=matches",
+      "icons": [{ "src": "/logo.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "My Teams",
+      "short_name": "Teams",
+      "description": "View saved teams",
+      "url": "/?shortcut=my-teams",
+      "icons": [{ "src": "/logo.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "Profile",
+      "short_name": "Profile",
+      "description": "Open your profile and settings",
+      "url": "/?shortcut=profile",
+      "icons": [{ "src": "/logo.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "Admin",
+      "short_name": "Admin",
+      "description": "Open admin panel",
+      "url": "/?shortcut=admin",
+      "icons": [{ "src": "/logo.png", "sizes": "96x96", "type": "image/png" }]
     }
   ]
 }

@@ -126,6 +126,112 @@ export async function POST(request: Request) {
       return NextResponse.json({ status: "success", message: "Withdrawal requested", txnId }, { status: 200 });
     }
 
+    // ===== CASHBACK (Task G3.10) =====
+    // On team generation: 2% cashback to wallet (₹0.50 per team, max ₹10/day)
+    if (action === "cashback") {
+      const { matchId, teamCount } = body as {
+        matchId?: string;
+        teamCount?: number;
+      };
+      if (!Number.isFinite(teamCount) || teamCount! <= 0) {
+        return NextResponse.json({ status: "fail", message: "Invalid teamCount" }, { status: 200 });
+      }
+
+      // Cashback: ₹0.50 per team (2% of ₹25 implied), capped at ₹10/day
+      const perTeam = 0.5;
+      const dailyCap = 10;
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const dailyTrackerId = `cashback_${userId}_${todayKey}`;
+
+      let alreadyCreditedToday = 0;
+      if (db) {
+        try {
+          const trackerSnap = await getDoc(doc(db, "cashback_trackers", dailyTrackerId));
+          if (trackerSnap.exists()) {
+            alreadyCreditedToday = Number(trackerSnap.data()?.amount || 0);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const remaining = Math.max(0, dailyCap - alreadyCreditedToday);
+      const requested = Number(teamCount) * perTeam;
+      const cashbackAmount = Math.min(requested, remaining);
+      if (cashbackAmount <= 0) {
+        return NextResponse.json({
+          status: "success",
+          message: "Daily cashback cap reached",
+          cashback: 0,
+          capped: true,
+        }, { status: 200 });
+      }
+
+      // Credit wallet
+      if (db) {
+        try {
+          const walletSnap = await getDoc(doc(db, "wallets", userId));
+          const currentBonus = walletSnap.exists() ? Number(walletSnap.data()?.bonusBalance || 0) : 0;
+          if (!walletSnap.exists()) {
+            await setDoc(doc(db, "wallets", userId), {
+              userId,
+              depositBalance: 0,
+              bonusBalance: cashbackAmount,
+              winningBalance: 0,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              createdAtTs: serverTimestamp(),
+            });
+          } else {
+            await updateDoc(doc(db, "wallets", userId), {
+              bonusBalance: currentBonus + cashbackAmount,
+              updatedAt: Date.now(),
+            });
+          }
+
+          // Update daily tracker
+          await setDoc(doc(db, "cashback_trackers", dailyTrackerId), {
+            userId,
+            date: todayKey,
+            amount: alreadyCreditedToday + cashbackAmount,
+            updatedAt: Date.now(),
+          });
+
+          // Record transaction
+          const txnId = `TXN_CB_${Date.now()}_${userId}`;
+          await setDoc(doc(db, "transactions", txnId), {
+            id: txnId,
+            userId,
+            type: "cashback",
+            amount: cashbackAmount,
+            status: "completed",
+            description: `Cashback for ${teamCount} team(s) generated${matchId ? ` (match ${matchId})` : ""}`,
+            matchId: matchId || null,
+            createdAt: Date.now(),
+            completedAt: Date.now(),
+          });
+
+          return NextResponse.json({
+            status: "success",
+            message: `₹${cashbackAmount} cashback credited`,
+            cashback: cashbackAmount,
+            txnId,
+          }, { status: 200 });
+        } catch (err: any) {
+          console.error("[Wallet API] Cashback failed:", err);
+          return NextResponse.json({ status: "fail", message: err?.message || "Cashback failed" }, { status: 200 });
+        }
+      }
+
+      // No DB — return simulated success
+      return NextResponse.json({
+        status: "success",
+        message: `₹${cashbackAmount} cashback (simulated)`,
+        cashback: cashbackAmount,
+        txnId: `TXN_CB_SIM_${Date.now()}`,
+      }, { status: 200 });
+    }
+
     return NextResponse.json({ status: "fail", message: "Invalid action" }, { status: 200 });
   } catch (error) {
     console.error("[Wallet API] Error:", error);

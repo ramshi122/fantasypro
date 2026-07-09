@@ -1,8 +1,8 @@
-// Apna Cricket - Service Worker v1.0
-// Enables PWA install, offline support, and caching
-// Based on the original teamgeneration.in service worker pattern.
+// Apna Cricket - Service Worker v2.0
+// PWA with offline mode — caches teams + match list for offline viewing.
 
-const CACHE_NAME = 'apna-cricket-v1.0';
+const CACHE_NAME = 'apna-cricket-v2.0';
+const DYNAMIC_CACHE = 'apna-cricket-dynamic-v2.0';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -16,7 +16,6 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(STATIC_ASSETS).catch((err) => {
-        // Don't fail install if some assets are missing
         console.warn('[SW] Some assets failed to cache:', err);
       });
     })
@@ -30,7 +29,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames
-          .filter((name) => name !== CACHE_NAME)
+          .filter((name) => name !== CACHE_NAME && name !== DYNAMIC_CACHE)
           .map((name) => caches.delete(name))
       );
     })
@@ -43,6 +42,24 @@ self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
+  // Cache teams for offline viewing (POST message from app)
+  if (event.data && event.data.type === 'CACHE_TEAMS') {
+    caches.open(DYNAMIC_CACHE).then((cache) => {
+      const resp = new Response(JSON.stringify(event.data.payload || []), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      cache.put('/__offline/teams', resp);
+    });
+  }
+  // Cache matches for offline viewing
+  if (event.data && event.data.type === 'CACHE_MATCHES') {
+    caches.open(DYNAMIC_CACHE).then((cache) => {
+      const resp = new Response(JSON.stringify(event.data.payload || []), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      cache.put('/__offline/matches', resp);
+    });
+  }
 });
 
 // Fetch event - network first, cache fallback strategy
@@ -53,21 +70,27 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET requests
   if (request.method !== 'GET') return;
 
-  // Skip API calls - always go to network (transfer/auth endpoints must be live)
-  if (url.pathname.startsWith('/api/')) return;
-
   // Skip chrome extension requests
   if (url.protocol === 'chrome-extension:') return;
 
   // Skip cross-origin requests (e.g. fantasy platform APIs, images from CDNs)
   if (url.origin !== self.location.origin) return;
 
+  // Offline team/match cache endpoints
+  if (url.pathname === '/__offline/teams' || url.pathname === '/__offline/matches') {
+    event.respondWith(
+      caches.match(request).then((cached) => cached || new Response('[]', {
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    );
+    return;
+  }
+
   // For navigation requests (HTML pages) - network first, cache fallback
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          // Cache successful responses
           if (response.ok) {
             const cloned = response.clone();
             caches.open(CACHE_NAME).then((cache) => {
@@ -77,7 +100,6 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(() => {
-          // Network failed - try cache
           return caches.match(request).then((cached) => {
             return cached || caches.match('/');
           });
@@ -86,15 +108,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For static assets - stale-while-revalidate (show cache, update in background)
-  // This ensures users always see content immediately BUT get updates on next load
+  // Skip API calls (must always go to network)
+  if (url.pathname.startsWith('/api/')) return;
+
+  // For static assets - stale-while-revalidate
   if (
     url.pathname.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2)$/) ||
     url.pathname.startsWith('/_next/static/')
   ) {
     event.respondWith(
       caches.match(request).then((cached) => {
-        // Always fetch in background to update cache for NEXT load
         const fetchPromise = fetch(request).then((response) => {
           if (response.ok) {
             const cloned = response.clone();
@@ -105,7 +128,6 @@ self.addEventListener('fetch', (event) => {
           return response;
         }).catch(() => cached);
 
-        // Return cached version immediately if available, otherwise wait for network
         return cached || fetchPromise;
       })
     );
