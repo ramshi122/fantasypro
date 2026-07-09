@@ -18,6 +18,30 @@ export function isLineupAnnounced(match: MatchInfo | null): boolean {
 }
 
 /**
+ * Get the player ID string from a MatchPlayer.
+ * Handles multiple ID field names: player_fixed_id, pl_id, pid, id, _id
+ */
+export function playerId(p: MatchPlayer | any): string {
+  return String(
+    p?.player_fixed_id ??
+    p?.pl_id ??
+    p?.pid ??
+    p?.id ??
+    p?._id ??
+    p?.name ??
+    ""
+  );
+}
+
+/**
+ * Normalize a player ID for comparison (lowercase, trim).
+ * This handles cases where same player has different ID formats in team vs match detail.
+ */
+function normalizeId(id: string): string {
+  return String(id || "").trim().toLowerCase();
+}
+
+/**
  * Filter players to only show confirmed playing XI after lineup is announced.
  * Before lineup, returns all players.
  */
@@ -42,6 +66,9 @@ export function isPlayerConfirmed(p: MatchPlayer, lineupAnnounced: boolean): boo
 /**
  * Check if a team contains any non-playing players (after lineup).
  * Returns the list of non-playing players in the team.
+ *
+ * FIX: Uses normalized ID comparison to handle ID format mismatches
+ * between team players and match detail players.
  */
 export function getNonPlayingPlayersInTeam(
   team: TeamRow,
@@ -49,18 +76,19 @@ export function getNonPlayingPlayersInTeam(
   playingPlayerIds: Set<string>
 ): MatchPlayer[] {
   if (!lineupAnnounced) return [];
+
+  // Build normalized set of playing IDs for fast lookup
+  const playingIdsNormalized = new Set(
+    Array.from(playingPlayerIds).map(normalizeId)
+  );
+
   const players = (team.players || []) as unknown as MatchPlayer[];
   return players.filter((p) => {
-    const id = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name);
-    return !playingPlayerIds.has(id);
+    const id = playerId(p);
+    const normalized = normalizeId(id);
+    // Player is "non-playing" if NOT in the playing set
+    return !playingIdsNormalized.has(normalized);
   });
-}
-
-/**
- * Get the player ID string from a MatchPlayer.
- */
-export function playerId(p: MatchPlayer): string {
-  return String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "");
 }
 
 /**
@@ -84,6 +112,9 @@ export function buildPlayingPlayerSet(players: MatchPlayer[], lineupAnnounced: b
  *  - For each non-playing player, find a replacement of the SAME ROLE
  *    from the confirmed playing pool (not already in the team)
  *  - If no same-role replacement, pick any available confirmed player
+ *
+ * FIX: Uses normalized ID comparison + role fallback + credits fallback
+ * to ensure non-playing players are always replaced when possible.
  */
 export function autoReplaceNonPlaying(
   team: TeamRow,
@@ -94,34 +125,77 @@ export function autoReplaceNonPlaying(
     return { updatedTeam: team, replaced: [] };
   }
 
+  // Get all confirmed playing players
   const playingPool = allPlayers.filter((p) => Number(p.playing) === 1);
-  const playingIds = new Set(playingPool.map(playerId));
+
+  // Build normalized ID sets
+  const playingIdsNormalized = new Set(playingPool.map((p) => normalizeId(playerId(p))));
   const teamPlayers = (team.players || []) as unknown as MatchPlayer[];
-  const teamPlayerIds = new Set(teamPlayers.map(playerId));
+  const teamPlayerIdsNormalized = new Set(teamPlayers.map((p) => normalizeId(playerId(p))));
 
   const replaced: Array<{ from: string; to: string }> = [];
   const newPlayers: MatchPlayer[] = [];
 
+  // Sort playing pool by credits (descending) for better replacements
+  const sortedPool = [...playingPool].sort((a, b) => {
+    const ca = Number((a as any).credits || 0);
+    const cb = Number((b as any).credits || 0);
+    return cb - ca;
+  });
+
   for (const p of teamPlayers) {
     const id = playerId(p);
-    if (playingIds.has(id)) {
+    const normalized = normalizeId(id);
+
+    if (playingIdsNormalized.has(normalized)) {
       // Player is confirmed playing — keep
       newPlayers.push(p);
     } else {
       // Non-playing — find replacement of same role
-      const role = (p as any).role || (p as any).role_num;
-      const candidates = playingPool.filter(
-        (c) => !teamPlayerIds.has(playerId(c)) && (c as any).role === role
+      const role = (p as any).role ?? (p as any).role_num;
+      const teamIndex = (p as any).team_index;
+
+      // Try same role + same team first
+      let candidates = sortedPool.filter(
+        (c) =>
+          !teamPlayerIdsNormalized.has(normalizeId(playerId(c))) &&
+          (c as any).role === role &&
+          (c as any).team_index === teamIndex
       );
-      let replacement = candidates[0];
-      if (!replacement) {
-        // Fallback: any available confirmed player
-        replacement = playingPool.find((c) => !teamPlayerIds.has(playerId(c)));
+
+      // Fallback 1: same role, any team
+      if (candidates.length === 0) {
+        candidates = sortedPool.filter(
+          (c) =>
+            !teamPlayerIdsNormalized.has(normalizeId(playerId(c))) &&
+            (c as any).role === role
+        );
       }
+
+      // Fallback 2: same team, any role
+      if (candidates.length === 0) {
+        candidates = sortedPool.filter(
+          (c) =>
+            !teamPlayerIdsNormalized.has(normalizeId(playerId(c))) &&
+            (c as any).team_index === teamIndex
+        );
+      }
+
+      // Fallback 3: any available confirmed player
+      if (candidates.length === 0) {
+        candidates = sortedPool.filter(
+          (c) => !teamPlayerIdsNormalized.has(normalizeId(playerId(c)))
+        );
+      }
+
+      const replacement = candidates[0];
       if (replacement) {
         newPlayers.push(replacement);
-        teamPlayerIds.add(playerId(replacement));
-        replaced.push({ from: String(p.name || id), to: String(replacement.name || playerId(replacement)) });
+        teamPlayerIdsNormalized.add(normalizeId(playerId(replacement)));
+        replaced.push({
+          from: String((p as any).name || id),
+          to: String((replacement as any).name || playerId(replacement)),
+        });
       } else {
         // No replacement available — keep original (will be flagged)
         newPlayers.push(p);
@@ -135,12 +209,12 @@ export function autoReplaceNonPlaying(
   let newCaptain = captainId;
   let newViceCaptain = viceCaptainId;
 
-  if (!playingIds.has(captainId) && newPlayers.length > 0) {
+  if (!playingIdsNormalized.has(normalizeId(captainId)) && newPlayers.length > 0) {
     newCaptain = playerId(newPlayers[0]);
   }
-  if (!playingIds.has(viceCaptainId) && newPlayers.length > 1) {
+  if (!playingIdsNormalized.has(normalizeId(viceCaptainId)) && newPlayers.length > 1) {
     newViceCaptain = playerId(newPlayers[1]);
-    if (newViceCaptain === newCaptain && newPlayers.length > 2) {
+    if (normalizeId(newViceCaptain) === normalizeId(newCaptain) && newPlayers.length > 2) {
       newViceCaptain = playerId(newPlayers[2]);
     }
   }
