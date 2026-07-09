@@ -757,6 +757,31 @@ function LicenseActivationCard() {
     expiresAt: number | null;
   } | null>(null);
   const [countdown, setCountdown] = useState({ days: 0, hours: 0, mins: 0, secs: 0, expired: false });
+  const [lockoutInfo, setLockoutInfo] = useState<{ locked: boolean; remaining: string; remainingMs: number } | null>(null);
+
+  // Check lockout on mount + restore from Firebase
+  useEffect(() => {
+    import("@/lib/lockout").then(({ checkLockout, restoreLockoutFromFirebase }) => {
+      restoreLockoutFromFirebase().then(() => {
+        const status = checkLockout();
+        if (status.locked) {
+          setLockoutInfo({ locked: true, remaining: status.remainingFormatted, remainingMs: status.remainingMs });
+        }
+      });
+    });
+    // Update lockout countdown every second
+    const interval = setInterval(() => {
+      import("@/lib/lockout").then(({ checkLockout }) => {
+        const status = checkLockout();
+        if (status.locked) {
+          setLockoutInfo({ locked: true, remaining: status.remainingFormatted, remainingMs: status.remainingMs });
+        } else if (lockoutInfo?.locked) {
+          setLockoutInfo(null);
+        }
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [lockoutInfo?.locked]);
 
   // Load license state on mount
   useEffect(() => {
@@ -805,6 +830,15 @@ function LicenseActivationCard() {
   }, [licenseInfo]);
 
   async function handleActivate() {
+    // Check lockout before attempting
+    const { checkLockout } = await import("@/lib/lockout");
+    const lockStatus = checkLockout();
+    if (lockStatus.locked) {
+      toast.error(`🔒 App locked. Try again in ${lockStatus.remainingFormatted}`);
+      setLockoutInfo({ locked: true, remaining: lockStatus.remainingFormatted, remainingMs: lockStatus.remainingMs });
+      return;
+    }
+
     if (!keyInput.trim()) {
       toast.error("Enter license key");
       return;
@@ -817,7 +851,7 @@ function LicenseActivationCard() {
       const admin = useAdmin.getState();
       const { getDeviceId } = await import("@/lib/admin-store");
       const deviceId = getDeviceId();
-      const result = admin.verifyLicense(keyInput.trim().toUpperCase(), deviceId);
+      const result = await admin.verifyLicense(keyInput.trim().toUpperCase(), deviceId);
 
       if (result.valid) {
         setLicenseVerified(keyInput.trim().toUpperCase(), result.keyType);
@@ -830,8 +864,16 @@ function LicenseActivationCard() {
         });
         toast.success("License activated successfully!");
         setKeyInput("");
+        setLockoutInfo(null);
       } else {
-        toast.error(result.message || "Activation failed");
+        // Check if locked after this attempt
+        const newLock = checkLockout();
+        if (newLock.locked || (result as any).locked) {
+          setLockoutInfo({ locked: true, remaining: newLock.remainingFormatted || "60m 0s", remainingMs: newLock.remainingMs });
+          toast.error(result.message || "🔒 App locked for 1 hour");
+        } else {
+          toast.error(result.message || "Activation failed");
+        }
       }
     } catch (err: any) {
       toast.error(err?.message || "Activation error");
@@ -940,16 +982,34 @@ function LicenseActivationCard() {
           <p className="text-[11px] text-muted-foreground">
             Enter your license key to unlock all features. Get keys from admin via WhatsApp.
           </p>
+
+          {/* Lockout warning banner */}
+          {lockoutInfo?.locked && (
+            <div className="bg-red-50 dark:bg-red-950/30 border-2 border-red-500 dark:border-red-700 rounded-xl p-3 text-center">
+              <p className="text-sm font-bold text-red-600 dark:text-red-400">🔒 App Locked</p>
+              <p className="text-[11px] text-red-500 dark:text-red-300 mt-1">
+                Too many wrong attempts. Try again in:
+              </p>
+              <p className="text-2xl font-mono font-black text-red-600 dark:text-red-400 mt-1">
+                {lockoutInfo.remaining}
+              </p>
+              <p className="text-[9px] text-red-400 dark:text-red-500 mt-2">
+                ⚠️ Lock persists even if you uninstall &amp; reinstall (tracked by device fingerprint)
+              </p>
+            </div>
+          )}
+
           <Input
             value={keyInput}
             onChange={(e) => setKeyInput(e.target.value.toUpperCase())}
             placeholder="CRICB-XXXX-XXXX-XXXX"
             className="bg-violet-50 dark:bg-violet-950/30 border-violet-200 dark:border-violet-800 h-11 text-sm font-mono font-bold tracking-wider"
+            disabled={lockoutInfo?.locked}
           />
           <Button
             className="w-full h-11 brand-gradient text-white font-bold text-sm"
             onClick={handleActivate}
-            disabled={verifying}
+            disabled={verifying || lockoutInfo?.locked}
           >
             {verifying ? (
               <>

@@ -452,16 +452,39 @@ export const useAdmin = create<AdminState>()(
       },
 
       verifyLicense: async (key, deviceId) => {
+        // Step 0: Check lockout — if device is locked, reject immediately
+        const { checkLockout, recordFailedAttempt, clearLockout, getRemainingAttempts } = await import("./lockout");
+        const lockStatus = checkLockout();
+        if (lockStatus.locked) {
+          console.log("[License Verify] FAIL: Device is locked. Remaining:", lockStatus.remainingFormatted);
+          return {
+            valid: false,
+            message: `🔒 Too many wrong attempts. App is locked for ${lockStatus.remainingFormatted}. Try again later.`,
+            locked: true,
+            remainingMs: lockStatus.remainingMs,
+          } as any;
+        }
+
         // Step 1: Clean the key — trim spaces, convert to uppercase
         const cleanKey = key.trim().toUpperCase();
         console.log("[License Verify] Entered key:", cleanKey);
         console.log("[License Verify] Device ID:", deviceId);
+        console.log("[License Verify] Remaining attempts:", getRemainingAttempts());
 
         // Step 2: Validate format (CRICB-XXXX-XXXX-XXXX)
         const keyPattern = /^[A-Z]+-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
         if (!keyPattern.test(cleanKey)) {
           console.log("[License Verify] FAIL: Invalid format. Expected PREFIX-XXXX-XXXX-XXXX");
-          return { valid: false, message: "Invalid key format. Expected format: CRICB-XXXX-XXXX-XXXX" };
+          const state = recordFailedAttempt(cleanKey);
+          const remaining = getRemainingAttempts();
+          if (state.lockedUntil) {
+            return {
+              valid: false,
+              message: `🔒 5 wrong attempts reached. App locked for 1 hour. Try after 60 minutes.`,
+              locked: true,
+            } as any;
+          }
+          return { valid: false, message: `Invalid key format. ${remaining} attempt(s) remaining before 1-hour lock.` };
         }
 
         // Step 3: Look up key in LOCAL database
@@ -489,7 +512,12 @@ export const useAdmin = create<AdminState>()(
 
         if (!k) {
           console.log("[License Verify] FAIL: Key not found in local OR Firebase database");
-          return { valid: false, message: "Key not found — this key does not exist in the database. Make sure admin generated this key." };
+          const failState = recordFailedAttempt(cleanKey);
+          const remaining = getRemainingAttempts();
+          if (failState.lockedUntil) {
+            return { valid: false, message: "🔒 5 wrong attempts reached. App locked for 1 hour.", locked: true } as any;
+          }
+          return { valid: false, message: `Key not found. ${remaining} attempt(s) remaining before 1-hour lock.` };
         }
 
         console.log("[License Verify] Key found:", k.key, "| Status:", k.status, "| Type:", k.type);
@@ -499,12 +527,22 @@ export const useAdmin = create<AdminState>()(
         // (it just has at least one device bound). Only "suspended" and "expired" block verification.
         if (k.status === "suspended") {
           console.log("[License Verify] FAIL: Key is suspended");
-          return { valid: false, message: "Key suspended — contact admin to reactivate" };
+          const failState = recordFailedAttempt(cleanKey);
+          const remaining = getRemainingAttempts();
+          if (failState.lockedUntil) {
+            return { valid: false, message: "🔒 5 wrong attempts reached. App locked for 1 hour.", locked: true } as any;
+          }
+          return { valid: false, message: `Key suspended. ${remaining} attempt(s) remaining.` };
         }
 
         if (k.status === "expired") {
           console.log("[License Verify] FAIL: Key status is expired");
-          return { valid: false, message: "Key expired — status marked as expired" };
+          const failState = recordFailedAttempt(cleanKey);
+          const remaining = getRemainingAttempts();
+          if (failState.lockedUntil) {
+            return { valid: false, message: "🔒 5 wrong attempts reached. App locked for 1 hour.", locked: true } as any;
+          }
+          return { valid: false, message: `Key expired. ${remaining} attempt(s) remaining.` };
         }
 
         // status === "active" OR status === "used" → continue verification
@@ -513,7 +551,12 @@ export const useAdmin = create<AdminState>()(
         if (k.expiresAt && k.expiresAt < Date.now()) {
           const expiredDate = new Date(k.expiresAt).toLocaleDateString();
           console.log("[License Verify] FAIL: Key expired on", expiredDate);
-          return { valid: false, message: `Key expired on ${expiredDate} — generate a new key` };
+          const failState = recordFailedAttempt(cleanKey);
+          const remaining = getRemainingAttempts();
+          if (failState.lockedUntil) {
+            return { valid: false, message: "🔒 5 wrong attempts reached. App locked for 1 hour.", locked: true } as any;
+          }
+          return { valid: false, message: `Key expired on ${expiredDate}. ${remaining} attempt(s) remaining.` };
         }
 
         console.log("[License Verify] Expiry check passed. ExpiresAt:", k.expiresAt ? new Date(k.expiresAt).toLocaleDateString() : "Lifetime");
@@ -549,6 +592,8 @@ export const useAdmin = create<AdminState>()(
 
         get().addLog("key_verification", `Key ${cleanKey} verified on ${deviceId} | Type: ${k.type} | Status: ${k.status}`);
         console.log("[License Verify] ✅ SUCCESS: License verified, type:", k.type);
+        // Clear lockout on successful verification
+        clearLockout();
         return { valid: true, message: "✅ License Key Verified Successfully", keyType: k.type };
       },
 
