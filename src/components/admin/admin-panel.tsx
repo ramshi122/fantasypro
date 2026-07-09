@@ -2332,6 +2332,7 @@ function SubscriptionsTab() {
   const [showAddPlan, setShowAddPlan] = useState(false);
   const [planUserMobile, setPlanUserMobile] = useState("");
   const [planType, setPlanType] = useState<KeyType>("monthly");
+  const [lastGeneratedKey, setLastGeneratedKey] = useState<{ key: string; mobile: string; plan: string } | null>(null);
 
   async function fetchSubscriptions() {
     setLoading(true);
@@ -2383,23 +2384,42 @@ function SubscriptionsTab() {
     setLoading(true);
     try {
       const admin = useAdmin.getState();
+      // generateKey() stores key locally + syncs to Firebase
       const key = admin.generateKey(planType);
+
+      // Update the local key to include mobile/userName
+      useAdmin.setState((s) => ({
+        keys: s.keys.map((k) =>
+          k.key === key
+            ? { ...k, userName: planUserMobile, mobile: planUserMobile }
+            : k
+        ),
+      }));
+
       const { db } = await import("@/lib/firebase");
       if (db) {
         const { doc, setDoc, collection, query, where, getDocs, updateDoc } = await import("firebase/firestore");
         const { getExpiryForType } = await import("@/lib/admin-store");
         const expiry = getExpiryForType(planType);
+        // Update Firebase key with mobile/userName
         await setDoc(doc(db, "license_keys", key), {
           key, type: planType, status: "active", createdAt: Date.now(), expiresAt: expiry,
           deviceIds: [], verifications: 0, userName: planUserMobile, mobile: planUserMobile,
-        });
+        }, { merge: true });
+        // Update user record if exists
         const uq = await getDocs(query(collection(db, "users"), where("mobile", "==", planUserMobile)));
         if (!uq.empty) {
           await updateDoc(doc(db, "users", uq.docs[0].id), { plan: planType, planExpiry: expiry, updatedAt: Date.now() });
         }
       }
-      toast.success(`Plan ${planType} added for ${planUserMobile}. Key: ${key}`);
-      setPlanUserMobile(""); setShowAddPlan(false); fetchSubscriptions();
+
+      // Show the generated key prominently
+      setLastGeneratedKey({ key, mobile: planUserMobile, plan: planType });
+      toast.success(`✓ Plan ${planType} activated for ${planUserMobile}`);
+      toast.info(`License Key: ${key}`, { duration: 8000 });
+      setPlanUserMobile("");
+      setShowAddPlan(false);
+      fetchSubscriptions();
     } catch (err: any) { toast.error(err?.message || "Failed"); }
     finally { setLoading(false); }
   }
@@ -2464,6 +2484,40 @@ function SubscriptionsTab() {
             <Button size="sm" className="bg-violet-600 hover:bg-violet-700 text-white h-9 text-xs" onClick={handleAddPlan} disabled={loading}>
               {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Check className="w-3 h-3 mr-1" />} Activate Plan</Button>
           </div>
+        </div>
+      )}
+
+      {/* License Key Display — shows after activation */}
+      {lastGeneratedKey && (
+        <div className="bg-gradient-to-r from-emerald-900/50 to-green-900/50 rounded-xl p-4 border-2 border-emerald-600 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold text-emerald-400 flex items-center gap-1">
+                <CheckCircle2 className="w-4 h-4" /> Plan Activated Successfully!
+              </p>
+              <p className="text-[10px] text-slate-400 mt-0.5">Mobile: {lastGeneratedKey.mobile} · Plan: {lastGeneratedKey.plan}</p>
+            </div>
+            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-slate-400 hover:text-white" onClick={() => setLastGeneratedKey(null)}>
+              <X className="w-3 h-3" />
+            </Button>
+          </div>
+          <div className="bg-black/40 rounded-lg p-3 border border-emerald-800">
+            <p className="text-[9px] text-slate-400 uppercase font-bold mb-1">License Key (give this to user):</p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-sm font-mono font-bold text-emerald-300 break-all">{lastGeneratedKey.key}</code>
+              <Button
+                size="sm"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 text-[10px]"
+                onClick={() => {
+                  navigator.clipboard.writeText(lastGeneratedKey.key);
+                  toast.success("License key copied to clipboard");
+                }}
+              >
+                <Copy className="w-3 h-3 mr-1" /> Copy
+              </Button>
+            </div>
+          </div>
+          <p className="text-[9px] text-amber-400">⚠️ This key is now stored locally + in Firebase. User can activate it on their device.</p>
         </div>
       )}
 
