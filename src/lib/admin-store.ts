@@ -841,6 +841,55 @@ if (typeof window !== "undefined") {
         console.log("[Admin Store] All", currentKeys.length, "keys already valid — no fixes needed");
       }
     }
+
+    // === FIREBASE SYNC — CRITICAL for multi-device consistency ===
+    // Fetch all keys from Firebase and merge with local keys.
+    // This ensures all admin panels (different browsers/APKs) show the SAME keys.
+    // Local-only keys (generated offline) are synced UP to Firebase.
+    // Firebase-only keys (generated on other devices) are synced DOWN to local.
+    import("./firebase-license").then(async ({ fetchAllKeysFromFirestore, syncKeyToFirestore, initFirebase, bulkSyncKeysToFirestore }) => {
+      try {
+        initFirebase();
+        const firebaseKeys = await fetchAllKeysFromFirestore();
+        if (firebaseKeys.length === 0) {
+          console.log("[Admin Store][Firebase Sync] No keys in Firebase — syncing local keys UP");
+          const localKeys = useAdmin.getState().keys;
+          await bulkSyncKeysToFirestore(localKeys);
+          console.log("[Admin Store][Firebase Sync] Synced", localKeys.length, "local keys to Firebase");
+          return;
+        }
+
+        // Merge: Firebase keys + local-only keys (not in Firebase)
+        const localKeys = useAdmin.getState().keys;
+        const firebaseKeySet = new Set(firebaseKeys.map((k) => k.key));
+        const localOnlyKeys = localKeys.filter((k) => !firebaseKeySet.has(k.key));
+
+        // Sync local-only keys UP to Firebase
+        if (localOnlyKeys.length > 0) {
+          console.log("[Admin Store][Firebase Sync] Syncing", localOnlyKeys.length, "local-only keys UP to Firebase");
+          for (const k of localOnlyKeys.slice(0, 50)) { // limit to 50 to avoid rate limit
+            await syncKeyToFirestore(k);
+          }
+        }
+
+        // Merge Firebase keys DOWN to local (preserve local if conflicts — local is newer)
+        const localKeyMap = new Map(localKeys.map((k) => [k.key, k]));
+        const mergedKeys = [
+          ...localKeys, // local keys first (preserve order)
+          ...firebaseKeys.filter((fk) => !localKeyMap.has(fk.key)), // add Firebase-only keys
+        ];
+
+        useAdmin.setState({ keys: mergedKeys });
+        console.log(
+          "[Admin Store][Firebase Sync] Merged:",
+          localKeys.length, "local +",
+          firebaseKeys.filter((fk) => !localKeyMap.has(fk.key)).length, "from Firebase =",
+          mergedKeys.length, "total"
+        );
+      } catch (err) {
+        console.warn("[Admin Store][Firebase Sync] Failed (offline?):", err);
+      }
+    });
   }, 100);
 }
 

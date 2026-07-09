@@ -283,6 +283,62 @@ function DashboardTab() {
   const devices = useAdmin((s) => s.devices);
   const users = useAdmin((s) => s.users);
   const logs = useAdmin((s) => s.logs);
+  const [syncing, setSyncing] = useState(false);
+
+  // Sync keys from Firebase — ensures all admin panels show SAME keys
+  async function syncFromFirebase() {
+    setSyncing(true);
+    try {
+      const { db } = await import("@/lib/firebase");
+      if (!db) {
+        toast.error("Firebase not configured");
+        return;
+      }
+      const { collection, getDocs } = await import("firebase/firestore");
+      const { syncKeyToFirestore, bulkSyncKeysToFirestore } = await import("@/lib/firebase-license");
+
+      // 1. Fetch all keys from Firebase
+      const snap = await getDocs(collection(db, "license_keys"));
+      const firebaseKeys: any[] = [];
+      snap.forEach((docSnap) => {
+        firebaseKeys.push({ key: docSnap.id, ...docSnap.data() });
+      });
+
+      // 2. Get local keys
+      const localKeys = useAdmin.getState().keys;
+      const firebaseKeySet = new Set(firebaseKeys.map((k: any) => k.key));
+
+      // 3. Sync local-only keys UP to Firebase
+      const localOnlyKeys = localKeys.filter((k) => !firebaseKeySet.has(k.key));
+      if (localOnlyKeys.length > 0) {
+        await bulkSyncKeysToFirestore(localOnlyKeys);
+      }
+
+      // 4. Merge Firebase keys DOWN to local
+      const localKeyMap = new Map(localKeys.map((k) => [k.key, k]));
+      const mergedKeys = [
+        ...localKeys,
+        ...firebaseKeys.filter((fk) => !localKeyMap.has(fk.key)).map((fk) => ({
+          key: fk.key,
+          type: fk.type || "trial",
+          status: fk.status || "active",
+          createdAt: fk.createdAt || Date.now(),
+          expiresAt: fk.expiresAt || null,
+          deviceIds: fk.deviceIds || [],
+          verifications: fk.verifications || 0,
+          userName: fk.userName || fk.mobile || "",
+          mobile: fk.mobile || "",
+        })),
+      ];
+
+      useAdmin.setState({ keys: mergedKeys });
+      toast.success(`✓ Synced: ${localKeys.length} local + ${firebaseKeys.length} Firebase = ${mergedKeys.length} total`);
+    } catch (err: any) {
+      toast.error(err?.message || "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const stats = (() => {
     const now = Date.now();
@@ -311,7 +367,21 @@ function DashboardTab() {
   ];
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-bold text-white">Dashboard Overview</h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-white">Dashboard Overview</h3>
+        <Button
+          size="sm"
+          className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs"
+          onClick={syncFromFirebase}
+          disabled={syncing}
+        >
+          {syncing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+          Sync from Firebase
+        </Button>
+      </div>
+      <div className="bg-emerald-900/20 border border-emerald-800/50 rounded-lg p-2 text-[10px] text-emerald-300">
+        ✓ All admin panels now sync from Firebase — keys, plans, and data are the SAME across all devices/APKs
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {cards.map((c) => {
           const Icon = c.icon;
