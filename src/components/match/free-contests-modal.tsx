@@ -67,7 +67,7 @@ export function FreeContestsModal({
   useEffect(() => {
     if (!open) return;
     const apps: FantasyApp[] = [];
-    for (const a of ["dream11", "my11circle", "myteam11", "vision11"] as FantasyApp[]) {
+    for (const a of ["dream11", "my11circle", "jumbo", "myteam11", "vision11"] as FantasyApp[]) {
       const acct = getLinkedAccount(a);
       if (acct) apps.push(a);
     }

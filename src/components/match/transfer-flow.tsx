@@ -464,6 +464,87 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 );
               })()}
 
+              {/* Jumbo Transfer — same tier as My11Circle */}
+              {(() => {
+                const jumboTiers = ["match_full", "weekly", "monthly", "elite", "lifetime"];
+                const canJumbo = license.isLicensed && license.licenseKeyType && jumboTiers.includes(license.licenseKeyType);
+                return (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (!license.requireLicense()) return;
+                      if (!canJumbo) {
+                        toast.error("Jumbo transfer requires 24 Hour pass (₹99) or higher.");
+                        return;
+                      }
+                      setSelectedTransferApp("jumbo");
+                      setShowBulkTransfer(true);
+                    }}
+                    className={cn(
+                      canJumbo ? "bg-orange-600 hover:bg-orange-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
+                    )}
+                    disabled={existingTeams.length === 0}
+                  >
+                    {canJumbo ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                    {canJumbo ? "🐘 Jumbo" : "Jumbo 🔒"}
+                  </Button>
+                );
+              })()}
+
+              {/* Vision11 Transfer — same tier as My11Circle */}
+              {(() => {
+                const v11Tiers = ["match_full", "weekly", "monthly", "elite", "lifetime"];
+                const canV11 = license.isLicensed && license.licenseKeyType && v11Tiers.includes(license.licenseKeyType);
+                return (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (!license.requireLicense()) return;
+                      if (!canV11) {
+                        toast.error("Vision11 transfer requires 24 Hour pass (₹99) or higher.");
+                        return;
+                      }
+                      setSelectedTransferApp("vision11");
+                      setShowBulkTransfer(true);
+                    }}
+                    className={cn(
+                      canV11 ? "bg-purple-600 hover:bg-purple-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
+                    )}
+                    disabled={existingTeams.length === 0}
+                  >
+                    {canV11 ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                    {canV11 ? "👁 Vision11" : "V11 🔒"}
+                  </Button>
+                );
+              })()}
+
+              {/* MyTeam11 Transfer — same tier as My11Circle */}
+              {(() => {
+                const mt11Tiers = ["match_full", "weekly", "monthly", "elite", "lifetime"];
+                const canMt11 = license.isLicensed && license.licenseKeyType && mt11Tiers.includes(license.licenseKeyType);
+                return (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (!license.requireLicense()) return;
+                      if (!canMt11) {
+                        toast.error("MyTeam11 transfer requires 24 Hour pass (₹99) or higher.");
+                        return;
+                      }
+                      setSelectedTransferApp("myteam11");
+                      setShowBulkTransfer(true);
+                    }}
+                    className={cn(
+                      canMt11 ? "bg-pink-600 hover:bg-pink-700 text-white" : "bg-slate-300 text-slate-500 dark:bg-slate-700"
+                    )}
+                    disabled={existingTeams.length === 0}
+                  >
+                    {canMt11 ? <Send className="w-3.5 h-3.5 mr-1" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+                    {canMt11 ? "👥 MyTeam11" : "MT11 🔒"}
+                  </Button>
+                );
+              })()}
+
               {/* Free Contests — locked for trial */}
               {(() => {
                 const contestTiers = ["match_basic", "match_full", "weekly", "monthly", "elite", "lifetime"];

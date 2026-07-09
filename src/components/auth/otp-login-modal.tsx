@@ -43,6 +43,7 @@ const APPS: Array<{
 }> = [
   { id: "dream11", label: "Dream11", emoji: "🏏", color: "from-red-500 to-rose-600", desc: "Most popular fantasy cricket" },
   { id: "my11circle", label: "My11Circle", emoji: "⭕", color: "from-sky-500 to-blue-600", desc: "Circle of fantasy experts" },
+  { id: "jumbo", label: "Jumbo", emoji: "🐘", color: "from-orange-500 to-amber-600", desc: "Jumbo fantasy cricket" },
   { id: "myteam11", label: "MyTeam11", emoji: "👥", color: "from-emerald-500 to-green-600", desc: "Play & win daily" },
   { id: "vision11", label: "Vision11", emoji: "👁️", color: "from-violet-500 to-purple-600", desc: "Vision your win" },
 ];

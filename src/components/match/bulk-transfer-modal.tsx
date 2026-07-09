@@ -81,7 +81,7 @@ export function BulkTransferModal({
   useEffect(() => {
     if (!open) return;
     const apps: FantasyApp[] = [];
-    for (const a of ["dream11", "my11circle", "myteam11", "vision11"] as FantasyApp[]) {
+    for (const a of ["dream11", "my11circle", "jumbo", "myteam11", "vision11"] as FantasyApp[]) {
       if (getFantasyToken(a)) apps.push(a);
     }
     setLinkedApps(apps);
@@ -109,7 +109,7 @@ export function BulkTransferModal({
 
       // Build player ID map for ALL apps (not just supported ones)
       // so Dream11 transfer works even on My11Circle-only matches
-      const allApps = Array.from(new Set([...supported, "dream11", "my11circle", chosenApp]));
+      const allApps = Array.from(new Set([...supported, "dream11", "my11circle", "jumbo", chosenApp]));
       const map: Record<string, string> = {};
       const all = [...(d.left_team_players || []), ...(d.right_team_players || [])].filter(Boolean);
       for (const p of all) {

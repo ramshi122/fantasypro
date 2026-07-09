@@ -1783,7 +1783,7 @@ function MatchesTab() {
   const [matches, setMatches] = useState<AdminMatch[]>([]);
   const [addedMatchIds, setAddedMatchIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
-  const [platform, setPlatform] = useState<"all" | "my11circle" | "dream11">("my11circle");
+  const [platform, setPlatform] = useState<"all" | "my11circle" | "dream11" | "jumbo">("my11circle");
   const [filter, setFilter] = useState<"all" | "live" | "upcoming" | "in-db" | "not-db" | "lineup-out" | "prime">("all");
   const [search, setSearch] = useState("");
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
@@ -1962,6 +1962,7 @@ function MatchesTab() {
     prime: platformFiltered.filter(m => m.prime_team).length,
     d11: matches.filter(m => m.supports.includes("dream11")).length,
     m11: matches.filter(m => m.supports.includes("my11circle")).length,
+    jumbo: matches.filter(m => m.supports.includes("jumbo")).length,
   };
 
   async function runFirstStageMapper(m: AdminMatch, i: number) {
@@ -2117,18 +2118,18 @@ function MatchesTab() {
 
       {/* Platform tabs — All / my11circle / dream11 */}
       <div className="flex gap-1 bg-slate-800/50 rounded-lg p-1">
-        {(["all", "my11circle", "dream11"] as const).map(p => (
+        {(["all", "my11circle", "dream11", "jumbo"] as const).map(p => (
           <button
             key={p}
             onClick={() => setPlatform(p)}
             className={cn(
               "flex-1 h-8 text-[11px] font-bold rounded-md transition-all",
               platform === p
-                ? p === "my11circle" ? "bg-emerald-600 text-white" : p === "dream11" ? "bg-red-600 text-white" : "bg-violet-600 text-white"
+                ? p === "my11circle" ? "bg-emerald-600 text-white" : p === "dream11" ? "bg-red-600 text-white" : p === "jumbo" ? "bg-orange-600 text-white" : "bg-violet-600 text-white"
                 : "text-slate-400 hover:text-white hover:bg-slate-700/50"
             )}
           >
-            {p === "all" ? `All (${matches.length})` : p === "my11circle" ? `my11circle (${stats.m11})` : `dream11 (${stats.d11})`}
+            {p === "all" ? `All (${matches.length})` : p === "my11circle" ? `my11circle (${stats.m11})` : p === "jumbo" ? `jumbo (${stats.jumbo})` : `dream11 (${stats.d11})`}
           </button>
         ))}
       </div>

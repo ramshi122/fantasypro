@@ -33,7 +33,7 @@ import { roleFromPlayerType } from "./format";
 export const API_BASE = "https://tgsoftware-api.online";
 
 export type Sport = "cricket" | "football" | "basketball" | "kabaddi";
-export type FantasyApp = "dream11" | "my11circle" | "myteam11" | "vision11";
+export type FantasyApp = "dream11" | "my11circle" | "myteam11" | "vision11" | "jumbo";
 
 /**
  * Per-platform team limits — matches the ORIGINAL teamgeneration.in APK source.
