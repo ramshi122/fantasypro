@@ -177,7 +177,7 @@ function generateLicenseKey(prefix: string = LICENSE_PREFIX_DEFAULT): string {
   return `${prefix}-${randomKeySegment()}-${randomKeySegment()}-${randomKeySegment()}`;
 }
 
-function getExpiryForType(type: KeyType): number | null {
+export function getExpiryForType(type: KeyType): number | null {
   const now = Date.now();
   const day = 86400000;
   const hour = 3600000;

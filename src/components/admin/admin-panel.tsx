@@ -2338,8 +2338,9 @@ function SubscriptionsTab() {
     try {
       const { db } = await import("@/lib/firebase");
       if (!db) {
-        const admin = useAdmin.getState();
-        const localSubs: UserSubscription[] = admin.keys.slice(0, 50).map((k) => ({
+        // FIX: useAdmin.getState() must be called outside render — already correct here
+        const adminState = useAdmin.getState();
+        const localSubs: UserSubscription[] = adminState.keys.slice(0, 50).map((k) => ({
           userId: k.deviceIds[0] || "unknown",
           mobile: k.userName || "—",
           userName: k.userName || "User",
@@ -2359,13 +2360,14 @@ function SubscriptionsTab() {
       const { collection, getDocs } = await import("firebase/firestore");
       const snap = await getDocs(collection(db, "users"));
       const subs: UserSubscription[] = [];
-      snap.forEach((doc) => {
-        const d = doc.data() as any;
+      // FIX: rename `d` to `userData` to avoid minification conflict
+      snap.forEach((docSnap) => {
+        const userData = docSnap.data() as any;
         subs.push({
-          userId: d.userId || doc.id, mobile: d.mobile || "—", userName: d.name || "User",
-          plan: d.plan || "free", planStatus: d.plan === "free" || !d.plan ? "none" : "active",
-          primePlan: d.plan === "elite" || d.plan === "lifetime", currentPlan: d.plan || "free",
-          previousPlans: d.previousPlans || [], expiryDate: d.planExpiry || null, createdAt: d.createdAt || 0,
+          userId: userData.userId || docSnap.id, mobile: userData.mobile || "—", userName: userData.name || "User",
+          plan: userData.plan || "free", planStatus: userData.plan === "free" || !userData.plan ? "none" : "active",
+          primePlan: userData.plan === "elite" || userData.plan === "lifetime", currentPlan: userData.plan || "free",
+          previousPlans: userData.previousPlans || [], expiryDate: userData.planExpiry || null, createdAt: userData.createdAt || 0,
         });
       });
       setSubscriptions(subs);
