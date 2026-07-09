@@ -46,6 +46,7 @@
 
 import type { MatchPlayer, TeamRow } from "./api";
 import { roleFromPlayerType } from "./format";
+import { calculateWinProbability, type WinProbability } from "./win-probability";
 
 /* ============== Types ============== */
 
@@ -77,6 +78,7 @@ export interface EliteAnalysisResult {
   topCaptainPicks: Array<{ playerId: string; name: string; efv: number; selPct: number }>;
   topVCPicks: Array<{ playerId: string; name: string; efv: number; selPct: number }>;
   differentialPicks: Array<{ playerId: string; name: string; efv: number; selPct: number }>;
+  winProbability?: WinProbability;
 }
 
 export interface EliteRankedTeam {
@@ -549,6 +551,19 @@ export function runEliteAnalysis(
     insight: `Overall confidence: ${overallScore}/100 — ${overallScore >= 75 ? "HIGH confidence in teams" : overallScore >= 60 ? "MEDIUM confidence" : "LOW confidence — proceed with caution"}`,
   });
 
+  // === CHECK 26: Win Probability Analysis (NEW) ===
+  const winProb = calculateWinProbability(team1Name, team2Name, pool);
+  const wpScore = winProb.margin >= 30 ? 95 : winProb.margin >= 15 ? 80 : 60;
+  checks.push({
+    id: 26,
+    name: "Win Probability Analysis",
+    category: "balance",
+    score: wpScore,
+    status: wpScore >= 90 ? "excellent" : wpScore >= 75 ? "good" : "warning",
+    insight: winProb.reasoning,
+    recommendation: `Recommended split: ${team1Name} ${winProb.recommendedSplit.A} - ${winProb.recommendedSplit.B} ${team2Name}`,
+  });
+
   // Determine recommended strategy
   const recommendedStrategy: EliteAnalysisResult["recommendedStrategy"] =
     overallScore >= 80 ? "safe" : overallScore >= 65 ? "balanced" : diffCount >= 5 ? "grand-league" : "differential";
@@ -596,6 +611,7 @@ export function runEliteAnalysis(
     topCaptainPicks,
     topVCPicks,
     differentialPicks,
+    winProbability: winProb,
   };
 }
 
@@ -768,24 +784,46 @@ export function generateEliteTeams(
 
     if (team.length !== 11) continue;
 
-    // Validate side balance (max 7 per side)
-    const t1Count = team.filter((p) => (p.team_name || "") === team1Name).length;
-    const t2Count = team.filter((p) => (p.team_name || "") === team2Name).length;
-    if (t1Count > 7 || t2Count > 7) {
-      // Swap a player from dominant side with same-role player from other side
-      const dominantTeam = t1Count > 7 ? team1Name : team2Name;
-      const otherTeam = dominantTeam === team1Name ? team2Name : team1Name;
-      for (let j = 0; j < team.length; j++) {
-        if ((team[j].team_name || "") !== dominantTeam) continue;
-        const role = roleOf(team[j]);
-        const replacement = byRole[role].find(
-          (p) => (p.team_name || "") === otherTeam && !team.find((x) => playerId(x) === playerId(p))
-        );
-        if (replacement) {
-          team[j] = replacement;
-          break;
-        }
-      }
+    // === WIN PROBABILITY-BASED SIDE BALANCE ===
+    // Calculate win probability and enforce recommended split (7-4, 6-5, etc.)
+    const wp = calculateWinProbability(team1Name, team2Name, effectivePool);
+    const targetA = wp.recommendedSplit.A;
+    const targetB = wp.recommendedSplit.B;
+
+    let t1Count = team.filter((p) => (p.team_name || "") === team1Name).length;
+    let t2Count = team.filter((p) => (p.team_name || "") === team2Name).length;
+
+    // Adjust to match recommended split (with 1-player tolerance)
+    let balanceAttempts = 0;
+    while ((Math.abs(t1Count - targetA) > 1 || Math.abs(t2Count - targetB) > 1) && balanceAttempts < 20) {
+      if (t1Count > targetA) {
+        // Too many from team A — swap one with team B player of same role
+        const swapIdx = team.findIndex((p) => (p.team_name || "") === team1Name);
+        if (swapIdx >= 0) {
+          const role = roleOf(team[swapIdx]);
+          const replacement = byRole[role].find(
+            (p) => (p.team_name || "") === team2Name && !team.find((x) => playerId(x) === playerId(p))
+          );
+          if (replacement) {
+            team[swapIdx] = replacement;
+            t1Count--; t2Count++;
+          } else break;
+        } else break;
+      } else if (t2Count > targetB) {
+        // Too many from team B — swap one with team A player of same role
+        const swapIdx = team.findIndex((p) => (p.team_name || "") === team2Name);
+        if (swapIdx >= 0) {
+          const role = roleOf(team[swapIdx]);
+          const replacement = byRole[role].find(
+            (p) => (p.team_name || "") === team1Name && !team.find((x) => playerId(x) === playerId(p))
+          );
+          if (replacement) {
+            team[swapIdx] = replacement;
+            t2Count--; t1Count++;
+          } else break;
+        } else break;
+      } else break;
+      balanceAttempts++;
     }
 
     // Validate credits

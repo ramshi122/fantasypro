@@ -385,6 +385,42 @@ function EliteAIResult({
             <p className="text-[10px] text-muted-foreground mt-1">{rankedTeams.length} ranked teams</p>
           </div>
         </div>
+
+        {/* === WIN PROBABILITY DISPLAY (NEW) === */}
+        {analysis.winProbability && (
+          <div className="mt-3 bg-white/60 dark:bg-slate-900/40 rounded-xl p-3 border border-violet-200 dark:border-violet-800">
+            <p className="text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-wide mb-2">
+              🏆 Win Probability Analysis
+            </p>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg p-2 text-center">
+                <p className="text-[9px] text-muted-foreground font-bold">{analysis.winProbability.teamA.name}</p>
+                <p className="text-xl font-black text-blue-600 dark:text-blue-400">
+                  {analysis.winProbability.teamAWinPercent}%
+                </p>
+                <p className="text-[8px] text-muted-foreground">
+                  BAT:{analysis.winProbability.teamA.batStrength} · BOWL:{analysis.winProbability.teamA.bowlStrength}
+                </p>
+              </div>
+              <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-2 text-center">
+                <p className="text-[9px] text-muted-foreground font-bold">{analysis.winProbability.teamB.name}</p>
+                <p className="text-xl font-black text-red-600 dark:text-red-400">
+                  {analysis.winProbability.teamBWinPercent}%
+                </p>
+                <p className="text-[8px] text-muted-foreground">
+                  BAT:{analysis.winProbability.teamB.batStrength} · BOWL:{analysis.winProbability.teamB.bowlStrength}
+                </p>
+              </div>
+            </div>
+            <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-2 text-center">
+              <p className="text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                ⚖️ Recommended Split: {analysis.winProbability.teamA.name} {analysis.winProbability.recommendedSplit.A} - {analysis.winProbability.recommendedSplit.B} {analysis.winProbability.teamB.name}
+              </p>
+              <p className="text-[9px] text-muted-foreground mt-1">{analysis.winProbability.reasoning}</p>
+            </div>
+          </div>
+        )}
+
         <Button
           variant="outline"
           size="sm"
