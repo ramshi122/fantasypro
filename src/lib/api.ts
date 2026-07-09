@@ -407,6 +407,15 @@ export function getSupportedFantasyApps(match: MatchInfo | any): string[] {
   if (match.dream11Url || match.dream11_url) apps.add("dream11");
   if (match.my11circleUrl || match.my11circle_url) apps.add("my11circle");
 
+  // 4) ALWAYS include all 5 supported platforms — backend auth/verify works
+  //    for all of them, and bulk-transfer-modal handles player ID mapping
+  //    gracefully even if match doesn't have explicit support.
+  apps.add("dream11");
+  apps.add("my11circle");
+  apps.add("jumbo");
+  apps.add("myteam11");
+  apps.add("vision11");
+
   return Array.from(apps);
 }
 
@@ -424,10 +433,11 @@ export function matchSupportsMy11Circle(match: MatchInfo | any): boolean {
  * Visibility rule:
  *   Show match card if Dream11 OR My11Circle (or both) are available.
  *   Hide match card if NEITHER is available.
+ *   (Now always true since we include all 5 platforms by default.)
  */
 export function shouldShowMatchCard(match: MatchInfo | any): boolean {
   const apps = getSupportedFantasyApps(match);
-  return apps.includes("dream11") || apps.includes("my11circle");
+  return apps.includes("dream11") || apps.includes("my11circle") || apps.includes("jumbo") || apps.includes("myteam11") || apps.includes("vision11");
 }
 
 export async function getMatches(sport: Sport): Promise<MatchInfo[]> {

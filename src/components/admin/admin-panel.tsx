@@ -1824,7 +1824,7 @@ function MatchesTab() {
             team2Img: m.right_team_image,
             startTime: m.match_time ? new Date(m.match_time).getTime() : (m.start_time ? (m.start_time < 1e12 ? m.start_time * 1000 : m.start_time) : 0),
             inDb: addedIds.has(mid) || Boolean(m.in_db || m.inDb || m.direct_teams > 0 || false),
-            supports: m.fantasy_list || [],
+            supports: Array.from(new Set([...(m.fantasy_list || []), "dream11", "my11circle", "jumbo", "myteam11", "vision11"])),
             tour_id: m.tour_id,
             sport_index: m.sport_index,
             lineup_out: m.lineup_out,

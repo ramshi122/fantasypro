@@ -18,6 +18,7 @@ interface MatchCardProps {
 const FANTASY_APPS: Record<string, { label: string; emoji: string; bg: string; text: string }> = {
   dream11: { label: "D11", emoji: "🏏", bg: "bg-red-500", text: "text-white" },
   my11circle: { label: "M11", emoji: "⭕", bg: "bg-sky-500", text: "text-white" },
+  jumbo: { label: "JBO", emoji: "🐘", bg: "bg-orange-500", text: "text-white" },
   myteam11: { label: "MT11", emoji: "👥", bg: "bg-emerald-500", text: "text-white" },
   vision11: { label: "V11", emoji: "👁️", bg: "bg-violet-500", text: "text-white" },
   myfab11: { label: "MF11", emoji: "🎯", bg: "bg-pink-500", text: "text-white" },
