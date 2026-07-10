@@ -843,7 +843,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 variant="outline"
                 onClick={() => {
                   if (!canMultiAccountDream11(license.licenseKeyType)) {
-                    toast.error("Multi-Account Dream11 requires 24 Hours (₹99) or higher subscription.");
+                    toast.error("Multi-Account Dream11 requires Pro (₹299), Elite (₹999), or Lifetime subscription.");
                     return;
                   }
                   setShowMultiAccount("dream11");
@@ -864,7 +864,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 variant="outline"
                 onClick={() => {
                   if (!canMultiAccountMy11Circle(license.licenseKeyType)) {
-                    toast.error("Multi-Account My11Circle requires Weekly (₹149) or higher subscription.");
+                    toast.error("Multi-Account My11Circle requires Pro (₹299), Elite (₹999), or Lifetime subscription.");
                     return;
                   }
                   setShowMultiAccount("my11circle");
@@ -1134,6 +1134,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         open={showMultiAccount === "dream11"}
         onClose={() => setShowMultiAccount(null)}
         app="dream11"
+        licenseTier={license.licenseKeyType}
         onAccountAdded={(account) => {
           if (account.id === "_new_") {
             // Trigger OTP login flow
@@ -1149,6 +1150,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         open={showMultiAccount === "my11circle"}
         onClose={() => setShowMultiAccount(null)}
         app="my11circle"
+        licenseTier={license.licenseKeyType}
         onAccountAdded={(account) => {
           if (account.id === "_new_") {
             setShowMultiAccount(null);

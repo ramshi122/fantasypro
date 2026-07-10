@@ -26,11 +26,14 @@ import {
   countAccountsForApp,
   canAddMoreAccounts,
 } from "@/lib/multi-accounts";
+import { canMultiAccountDream11, canMultiAccountMy11Circle } from "@/lib/subscription";
 
 interface MultiAccountManagerProps {
   open: boolean;
   onClose: () => void;
   app: FantasyApp;
+  /** License tier for gating — only Pro/Elite/Lifetime can add multiple accounts */
+  licenseTier?: string | null;
   onAccountAdded?: (account: FantasyAccount) => void;
   onAccountRemoved?: (id: string) => void;
 }
@@ -47,6 +50,7 @@ export function MultiAccountManager({
   open,
   onClose,
   app,
+  licenseTier,
   onAccountAdded,
   onAccountRemoved,
 }: MultiAccountManagerProps) {
@@ -62,6 +66,17 @@ export function MultiAccountManager({
   const info = APP_INFO[app];
   const count = accounts.length;
   const canAddMore = count < MAX_ACCOUNTS_PER_APP;
+
+  // Tier gating: only Pro (monthly), Elite, Lifetime can add multiple accounts
+  const canMultiAccount = app === "dream11"
+    ? canMultiAccountDream11(licenseTier)
+    : app === "my11circle"
+    ? canMultiAccountMy11Circle(licenseTier)
+    : false;
+
+  // If user can't multi-account, they can only have 1 account
+  // (the first account is always allowed — it's the "single account" mode)
+  const canAddAnother = canAddMore && (canMultiAccount || count === 0);
 
   function handleRemove(id: string) {
     if (!confirm("Remove this account? Teams saved with this account will remain.")) return;
@@ -213,8 +228,12 @@ export function MultiAccountManager({
               {/* Add account button */}
               <Button
                 className="w-full h-11 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white font-bold"
-                disabled={!canAddMore}
+                disabled={!canAddAnother}
                 onClick={() => {
+                  if (!canMultiAccount && count >= 1) {
+                    toast.error(`Multi-account requires Pro (₹299), Elite (₹999), or Lifetime subscription.`);
+                    return;
+                  }
                   onClose();
                   // Trigger the OTP login flow via callback
                   onAccountAdded?.({
@@ -229,8 +248,21 @@ export function MultiAccountManager({
                 }}
               >
                 <Plus className="w-4 h-4 mr-1.5" />
-                {canAddMore ? `Add ${info.name} Account (${count}/${MAX_ACCOUNTS_PER_APP})` : `Max ${MAX_ACCOUNTS_PER_APP} accounts reached`}
+                {!canMultiAccount && count >= 1
+                  ? `🔒 Multi-Account needs Pro/Elite/Lifetime`
+                  : canAddAnother
+                  ? `Add ${info.name} Account (${count}/${MAX_ACCOUNTS_PER_APP})`
+                  : `Max ${MAX_ACCOUNTS_PER_APP} accounts reached`}
               </Button>
+
+              {/* Tier info */}
+              {!canMultiAccount && (
+                <p className="text-[9px] text-center text-amber-600 dark:text-amber-400">
+                  🔒 Your tier ({licenseTier || "trial"}) allows 1 account per platform.
+                  Upgrade to <strong>Pro (₹299)</strong>, <strong>Elite (₹999)</strong>, or
+                  <strong> Lifetime</strong> to add up to 5 accounts.
+                </p>
+              )}
 
               <p className="text-[9px] text-center text-muted-foreground">
                 💡 Each account can hold up to 20 teams per match. With {MAX_ACCOUNTS_PER_APP} accounts,

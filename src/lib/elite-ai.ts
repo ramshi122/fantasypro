@@ -1796,18 +1796,31 @@ export function generateEliteTeams(
 
   const pool = players.filter((p) => p.name && credits(p) > 0);
 
-  // STRICT RULE: Never include bench/injured players.
-  // The `playing` field is set to 0 when a player is officially benched/injured.
-  // We ALWAYS exclude such players — even if lineup isn't fully announced yet,
-  // because once marked playing=0 they cannot participate in the match.
-  const effectivePool = pool.filter((p) =>
-    p.playing === 1 || p.playing === undefined || p.playing === null
-  );
+  // STRICT RULE: Never include bench/injured players — BUT only filter when
+  // lineup is actually announced. Before lineup announcement, the backend sets
+  // `playing: 0` for ALL players (meaning "not confirmed yet", NOT "benched").
+  //
+  // If we filter playing===0 before lineup, we'd remove everyone → 0 teams.
+  // After lineup announcement, playing===1 means "in Playing XI", playing===0
+  // means "benched" — then we filter.
+  let effectivePool: MatchPlayer[];
+  if (lineupAnnounced) {
+    // Lineup confirmed — only keep playing XI (playing === 1 or undefined)
+    effectivePool = pool.filter((p) =>
+      p.playing === 1 || p.playing === undefined || p.playing === null
+    );
+    console.log(`[EliteAI] Lineup announced — filtered to ${effectivePool.length}/${pool.length} playing XI players`);
+  } else {
+    // Lineup pending — use ALL players (backend marks all as playing=0)
+    // We'll only exclude explicitly injured players if marked
+    effectivePool = pool;
+    console.log(`[EliteAI] Lineup pending — using all ${pool.length} players (will refine after toss)`);
+  }
 
-  // If lineup is announced, we can be even stricter (only playing XI)
-  // — but the backend's `playing` field already does this filtering for us.
-
-  if (effectivePool.length < 11) return [];
+  if (effectivePool.length < 11) {
+    console.error(`[EliteAI] Pool too small: ${effectivePool.length} players (need 11)`);
+    return [];
+  }
 
   // Group by role (sorted by EFV descending)
   const byRole = {
@@ -1816,6 +1829,24 @@ export function generateEliteTeams(
     AR: effectivePool.filter((p) => roleOf(p) === "AR").sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)),
     BOWL: effectivePool.filter((p) => roleOf(p) === "BOWL").sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)),
   };
+
+  console.log(`[EliteAI] Role distribution: WK=${byRole.WK.length} BAT=${byRole.BAT.length} AR=${byRole.AR.length} BOWL=${byRole.BOWL.length}`);
+
+  // If any role is completely empty, log warning + sample player data for debugging
+  if (byRole.WK.length === 0 || byRole.BAT.length === 0 || byRole.AR.length === 0 || byRole.BOWL.length === 0) {
+    console.warn(`[EliteAI] ⚠️ Role gap detected! WK:${byRole.WK.length} BAT:${byRole.BAT.length} AR:${byRole.AR.length} BOWL:${byRole.BOWL.length}`);
+    // Log sample player data to diagnose role detection issue
+    if (effectivePool.length > 0) {
+      const sample = effectivePool.slice(0, 3);
+      console.log("[EliteAI] Sample player data:", sample.map(p => ({
+        name: p.name,
+        player_type: p.player_type,
+        role: p.role,
+        role_text: p.role_text,
+        detected: roleOf(p),
+      })));
+    }
+  }
 
   // === Generate role compositions proportional to count ===
   // Strategy split: 25% safe, 30% balanced, 25% differential, 20% grand-league
