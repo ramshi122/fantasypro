@@ -10,6 +10,9 @@ import { MatchDetailScreen } from "@/components/match/match-detail-screen";
 import { MyMatchesScreen } from "@/components/pages/my-matches-screen";
 import { ResearchScreen } from "@/components/pages/research-screen";
 import { CricketLivePage } from "@/components/pages/cricket-live-page";
+import { ContestTracker } from "@/components/contest-tracker";
+import { PlayerFormDashboard } from "@/components/player-form-dashboard";
+import { WhatsAppShareButton } from "@/components/whatsapp-share-button";
 import { ProfileScreen } from "@/components/pages/profile-screen";
 import { PromotionsScreen } from "@/components/pages/promotions-screen";
 import { TeamListScreen } from "@/components/pages/team-list-screen";
@@ -92,6 +95,9 @@ export default function Home() {
             {view === "my-matches" && <MyMatchesScreen />}
             {view === "research" && <ResearchScreen />}
             {view === "cricket-live" && <CricketLivePage onClose={() => setView("home")} />}
+            {view === "contest-tracker" && <ContestTracker onClose={() => setView("profile")} />}
+            {view === "player-form" && <PlayerFormDashboard onClose={() => setView("research")} />}
+            {view === "whatsapp-share" && <WhatsAppShareButton onClose={() => setView("home")} />}
             {view === "profile" && <ProfileScreen onAdminTrigger={() => setShowAdmin(true)} />}
             {view === "promotions" && <PromotionsScreen />}
             {view === "expert-teams" && <TeamListScreen variant="expert" />}

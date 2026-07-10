@@ -235,6 +235,21 @@ export function ProfileScreen({ onAdminTrigger }: { onAdminTrigger?: () => void 
       {/* Referral Program Section */}
       <ReferralSection />
 
+      {/* NEW: Contest Tracker Button */}
+      <button
+        onClick={() => setView("contest-tracker")}
+        className="w-full bg-gradient-to-r from-amber-500 to-orange-600 rounded-2xl p-4 text-white shadow-lg flex items-center justify-between hover:shadow-xl transition-all"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-xl">📊</div>
+          <div className="text-left">
+            <p className="text-sm font-bold">Contest Profit/Loss Tracker</p>
+            <p className="text-[10px] text-white/80">Track winnings · Win rate · Profit %</p>
+          </div>
+        </div>
+        <span className="text-white/80">›</span>
+      </button>
+
       {/* License Plans Section */}
       <LicensePlansSection />
 

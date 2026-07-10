@@ -103,6 +103,40 @@ export function ResearchScreen() {
         <ChevronRight className="w-5 h-5 text-white/80" />
       </button>
 
+      {/* Player Form Dashboard Button */}
+      <button
+        onClick={() => setView("player-form")}
+        className="w-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-2xl p-4 text-white shadow-lg flex items-center justify-between hover:shadow-xl transition-all"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+            <TrendingUp className="w-5 h-5" />
+          </div>
+          <div className="text-left">
+            <p className="text-sm font-bold">📈 Player Form Dashboard</p>
+            <p className="text-[10px] text-white/80">Form scores · Trend analysis · Player comparison</p>
+          </div>
+        </div>
+        <ChevronRight className="w-5 h-5 text-white/80" />
+      </button>
+
+      {/* WhatsApp Share Button */}
+      <button
+        onClick={() => setView("whatsapp-share")}
+        className="w-full bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl p-4 text-white shadow-lg flex items-center justify-between hover:shadow-xl transition-all"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+            <Zap className="w-5 h-5" />
+          </div>
+          <div className="text-left">
+            <p className="text-sm font-bold">💬 WhatsApp Share</p>
+            <p className="text-[10px] text-white/80">Share teams directly to WhatsApp</p>
+          </div>
+        </div>
+        <ChevronRight className="w-5 h-5 text-white/80" />
+      </button>
+
       {/* AI Research Tools */}
       <div className="bg-white dark:bg-card rounded-2xl p-4 border border-violet-100 dark:border-violet-900/30">
         <p className="text-xs font-bold text-foreground mb-3 flex items-center gap-1.5">
