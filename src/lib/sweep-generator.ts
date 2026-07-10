@@ -412,7 +412,8 @@ export async function generateSweep(
   count: SweepCount,
   team1Name: string,
   team2Name: string,
-  onProgress?: (p: SweepProgress) => void
+  onProgress?: (p: SweepProgress) => void,
+  mode?: "smart" | "gl" | "advanced" | "combination"
 ): Promise<SweepResult> {
   const startedAt = Date.now();
   onProgress?.({
@@ -469,12 +470,34 @@ export async function generateSweep(
   let duplicates = 0;
   const maxAttempts = count * 50;
 
-  // Strategy rotation: 40% safe, 40% balanced, 20% differential (GL focus)
+  // Strategy rotation — MODE-SPECIFIC for diversity
+  // FIX: Different modes produce different team distributions
   const strategyFor = (i: number): TeamType => {
-    const mod = i % 10;
-    if (mod < 4) return "safe";          // 40% safe (H2H/SL)
-    if (mod < 8) return "balanced";      // 40% balanced (mid league)
-    return "differential";                // 20% differential (GL rank 1)
+    if (mode === "gl") {
+      // Grand League: 20% safe, 30% balanced, 50% differential (GL rank 1 focus)
+      const mod = i % 10;
+      if (mod < 2) return "safe";          // 20% safe
+      if (mod < 5) return "balanced";      // 30% balanced
+      return "differential";                // 50% differential
+    } else if (mode === "advanced") {
+      // Advanced: 30% safe, 50% balanced, 20% differential (form-focused)
+      const mod = i % 10;
+      if (mod < 3) return "safe";          // 30% safe
+      if (mod < 8) return "balanced";      // 50% balanced
+      return "differential";                // 20% differential
+    } else if (mode === "combination") {
+      // Combination: rotate through all strategies evenly for max diversity
+      const mod = i % 3;
+      if (mod === 0) return "safe";
+      if (mod === 1) return "balanced";
+      return "differential";
+    } else {
+      // Smart (default): 40% safe, 40% balanced, 20% differential
+      const mod = i % 10;
+      if (mod < 4) return "safe";          // 40% safe (H2H/SL)
+      if (mod < 8) return "balanced";      // 40% balanced (mid league)
+      return "differential";                // 20% differential (GL rank 1)
+    }
   };
 
   // Generate teams in chunks
@@ -506,6 +529,61 @@ export async function generateSweep(
 
     if (!team) continue;
     usedFingerprints.add(teamFingerprint(team));
+
+    // SIMILARITY CHECK — ensure at least 3 players differ from existing teams
+    // This prevents teams from looking almost identical
+    const currentTeamIds = new Set(team.map((p) => String(p.player_fixed_id ?? p.pid ?? p.name)));
+    let tooSimilar = false;
+    for (const existing of teams) {
+      const existingIds = new Set((existing.players || []).map((p: any) =>
+        String((p as any).player_fixed_id ?? (p as any).pid ?? (p as any).name ?? "")
+      ));
+      let common = 0;
+      for (const id of currentTeamIds) {
+        if (existingIds.has(id)) common++;
+      }
+      // If 9+ players same, too similar — try to swap 2 players
+      if (common >= 9) {
+        tooSimilar = true;
+        break;
+      }
+    }
+    if (tooSimilar) {
+      // Swap 2 players from different roles for diversity
+      let swapsMade = 0;
+      for (const role of ["BAT", "BOWL", "AR", "WK"] as const) {
+        if (swapsMade >= 2) break;
+        const swapIdx = team.findIndex((p) => {
+          const r = String(p.player_type || "").toLowerCase();
+          if (role === "WK") return r.includes("keeper") || r.includes("wk") || p.role === 0;
+          if (role === "AR") return r.includes("all") || p.role === 2;
+          if (role === "BOWL") return r.includes("bowl") || p.role === 3;
+          return r.includes("bat") || p.role === 1;
+        });
+        if (swapIdx >= 0) {
+          const rolePool = ranked.filter((r) => r.role === role);
+          const alt = rolePool.find((rp) =>
+            !team.find((x) => String(x.player_fixed_id ?? x.pid) === String(rp.player.player_fixed_id ?? rp.player.pid)) &&
+            !teams.some((t) =>
+              (t.players || []).some((tp: any) =>
+                String((tp as any).player_fixed_id ?? (tp as any).pid) === String(rp.player.player_fixed_id ?? rp.player.pid)
+              )
+            )
+          );
+          if (alt) {
+            team[swapIdx] = alt.player;
+            swapsMade++;
+          }
+        }
+      }
+      // Re-check fingerprint after swaps
+      const newFp = teamFingerprint(team);
+      if (usedFingerprints.has(newFp)) {
+        duplicates++;
+        continue;
+      }
+      usedFingerprints.add(newFp);
+    }
 
     // Pick C/VC (deterministic)
     onProgress?.({

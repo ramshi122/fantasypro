@@ -177,7 +177,8 @@ export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGe
         selectedCount,
         team1Name,
         team2Name,
-        (p) => setProgress(p)
+        (p) => setProgress(p),
+        genMode as "smart" | "gl" | "advanced" | "combination", // PASS MODE for strategy selection
       );
 
       if (res.teams.length === 0) {
