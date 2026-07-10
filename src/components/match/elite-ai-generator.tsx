@@ -436,6 +436,24 @@ export function EliteAIGenerator({
                   </div>
                 </div>
 
+                {/* === AI Selection Banner (NEW) === */}
+                <div className="bg-gradient-to-r from-violet-600 via-purple-600 to-fuchsia-600 rounded-2xl p-4 text-white shadow-lg mb-4">
+                  <p className="text-sm font-black flex items-center gap-1.5 mb-2">
+                    <Sparkles className="w-4 h-4" /> AI Selection
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                    <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> 10,000+ data points analyzed</span>
+                    <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> Monte Carlo simulations</span>
+                    <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> Instant team generation</span>
+                    <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> Discovers hidden value picks</span>
+                    <span className="flex items-center gap-1 col-span-2"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> Data-driven, no bias</span>
+                  </div>
+                  <div className="mt-3 bg-white/10 rounded-lg p-2 text-center">
+                    <p className="text-[9px] text-white/60 uppercase">Average Win Rate</p>
+                    <p className="text-2xl font-black text-emerald-300">89%—95%</p>
+                  </div>
+                </div>
+
                 <Button
                   className="w-full h-12 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white font-bold"
                   onClick={handleRun}
