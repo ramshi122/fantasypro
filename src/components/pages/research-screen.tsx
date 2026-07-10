@@ -5,7 +5,7 @@ import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getMatches, type MatchInfo } from "@/lib/api";
-import { Crown, Sparkles, Telescope, TrendingUp, Trophy, Brain, Target, Zap } from "lucide-react";
+import { Crown, Sparkles, Telescope, TrendingUp, Trophy, Brain, Target, Zap, ChevronRight } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -85,6 +85,23 @@ export function ResearchScreen() {
           <p className="text-[9px] text-muted-foreground uppercase">Data</p>
         </div>
       </div>
+
+      {/* Cricket Live Page Button */}
+      <button
+        onClick={() => setView("cricket-live")}
+        className="w-full bg-gradient-to-r from-red-500 to-rose-600 rounded-2xl p-4 text-white shadow-lg flex items-center justify-between hover:shadow-xl transition-all"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+            <Telescope className="w-5 h-5" />
+          </div>
+          <div className="text-left">
+            <p className="text-sm font-bold">🏏 Cricket Live — Full Data</p>
+            <p className="text-[10px] text-white/80">Live matches · Upcoming · Commentary · All match data</p>
+          </div>
+        </div>
+        <ChevronRight className="w-5 h-5 text-white/80" />
+      </button>
 
       {/* AI Research Tools */}
       <div className="bg-white dark:bg-card rounded-2xl p-4 border border-violet-100 dark:border-violet-900/30">

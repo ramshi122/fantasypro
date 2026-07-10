@@ -66,7 +66,8 @@ export type AppView =
   | "match-detail"
   | "expert-teams"
   | "prime-teams"
-  | "contact";
+  | "contact"
+  | "cricket-live";
 
 interface AppState {
   view: AppView;

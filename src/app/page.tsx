@@ -9,6 +9,7 @@ import { HomeScreen } from "@/components/home/home-screen";
 import { MatchDetailScreen } from "@/components/match/match-detail-screen";
 import { MyMatchesScreen } from "@/components/pages/my-matches-screen";
 import { ResearchScreen } from "@/components/pages/research-screen";
+import { CricketLivePage } from "@/components/pages/cricket-live-page";
 import { ProfileScreen } from "@/components/pages/profile-screen";
 import { PromotionsScreen } from "@/components/pages/promotions-screen";
 import { TeamListScreen } from "@/components/pages/team-list-screen";
@@ -90,6 +91,7 @@ export default function Home() {
             {view === "match-detail" && <MatchDetailScreen />}
             {view === "my-matches" && <MyMatchesScreen />}
             {view === "research" && <ResearchScreen />}
+            {view === "cricket-live" && <CricketLivePage onClose={() => setView("home")} />}
             {view === "profile" && <ProfileScreen onAdminTrigger={() => setShowAdmin(true)} />}
             {view === "promotions" && <PromotionsScreen />}
             {view === "expert-teams" && <TeamListScreen variant="expert" />}
