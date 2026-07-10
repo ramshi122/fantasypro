@@ -241,6 +241,8 @@ export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGe
             <X className="w-4 h-4" />
           </button>
         )}
+      </div>
+
       <div className="p-4">
         <label className="text-[11px] font-bold text-foreground mb-2 block flex items-center gap-1">
           <Sparkles className="w-3 h-3 text-violet-500" />
