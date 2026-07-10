@@ -6,6 +6,7 @@ import {
   AlertCircle,
   Check,
   CheckCircle2,
+  ChevronRight,
   Gift,
   Loader2,
   Send,
@@ -59,6 +60,8 @@ export function FreeContestsModal({
   const [linkedApps, setLinkedApps] = useState<FantasyApp[]>([]);
   const [joiningContest, setJoiningContest] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [joinMode, setJoinMode] = useState<"spread-repeat" | "spread-no-repeat" | "same-teams" | "random">("random");
+  const [showJoinMode, setShowJoinMode] = useState(false);
 
   const matchId = (match.matchId ?? match.id ?? "") as string;
   const validTeams = teams.filter((t) => (t.players?.length || 0) === 11);
@@ -167,26 +170,48 @@ export function FreeContestsModal({
       return;
     }
 
-    // ✅ SHUFFLE teams before joining — mixed order, not 1,2,3,4,5...
-    // User request: "15 team undu join 10 team need 1 to 15 mixed 10 team join auto"
     const allAvailable = contest.notJoinedTeamIds || [];
     const slots = contest.availableSlots || 0;
     const numToJoin = Math.min(slots, allAvailable.length);
 
-    // Fisher-Yates shuffle for mixed selection
-    const shuffled = [...allAvailable];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    let teamIds: number[] = [];
+
+    if (joinMode === "random") {
+      // Fisher-Yates shuffle for mixed random selection
+      const shuffled = [...allAvailable];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      teamIds = shuffled.slice(0, numToJoin);
+    } else if (joinMode === "spread-repeat") {
+      // Each contest gets next set of teams, wraps around
+      const contestIdx = contests.findIndex(c => c.contestId === contest.contestId);
+      const startIdx = (contestIdx * numToJoin) % allAvailable.length;
+      teamIds = [];
+      for (let i = 0; i < numToJoin; i++) {
+        teamIds.push(allAvailable[(startIdx + i) % allAvailable.length]);
+      }
+    } else if (joinMode === "spread-no-repeat") {
+      // Each contest gets next unique teams, no reuse
+      const contestIdx = contests.findIndex(c => c.contestId === contest.contestId);
+      const startIdx = contestIdx * numToJoin;
+      teamIds = allAvailable.slice(startIdx, startIdx + numToJoin);
+      if (teamIds.length < numToJoin) {
+        // Not enough unique teams — take what's available
+        teamIds = allAvailable.slice(0, numToJoin);
+      }
+    } else if (joinMode === "same-teams") {
+      // Every contest gets same teams from Team 1
+      teamIds = allAvailable.slice(0, numToJoin);
     }
-    const teamIds = shuffled.slice(0, numToJoin);
 
     if (teamIds.length === 0) {
       toast.error("No teams available to join");
       return;
     }
 
-    console.log(`[Contest][Join] Shuffled ${allAvailable.length} teams, joining ${teamIds.length} mixed: [${teamIds.join(",")}]`);
+    console.log(`[Contest][Join] Mode: ${joinMode}, Available: ${allAvailable.length}, Joining: ${teamIds.length} teams: [${teamIds.join(",")}]`);
 
     setJoiningContest(contest.contestId);
     setPhase("joining");
@@ -271,6 +296,66 @@ export function FreeContestsModal({
           </div>
 
           <div className="p-4 space-y-4">
+            {/* Team Assignment Mode selector (like STAR11) */}
+            <div className="bg-white dark:bg-card rounded-xl p-3 border border-slate-200 dark:border-slate-700">
+              <button
+                onClick={() => setShowJoinMode(v => !v)}
+                className="w-full flex items-center justify-between"
+              >
+                <div>
+                  <p className="text-xs font-bold text-foreground">Team Assignment Mode</p>
+                  <p className="text-[10px] text-muted-foreground">Choose how teams are assigned to contests</p>
+                </div>
+                <ChevronRight className={cn("w-4 h-4 text-muted-foreground transition-transform", showJoinMode && "rotate-90")} />
+              </button>
+
+              {showJoinMode && (
+                <div className="mt-3 space-y-2">
+                  {[
+                    { id: "spread-repeat", label: "Spread & Repeat", desc: "Each contest gets the next set of teams. Wraps back to Team 1 when exhausted.", example: "Contest A → T1,T2\nContest B → T3,T4\nContest C → T5,T1 (wraps)" },
+                    { id: "spread-no-repeat", label: "Spread (No Repeat)", desc: "Each contest gets unique teams. Teams are never reused across contests.", example: "Contest A → T1,T2\nContest B → T3,T4\nContest C → T5 (only 1 left)" },
+                    { id: "same-teams", label: "Same Teams", desc: "Every contest gets the same set of teams starting from Team 1.", example: "Contest A → T1,T2\nContest B → T1,T2\nContest C → T1,T2" },
+                    { id: "random", label: "Random Teams", desc: "Each contest gets a randomly picked set. Every run gives different combos.", example: "Contest A → T3,T1\nContest B → T5,T2\nContest C → T4,T3" },
+                  ].map(m => (
+                    <button
+                      key={m.id}
+                      onClick={() => { setJoinMode(m.id as any); toast.success(`Mode: ${m.label}`); }}
+                      className={cn(
+                        "w-full text-left p-2.5 rounded-lg border-2 transition-all",
+                        joinMode === m.id
+                          ? "border-violet-500 bg-violet-50 dark:bg-violet-950/30"
+                          : "border-slate-200 dark:border-slate-700 hover:border-violet-300"
+                      )}
+                    >
+                      <div className="flex items-start gap-2">
+                        <div className={cn(
+                          "w-4 h-4 rounded-full border-2 flex-shrink-0 mt-0.5",
+                          joinMode === m.id ? "border-violet-500 bg-violet-500" : "border-slate-300"
+                        )}>
+                          {joinMode === m.id && <div className="w-1.5 h-1.5 bg-white rounded-full m-auto mt-0.5" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[11px] font-bold text-foreground">{m.label}</p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">{m.desc}</p>
+                          <div className="mt-1 bg-slate-50 dark:bg-slate-800/50 rounded p-1.5">
+                            <p className="text-[8px] italic text-muted-foreground">Example:</p>
+                            {m.example.split("\n").map((line, i) => (
+                              <p key={i} className="text-[8px] text-foreground font-mono">{line}</p>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!showJoinMode && (
+                <p className="text-[9px] text-muted-foreground mt-1">
+                  Current: <span className="font-bold text-violet-600">{joinMode === "random" ? "Random Teams" : joinMode === "spread-repeat" ? "Spread & Repeat" : joinMode === "spread-no-repeat" ? "Spread (No Repeat)" : "Same Teams"}</span>
+                </p>
+              )}
+            </div>
+
             {/* If no linked accounts */}
             {linkedApps.length === 0 ? (
               <div className="text-center py-8">
