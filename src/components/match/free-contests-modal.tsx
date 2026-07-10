@@ -424,6 +424,25 @@ export function FreeContestsModal({
                 {/* Contests list */}
                 {phase !== "loading" && contests.length > 0 && (
                   <div className="space-y-3">
+                    {/* Join All button — auto-join all available contests */}
+                    {phase === "ready" && contests.some(c => c.canJoinMore && (c.availableSlots || 0) > 0) && (
+                      <Button
+                        size="sm"
+                        className="w-full h-10 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white font-bold text-xs"
+                        onClick={async () => {
+                          const joinable = contests.filter(c => c.canJoinMore && (c.availableSlots || 0) > 0);
+                          if (joinable.length === 0) return;
+                          toast.info(`Auto-joining ${joinable.length} contest(s)...`);
+                          for (const c of joinable) {
+                            await handleJoinContest(c);
+                          }
+                          toast.success(`✓ Auto-joined all ${joinable.length} contest(s)!`);
+                        }}
+                      >
+                        <Zap className="w-3.5 h-3.5 mr-1.5" />
+                        Auto-Join All Contests ({contests.filter(c => c.canJoinMore && (c.availableSlots || 0) > 0).length})
+                      </Button>
+                    )}
                     {contests.map((c, i) => {
                       const isJoining = joiningContest === c.contestId;
                       const slots = c.availableSlots || 0;
