@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   getLicenseState,
   setLicenseVerified,
@@ -42,6 +42,8 @@ export function useLicense() {
   /**
    * Check if the current license key has expired.
    * Looks up the key in admin store and checks expiresAt.
+   * FIX: Do NOT auto-clear license on phone lock/unlock.
+   * Only clear if key is genuinely expired or suspended.
    */
   const checkExpiry = useCallback(() => {
     if (!licenseState.verified || !licenseState.key) {
@@ -52,14 +54,17 @@ export function useLicense() {
     // Find the key in admin store to get expiresAt
     const keyObj = admin.keys.find((k) => k.key === licenseState.key);
     if (!keyObj) {
-      // Key not found in store — could be cleared by admin
-      // Keep verified state but don't auto-clear (might be syncing)
+      // FIX: Key not found in LOCAL store — but might still be valid in Firebase.
+      // Do NOT auto-clear! The key might be syncing from Firebase.
+      // Only mark as expired if we've tried Firebase sync and still can't find it.
+      // For now, just set a warning but keep verified.
+      console.log("[useLicense] Key not in local store — keeping verified (Firebase sync pending)");
       setIsExpired(false);
       return false;
     }
 
     if (keyObj.status === "suspended") {
-      // Key suspended by admin — auto-clear
+      // Key suspended by admin — auto-clear (confirmed action)
       console.log("[useLicense] Key suspended — auto-clearing");
       clearLicense();
       setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
@@ -68,7 +73,7 @@ export function useLicense() {
     }
 
     if (keyObj.expiresAt && keyObj.expiresAt < Date.now()) {
-      // Key expired — auto-clear
+      // Key expired — auto-clear (confirmed by timestamp)
       console.log("[useLicense] Key expired — auto-clearing");
       clearLicense();
       setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
@@ -80,17 +85,31 @@ export function useLicense() {
     return false;
   }, [licenseState.verified, licenseState.key, admin.keys]);
 
-  // Auto-verify on mount + sync keyType + check expiry
+  // Auto-verify on mount — FIX: Use a flag to prevent auto-clear on phone lock/unlock
+  const hasVerifiedRef = useRef(false);
   useEffect(() => {
-    if (licenseState.verified && licenseState.key) {
-      // verifyLicense is now async (checks Firebase if not found locally)
-      admin.verifyLicense(licenseState.key, licenseState.deviceId).then((result) => {
+    if (hasVerifiedRef.current) return; // Only verify once per session
+    if (!licenseState.verified || !licenseState.key) return;
+
+    hasVerifiedRef.current = true;
+
+    // Give Firebase time to sync before checking
+    const timer = setTimeout(async () => {
+      try {
+        const result = await admin.verifyLicense(licenseState.key, licenseState.deviceId);
         if (!result.valid) {
-          // Key no longer valid (expired, suspended, or deleted)
-          clearLicense();
-          setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
-          setIsExpired(true);
-          console.log("[useLicense] License auto-cleared — key invalid");
+          // FIX: Don't auto-clear immediately — check if Firebase is still syncing
+          // Only clear if we get a definitive "expired" or "suspended" response
+          const msg = (result as any).message || "";
+          if (msg.includes("expired") || msg.includes("suspended") || msg.includes("not found")) {
+            console.log("[useLicense] License invalid (confirmed) — clearing");
+            clearLicense();
+            setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
+            setIsExpired(true);
+          } else {
+            // Might be a sync issue — keep verified, don't clear
+            console.log("[useLicense] License check inconclusive — keeping verified");
+          }
         } else if (result.keyType && result.keyType !== licenseState.keyType) {
           // Sync keyType
           setLicenseVerified(licenseState.key, result.keyType);
@@ -102,22 +121,28 @@ export function useLicense() {
           });
           console.log("[useLicense] Synced keyType from backend:", result.keyType);
         }
-      });
-    }
+      } catch (err) {
+        // Network error — don't clear license
+        console.log("[useLicense] Verify error — keeping license:", err);
+      }
+    }, 2000); // Wait 2s for Firebase to sync
+
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Periodic expiry check — every 30 seconds
+  // Periodic expiry check — FIX: Increase to 2 minutes (was 30s — caused slowness)
+  // Also: Only check LOCAL expiry timestamp, NOT full verifyLicense (which hits Firebase)
   useEffect(() => {
     if (!licenseState.verified) return;
 
-    // Check immediately
+    // Check immediately (local only — fast)
     checkExpiry();
 
-    // Check every 30 seconds
+    // Check every 2 minutes (was 30s — too frequent, caused page slowness)
     const interval = setInterval(() => {
       checkExpiry();
-    }, 30000);
+    }, 120000); // 2 minutes
 
     return () => clearInterval(interval);
   }, [licenseState.verified, checkExpiry]);
