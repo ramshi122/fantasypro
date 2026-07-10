@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/store";
 import {
-  bulkAddTeams,
   getMatchDetail,
   type MatchInfo,
   type MatchPlayer,
@@ -187,17 +186,9 @@ export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGe
         return;
       }
 
-      // 4. Bulk-save to localStorage
-      await bulkAddTeams(token!, {
-        matchId,
-        teams: res.teams.map((t) => ({
-          players: t.players,
-          captain: t.captain,
-          viceCaptain: t.viceCaptain,
-          type: genMode,
-        })),
-        mode,
-      });
+      // 4. Teams saved by parent (handleBulkAddTeams) — no duplicate save here
+      // Previously: bulkAddTeams() was called here AND in handleBulkAddTeams → double save
+      // Now: handleBulkAddTeams saves teams, so we just pass them via onGenerated
 
       setResult(res);
       toast.success(`Generated ${res.teams.length} unique teams in ${res.stats.durationMs}ms`);

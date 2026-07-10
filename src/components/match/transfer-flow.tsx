@@ -263,8 +263,32 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   // teams to localStorage via bulkAddTeams(), so we just need to refresh the
   // view and show a success toast.
   function handleBulkAddTeams(teams: TeamRow[]) {
-    toast.success(`Generated ${teams.length} unique teams`);
-    setRefreshKey((k) => k + 1);
+    // CRITICAL: Save teams to localStorage so they appear in "My Teams" list
+    try {
+      import("@/lib/api").then(({ bulkAddTeams }) => {
+        bulkAddTeams(token || "guest", {
+          matchId,
+          teams: teams.map((t) => ({
+            players: t.players,
+            captain: t.captain,
+            viceCaptain: t.viceCaptain,
+            type: t.type,
+          })),
+          mode: "append", // append to existing teams
+        }).then(() => {
+          // Refresh the view to show newly generated teams
+          setRefreshKey((k) => k + 1);
+          toast.success(`Generated ${teams.length} unique teams — saved to My Teams!`);
+        }).catch((err) => {
+          console.error("[handleBulkAddTeams] Failed to save teams:", err);
+          toast.error("Failed to save teams — try again");
+        });
+      });
+    } catch (err) {
+      console.error("[handleBulkAddTeams] Error:", err);
+      toast.error("Failed to save teams");
+      return;
+    }
 
     // === Integration: analytics + performance tracker + cashback + leaderboard ===
     (async () => {
