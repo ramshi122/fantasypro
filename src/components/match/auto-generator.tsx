@@ -33,6 +33,7 @@ import {
   type SweepResult,
 } from "@/lib/sweep-generator";
 import { cn } from "@/lib/utils";
+import { ModeSettingsPage } from "./mode-settings-page";
 
 type GenMode = "smart" | "gl" | "advanced" | "combination" | "elite";
 
@@ -205,6 +206,25 @@ export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGe
   const selectedMode = GEN_MODES.find(m => m.id === genMode)!;
   const isElite = genMode === "elite";
 
+  // === Mode Settings Page (separate page for Smart/GL/Advanced/Combination) ===
+  if (openModePage && openModePage !== "elite") {
+    return (
+      <ModeSettingsPage
+        mode={openModePage}
+        match={match}
+        matchId={matchId}
+        team1Name={team1Name}
+        team2Name={team2Name}
+        token={token}
+        onClose={() => setOpenModePage(null)}
+        onGenerated={(teams) => {
+          onGenerated(teams);
+          setOpenModePage(null);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="bg-white dark:bg-card rounded-2xl border border-violet-100 dark:border-violet-900/30 overflow-hidden shadow-sm">
       {/* Header */}
@@ -237,7 +257,18 @@ export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGe
               return (
                 <button
                   key={m.id}
-                  onClick={() => setGenMode(m.id)}
+                  onClick={() => {
+                    if (m.id === "elite") {
+                      // Elite AI — DON'T TOUCH, opens Elite AI modal as before
+                      setGenMode(m.id);
+                      onClose?.();
+                      onEliteAI?.();
+                    } else {
+                      // Smart/GL/Advanced/Combination — open separate settings page
+                      setGenMode(m.id);
+                      setOpenModePage(m.id);
+                    }
+                  }}
                   disabled={generating}
                   className={cn(
                     "w-full text-left p-3 rounded-xl border-2 transition-all flex items-start gap-3",
