@@ -443,3 +443,59 @@ Stage Summary:
 - The user-facing license verification flow (verifyLicense + lockout.ts + getLicenseState/setLicenseVerified) is preserved — the lockout system's localStorage usage (device fingerprinting) is intentionally kept since it is per-device, not admin data.
 - A "Synced from Firebase" indicator with live status pulse and last-sync timestamp was added to the Dashboard tab, alongside a "Sync from Firebase" manual refresh button.
 - Build passes successfully — no new TypeScript errors introduced.
+
+---
+Task ID: ADD-10-FEATURES
+Agent: general-purpose
+Task: Add 10 new features (auto-transfer, contest tracker, multi-match, push notifications, whatsapp share, multi-language, player form, captain rotation, team backup, admin live dashboard)
+
+Work Log:
+- Read worklog.md to understand project context and constraints
+- Inspected existing modules (api.ts, lineup.ts, store.ts, captain-recommender.ts, sweep-generator.ts, contest-history.ts, analytics.ts, admin-store.ts, i18n.ts, push-notifications.ts, notifications.ts, firebase.ts) to ensure additive integration
+- Created src/lib/auto-transfer-scheduler.ts — polls lineup_status every 2 min; on lineup out fires autoReplaceNonPlaying + POST /api/transfer; idempotent scheduling with cancel/list helpers; persists to localStorage "apna-cricket-auto-transfer-schedules"
+- Created src/lib/contest-tracker.ts — ContestRecord CRUD + getContestStats/getProfitLoss/ROI; localStorage "apna-cricket-contest-tracker"
+- Created src/components/contest-tracker.tsx — UI dashboard with stat cards (invested/won/net/profit%/win-rate/contests), platform breakdown, history list, add/delete/edit controls
+- Created src/lib/multi-match-generator.ts — generateMultiMatch() batch wrapper around existing generateSweep(); per-match + batch progress callback; fetches match detail if players not preloaded
+- Created src/lib/pwa-notifications.ts — lightweight PWA Notification API wrapper: requestPermission(), sendNotification(title, body, opts), checkAndNotify(events), plus notifyLineupOut/notifyMatchStarting/notifyLicenseExpiry convenience helpers; localStorage "apna-cricket-pwa-notifications"
+- Created src/lib/whatsapp-share.ts — generateTeamText(team, opts) produces WhatsApp-friendly team summary with C/VC markers; generateWhatsAppLink(text, phone) builds wa.me deep link; shareTeamOnWhatsApp() opens new tab
+- Created src/components/whatsapp-share-button.tsx — emerald "Share on WhatsApp" button using the lib above
+- Added 26 new translation keys to src/lib/i18n.ts (additive — did NOT modify any existing key). Added keys across all 5 languages (en, hi, ta, te, ml): generate_teams, transfer, my_teams, login, profile, settings, whatsapp.share, contest.tracker, contest.profit, contest.loss, contest.winRate, auto_transfer.scheduler, auto_transfer.scheduled, auto_transfer.lineup_out, multi_match.generator, multi_match.starting, player_form.dashboard, player_form.form, player_form.trend_up, player_form.trend_down, player_form.trend_stable, captain.rotation, team.backup, team.restore, admin.live_dashboard, admin.active_users, admin.active_transfers, admin.revenue_today
+- Created src/lib/player-form.ts — calculateForm(player) → 0-100 score weighted 40% points / 25% captain signal / 15% sel% / 15% credits / +5 last_play bonus; getFormTrend() compares vs. localStorage snapshot; rankByForm/saveFormSnapshot/getPreviousForm helpers
+- Created src/components/player-form-dashboard.tsx — horizontal SVG bar chart of top N players with trend color-coding (up=green, down=red, stable=violet), trend legend, top-4 picks summary
+- Created src/lib/captain-rotation.ts — rotateCaptains(teams, players) max-coverage algorithm using existing scorePlayerForCaptain; ensures different C/VC pairs per team where possible; getCaptainCoverage() returns uniqueCounts/pairCounts/coveragePercent; formatCoverageReport + getTopCaptains helpers
+- Created src/lib/team-backup.ts — exportTeams(matchId?), exportTeamsAsString, downloadTeamsBackup (Blob+anchor download), importTeams(json|object, matchId?), importTeamsFromFile(file) via FileReader; merges into existing "apna-cricket-local-teams" key (does NOT overwrite other matches); getLocalTeamsStats summary
+- Created src/components/admin/admin-live-dashboard.tsx — auto-refresh 5s dashboard; live user count (5-min window) from admin-store, active transfers count from analytics events, revenue today from /api/payment/list, verifications today from logs; 7-day teams + revenue bar charts; recent activity feed; live/pause toggle
+- Added "live" tab to src/components/admin/admin-panel.tsx ADDITIVELY:
+  * Added AdminLiveDashboard import (no existing imports removed)
+  * Added "live" to Tab union type (additive)
+  * Added { id: "live", label: "Live", icon: Activity } to tabs array (after "dashboard", no existing tabs removed)
+  * Added {tab === "live" && <AdminLiveDashboard />} render guard (additive — all existing tab renders untouched)
+- Ran `npx tsc --noEmit` and confirmed ZERO TS errors introduced by new files (all pre-existing errors in api.ts, transfer-flow.tsx, etc. are untouched and unrelated)
+- Fixed one minor TS error in whatsapp-share.ts (role type narrowing) before build
+- Ran `npm run build` → EXIT_CODE=0, build succeeded with 29 routes prerendered, no errors
+
+Files Created (12 new files):
+- src/lib/auto-transfer-scheduler.ts
+- src/lib/contest-tracker.ts
+- src/lib/multi-match-generator.ts
+- src/lib/pwa-notifications.ts
+- src/lib/whatsapp-share.ts
+- src/lib/player-form.ts
+- src/lib/captain-rotation.ts
+- src/lib/team-backup.ts
+- src/components/contest-tracker.tsx
+- src/components/whatsapp-share-button.tsx
+- src/components/player-form-dashboard.tsx
+- src/components/admin/admin-live-dashboard.tsx
+
+Files Modified (2, additive only):
+- src/lib/i18n.ts — added 26 new translation keys per language (5 languages × 26 = 130 new strings). No existing keys touched.
+- src/components/admin/admin-panel.tsx — added 1 import, 1 new tab id, 1 new tab entry, 1 new conditional render. No existing imports/tabs/renders removed.
+
+Stage Summary:
+- All 10 features implemented as additive new files (or purely additive edits to i18n.ts + admin-panel.tsx).
+- NO existing feature removed; NO existing function/UI modified.
+- Build (next build) passes with exit code 0; 29 routes prerendered; 0 new TS errors.
+- All new modules export clean TypeScript interfaces, re-use existing primitives (autoReplaceNonPlaying, generateSweep, scorePlayerForCaptain, roleLabel, localStorage key conventions, admin-store hooks, Firebase sync), and guard for SSR (`typeof window === "undefined"`).
+- The new admin "Live" tab can be opened alongside every existing tab (Dashboard, Analytics, Licenses, Devices, etc.) — no existing tab was renamed or removed.
+- New i18n keys are backward-compatible (fall back to English then to key) so existing call sites are unaffected.

@@ -45,8 +45,9 @@ import { toast } from "sonner";
 import { useAdmin, type KeyType, type KeyStatus } from "@/lib/admin-store";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { cn } from "@/lib/utils";
+import { AdminLiveDashboard } from "@/components/admin/admin-live-dashboard";
 
-type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "payments" | "matches" | "subscriptions" | "users" | "announcements" | "logs" | "settings" | "analytics" | "broadcast" | "leaderboard" | "2fa" | "backup" | "bulk" | "coupons";
+type Tab = "dashboard" | "licenses" | "devices" | "team-control" | "contests" | "payments" | "matches" | "subscriptions" | "users" | "announcements" | "logs" | "settings" | "analytics" | "broadcast" | "leaderboard" | "2fa" | "backup" | "bulk" | "coupons" | "live";
 
 interface AdminPanelProps {
   open: boolean;
@@ -78,6 +79,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
 
   const tabs: Array<{ id: Tab; label: string; icon: typeof Key }> = [
     { id: "dashboard", label: "Dashboard", icon: Activity },
+    { id: "live", label: "Live", icon: Activity },
     { id: "analytics", label: "Analytics", icon: BarChart3 },
     { id: "licenses", label: "Licenses", icon: Key },
     { id: "devices", label: "Devices", icon: Smartphone },
@@ -175,6 +177,7 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
             <div className="flex-1 overflow-y-auto scrollbar-thin p-4 bg-slate-900">
               <ErrorBoundary fallback={<div className="p-4 text-center text-red-400 text-xs">Error loading this tab. Try another tab.</div>}>
               {tab === "dashboard" && <DashboardTab />}
+              {tab === "live" && <AdminLiveDashboard />}
               {tab === "analytics" && <AnalyticsTabWrapper />}
               {tab === "licenses" && <LicensesTab />}
               {tab === "devices" && <DevicesTab />}
