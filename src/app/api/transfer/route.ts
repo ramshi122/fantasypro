@@ -297,6 +297,9 @@ export async function POST(request: Request) {
       matchId,
       captain,
       vice_captain,
+      // Also accept camelCase variants (from BulkTransferItem)
+      captainId,
+      viceCaptainId,
       players,
       fantasyApp,
       sportIndex,
@@ -309,6 +312,10 @@ export async function POST(request: Request) {
       my11circleMobile,
       skipPreVerify,  // Allow skipping pre-verification for speed
     } = body;
+
+    // Normalize captain/vice_captain — accept both snake_case and camelCase
+    const captainVal = captain ?? captainId;
+    const viceCaptainVal = vice_captain ?? viceCaptainId;
 
     const app = fantasyApp || "dream11";
     const sport = typeof sportIndex === "number" ? sportIndex : 0;
@@ -333,22 +340,44 @@ export async function POST(request: Request) {
     }
 
     // Ensure captain/vice_captain are NUMBERS
-    const captainNum = toNumber(captain);
-    const viceCaptainNum = toNumber(vice_captain);
+    // FIX: Handle empty string, undefined, "0", "undefined" gracefully
+    // Accept both snake_case (captain/vice_captain) and camelCase (captainId/viceCaptainId)
+    const captainRaw = captainVal === undefined || captainVal === null || captainVal === "" || captainVal === "undefined" ? undefined : captainVal;
+    const viceCaptainRaw = viceCaptainVal === undefined || viceCaptainVal === null || viceCaptainVal === "" || viceCaptainVal === "undefined" ? undefined : viceCaptainVal;
 
-    if (captainNum === null) {
+    const captainNum = captainRaw !== undefined ? toNumber(captainRaw) : null;
+    const viceCaptainNum = viceCaptainRaw !== undefined ? toNumber(viceCaptainRaw) : null;
+
+    // If captain is missing/invalid, try to extract from players[0] as fallback
+    let finalCaptain = captainNum;
+    let finalViceCaptain = viceCaptainNum;
+
+    if (finalCaptain === null && playerIds.length > 0) {
+      // Use first player as captain fallback
+      finalCaptain = toNumber(playerIds[0]) ?? null;
+      console.log(`[Transfer] Captain missing — using first player ${playerIds[0]} as captain`);
+    }
+    if (finalViceCaptain === null && playerIds.length > 1) {
+      // Use second player as VC fallback
+      finalViceCaptain = toNumber(playerIds[1]) ?? null;
+      console.log(`[Transfer] VC missing — using second player ${playerIds[1]} as VC`);
+    }
+
+    if (finalCaptain === null) {
       return NextResponse.json({
         status: "fail",
-        error: `Invalid captain ID: ${captain} (type: ${typeof captain}). Must be a number.`,
+        error: `Captain ID required. Got: captain=${JSON.stringify(captainVal)}, vice_captain=${JSON.stringify(viceCaptainVal)}, players count=${playerIds.length}`,
         code: "INVALID_CAPTAIN_ID",
+        hint: "Make sure team has captain and vice-captain set. Accepted fields: captain/vice_captain OR captainId/viceCaptainId.",
       }, { status: 200 });
     }
-    if (viceCaptainNum === null) {
-      return NextResponse.json({
-        status: "fail",
-        error: `Invalid vice-captain ID: ${vice_captain} (type: ${typeof vice_captain}). Must be a number.`,
-        code: "INVALID_VICE_CAPTAIN_ID",
-      }, { status: 200 });
+    if (finalViceCaptain === null) {
+      // Use 2nd player as VC if available
+      if (playerIds.length > 1) {
+        finalViceCaptain = toNumber(playerIds[1]) ?? finalCaptain;
+      } else {
+        finalViceCaptain = finalCaptain;
+      }
     }
 
     const numericPlayerIds: number[] = playerIds.map(p => {
@@ -358,7 +387,7 @@ export async function POST(request: Request) {
 
     // Pre-transfer validation
     const validation = validateTransferParams({
-      authToken, matchId, captain: captainNum, vice_captain: viceCaptainNum,
+      authToken, matchId, captain: finalCaptain, vice_captain: finalViceCaptain,
       players: numericPlayerIds, fantasyApp: app, sportIndex: sport,
       type: operation, id,
     });
@@ -398,8 +427,8 @@ export async function POST(request: Request) {
 
     const payload: Record<string, unknown> = {
       matchId: matchId,
-      captain: captainNum,
-      vice_captain: viceCaptainNum,
+      captain: finalCaptain,
+      vice_captain: finalViceCaptain,
       players: numericPlayerIds,
       fantasyApp: app,
       authToken: preparedToken,
@@ -445,7 +474,7 @@ export async function POST(request: Request) {
     console.log(`[Transfer][REQUEST] ${app} ${operation.toUpperCase()}`);
     console.log(`[Transfer][REQUEST] Endpoint chain: ${endpointChain.join(" → ")}`);
     console.log(`[Transfer][REQUEST] matchId=${matchId}, sportIndex=${sport}`);
-    console.log(`[Transfer][REQUEST] captain=${captainNum}, vice_captain=${viceCaptainNum}`);
+    console.log(`[Transfer][REQUEST] captain=${finalCaptain}, vice_captain=${finalViceCaptain}`);
     console.log(`[Transfer][REQUEST] players=${numericPlayerIds.length}, operation=${operation}, id=${id || "N/A"}`);
     console.log(`[Transfer][REQUEST] authToken: len=${preparedToken.length}, isJWT=${preparedToken.startsWith("eyJ")}, isJSON=${preparedToken.startsWith("{")}`);
     console.log(`${"=".repeat(60)}\n`);
@@ -707,8 +736,8 @@ export async function POST(request: Request) {
       endpointsTried: endpointChain,
       details: {
         matchId: String(matchId),
-        captain: captainNum,
-        vice_captain: viceCaptainNum,
+        captain: finalCaptain,
+        vice_captain: finalViceCaptain,
         playerCount: numericPlayerIds.length,
         teamId: id || null,
         tokenLength: preparedToken.length,

@@ -72,7 +72,7 @@ export function EliteAIGenerator({
     }
     setRunning(true);
     setResult(null);
-    setProgress({ check: 0, total: 25, message: "Initializing Elite AI..." });
+    setProgress({ check: 0, total: 26, message: "Initializing Elite AI..." });
 
     try {
       const res = await runEliteAI(
@@ -427,7 +427,7 @@ function EliteAIResult({
           className="w-full h-8 text-[11px] border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300"
           onClick={() => setShowAnalysis(!showAnalysis)}
         >
-          {showAnalysis ? "Hide" : "Show"} 25 AI Checks
+          {showAnalysis ? "Hide" : "Show"} 26 AI Checks
         </Button>
       </div>
 
