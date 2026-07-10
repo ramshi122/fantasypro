@@ -548,7 +548,31 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
             <p className="text-xs font-semibold text-muted-foreground">
               {existingTeams.length} team{existingTeams.length !== 1 ? "s" : ""} saved
             </p>
-            <div className="flex gap-1.5 flex-wrap">
+            <div className="flex gap-1.5 flex-wrap items-center">
+              {/* Delete All button */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[10px] border-red-500 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                onClick={() => {
+                  if (!confirm(`Delete ALL ${existingTeams.length} teams? This cannot be undone.`)) return;
+                  try {
+                    const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
+                    const key = String(matchId);
+                    let all: Record<string, TeamRow[]> = {};
+                    try { all = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}"); } catch { all = {}; }
+                    all[key] = [];
+                    localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(all));
+                    setExistingTeams([]);
+                    toast.success("All teams deleted");
+                    setTimeout(() => setRefreshKey((k) => k + 1), 50);
+                  } catch {
+                    toast.error("Failed to delete teams");
+                  }
+                }}
+              >
+                <Trash2 className="w-3 h-3 mr-1" /> Delete All
+              </Button>
               {/* Dream11 Transfer — locked for unlicensed, 3/day for trial */}
               {(() => {
                 const canDream11 = license.isLicensed;
