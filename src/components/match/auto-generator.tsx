@@ -34,6 +34,8 @@ import {
 } from "@/lib/sweep-generator";
 import { cn } from "@/lib/utils";
 import { ModeSettingsPage } from "./mode-settings-page";
+import { useLicense } from "@/lib/use-license";
+import { Lock } from "lucide-react";
 
 type GenMode = "smart" | "gl" | "advanced" | "combination" | "elite";
 
@@ -46,6 +48,7 @@ interface AutoGeneratorProps {
 
 export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGeneratorProps) {
   const token = useAuth((s) => s.token);
+  const license = useLicense();
   const [selectedCount, setSelectedCount] = useState<SweepCount>(20);
   const [mode, setMode] = useState<"append" | "replace">("replace");
   const [genMode, setGenMode] = useState<GenMode>("smart");
@@ -251,15 +254,23 @@ export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGe
         <div className="space-y-2">
           {GEN_MODES.map((m) => {
             const Icon = m.icon;
+            // License checks per mode
+            const eliteTiers = ["elite", "lifetime"];
+            const canUseElite = license.isLicensed && license.licenseKeyType && eliteTiers.includes(license.licenseKeyType);
+            const canUseBasic = license.isLicensed;
+            const isLocked = m.id === "elite" ? !canUseElite : !canUseBasic;
             return (
               <button
                 key={m.id}
                 onClick={() => {
                   if (m.id === "elite") {
+                    if (!license.isLicensed) { license.requireLicense(); return; }
+                    if (!canUseElite) { toast.error("Elite AI requires Elite (Rs 999) or Lifetime subscription."); return; }
                     setGenMode(m.id);
                     onClose?.();
                     onEliteAI?.();
                   } else {
+                    if (!license.isLicensed) { license.requireLicense(); return; }
                     setGenMode(m.id);
                     setOpenModePage(m.id);
                   }
@@ -267,22 +278,32 @@ export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGe
                 disabled={generating}
                 className={cn(
                   "w-full text-left p-3 rounded-xl border-2 transition-all flex items-start gap-3",
-                  "bg-white dark:bg-card border-violet-100 dark:border-violet-900/30 text-foreground hover:border-violet-300 hover:shadow-md"
+                  isLocked
+                    ? "bg-slate-100 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 opacity-70"
+                    : "bg-white dark:bg-card border-violet-100 dark:border-violet-900/30 text-foreground hover:border-violet-300 hover:shadow-md"
                 )}
               >
-                <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br", m.color)}>
-                  <Icon className="w-4 h-4 text-white" />
+                <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br", isLocked && "grayscale", m.color)}>
+                  {isLocked ? <Lock className="w-4 h-4 text-white" /> : <Icon className="w-4 h-4 text-white" />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-bold flex items-center gap-1.5">
                     {m.label}
                     {m.id === "elite" && (
-                      <span className="text-[8px] px-1.5 py-0.5 rounded-full font-bold bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400">
-                        ELITE KEY
+                      <span className={cn("text-[8px] px-1.5 py-0.5 rounded-full font-bold", canUseElite ? "bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400" : "bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400")}>
+                        {canUseElite ? "ELITE KEY" : "LOCKED"}
                       </span>
+                    )}
+                    {m.id !== "elite" && isLocked && (
+                      <span className="text-[8px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400">LOCKED</span>
                     )}
                   </p>
                   <p className="text-[10px] mt-0.5 text-muted-foreground">{m.desc}</p>
+                  {isLocked && (
+                    <p className="text-[9px] text-red-500 mt-1 font-bold">
+                      {m.id === "elite" ? "Requires Elite (Rs 999) or Lifetime" : "Requires active license key"}
+                    </p>
+                  )}
                 </div>
               </button>
             );
