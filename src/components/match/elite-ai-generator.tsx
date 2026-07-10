@@ -59,6 +59,7 @@ export function EliteAIGenerator({
   const [progress, setProgress] = useState({ check: 0, total: 25, message: "" });
   const [result, setResult] = useState<EliteGenerateResult | null>(null);
   const [selectedCount, setSelectedCount] = useState<number>(20);
+  const [eliteMode, setEliteMode] = useState<"smart" | "gl" | "advanced" | "combination">("smart");
 
   const matchId = (match?.matchId ?? match?.id ?? "") as string;
 
