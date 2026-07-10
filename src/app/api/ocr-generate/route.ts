@@ -3,7 +3,7 @@
  * ===============================
  *
  * Accepts a screenshot (Dream11, My11Circle, Playing XI, Match Center, Player List)
- * and uses Vision AI (z-ai-web-dev-sdk VLM) to:
+ * and uses Vision AI to:
  *   1. Extract all visible players via OCR
  *   2. Auto-correct OCR mistakes (V Kohii → Virat Kohli)
  *   3. Detect teams, roles (WK/BAT/AR/BOWL), captain tags, credits
@@ -16,7 +16,8 @@
  */
 
 import { NextResponse } from "next/server";
-import ZAI from "z-ai-web-dev-sdk";
+import * as fs from "fs";
+import * as path from "path";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -41,11 +42,112 @@ interface OCRResult {
 }
 
 /**
+ * Ensure the .z-ai-config file exists for the z-ai-web-dev-sdk.
+ * The SDK looks for this file in: process.cwd(), os.homedir(), or /etc/.
+ *
+ * On Vercel/serverless, this file doesn't exist by default.
+ * We create it at runtime using environment variables.
+ */
+function ensureZaiConfig(): void {
+  const configPaths = [
+    path.join(process.cwd(), ".z-ai-config"),
+    path.join(require("os").homedir(), ".z-ai-config"),
+    "/etc/.z-ai-config",
+  ];
+
+  for (const configPath of configPaths) {
+    try {
+      if (fs.existsSync(configPath)) {
+        // Config already exists — check if valid
+        const configStr = fs.readFileSync(configPath, "utf-8");
+        const config = JSON.parse(configStr);
+        if (config.baseUrl && config.apiKey) {
+          return; // Valid config exists
+        }
+      }
+    } catch {
+      // Continue to next path
+    }
+  }
+
+  // No valid config found — create one from environment variables
+  // These env vars must be set in Vercel/deployment environment
+  const baseUrl = process.env.ZAI_BASE_URL || "https://internal-api.z.ai/v1";
+  const apiKey = process.env.ZAI_API_KEY || "Z.ai";
+  const token = process.env.ZAI_TOKEN;
+  const chatId = process.env.ZAI_CHAT_ID;
+  const userId = process.env.ZAI_USER_ID;
+
+  if (!token) {
+    throw new Error("ZAI_TOKEN environment variable is not set. Vision AI OCR cannot function without it.");
+  }
+
+  const config = {
+    baseUrl,
+    apiKey,
+    token,
+    chatId: chatId || `chat-ocr-${Date.now()}`,
+    userId: userId || "ocr-user",
+  };
+
+  // Write to process.cwd() (writable on Vercel)
+  const targetPath = path.join(process.cwd(), ".z-ai-config");
+  try {
+    fs.writeFileSync(targetPath, JSON.stringify(config), { mode: 0o600 });
+    console.log(`[OCR] Created .z-ai-config at ${targetPath}`);
+  } catch (err) {
+    console.error(`[OCR] Failed to write .z-ai-config:`, err);
+    throw new Error(`Cannot create ZAI config: ${err instanceof Error ? err.message : "unknown error"}`);
+  }
+}
+
+/**
+ * Call Vision AI directly via REST API (fallback if SDK fails).
+ * Uses the same internal API as z-ai-web-dev-sdk but with explicit credentials.
+ */
+async function callVisionDirect(base64Image: string, prompt: string): Promise<string> {
+  const baseUrl = process.env.ZAI_BASE_URL || "https://internal-api.z.ai/v1";
+  const token = process.env.ZAI_TOKEN;
+
+  if (!token) {
+    throw new Error("ZAI_TOKEN environment variable is not set");
+  }
+
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      model: "glm-4.6v",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: base64Image } },
+          ],
+        },
+      ],
+      thinking: { type: "disabled" },
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Vision API HTTP ${response.status}: ${errText.slice(0, 200)}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || "";
+}
+
+/**
  * Use Vision AI to extract player data from a fantasy cricket screenshot.
+ * Tries SDK first, falls back to direct REST API call.
  */
 async function extractPlayersFromImage(base64Image: string): Promise<OCRResult> {
-  const zai = await ZAI.create();
-
   const prompt = `You are an Elite Fantasy Cricket AI with OCR capabilities. Analyze this screenshot and extract ALL visible player information.
 
 This screenshot is from one of these sources:
@@ -100,20 +202,47 @@ If you cannot read a field, omit it (except name, team, role, playing — those 
 If a player cannot be verified, EXCLUDE them entirely. Do NOT guess.
 Return ONLY the JSON, no other text.`;
 
-  const response = await zai.chat.completions.createVision({
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: prompt },
-          { type: "image_url", image_url: { url: base64Image } },
-        ],
-      },
-    ],
-    thinking: { type: "disabled" },
-  });
+  let content = "";
 
-  const content = response.choices[0]?.message?.content || "";
+  // Method 1: Try SDK with config file
+  try {
+    ensureZaiConfig();
+    const ZAI = (await import("z-ai-web-dev-sdk")).default;
+    const zai = await ZAI.create();
+    const response = await zai.chat.completions.createVision({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: base64Image } },
+          ],
+        },
+      ],
+      thinking: { type: "disabled" },
+    });
+    content = response.choices[0]?.message?.content || "";
+    console.log("[OCR] SDK method succeeded");
+  } catch (sdkErr) {
+    console.warn("[OCR] SDK method failed, trying direct REST API:", sdkErr instanceof Error ? sdkErr.message : sdkErr);
+
+    // Method 2: Direct REST API call
+    try {
+      content = await callVisionDirect(base64Image, prompt);
+      console.log("[OCR] Direct REST API method succeeded");
+    } catch (directErr) {
+      console.error("[OCR] Both methods failed:", directErr);
+      throw new Error(
+        `Vision AI unavailable. SDK error: ${sdkErr instanceof Error ? sdkErr.message : "unknown"}. ` +
+        `Direct API error: ${directErr instanceof Error ? directErr.message : "unknown"}. ` +
+        `Make sure ZAI_TOKEN environment variable is set.`
+      );
+    }
+  }
+
+  if (!content) {
+    throw new Error("Vision AI returned empty response");
+  }
 
   // Parse JSON from response (handle markdown code blocks)
   let jsonStr = content.trim();

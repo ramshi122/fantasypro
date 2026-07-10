@@ -42,7 +42,7 @@ yarn-error.log*
 next-env.d.ts
 local-*
 .claude
-.z-ai-config
+# .z-ai-config — NOT ignored (needed for OCR Vision AI on deployment)
 *.log
 dev.log
 dev.out.log
