@@ -189,36 +189,96 @@ export function validateOrigin(request: Request): boolean {
 /**
  * Detect if DevTools is open.
  * Returns true if DevTools is detected.
+ * Multi-method detection for stronger anti-crack protection.
  */
 export function detectDevTools(): boolean {
   if (typeof window === "undefined") return false;
 
+  // Method 1: Window size difference (devtools docked)
   const threshold = 160;
-
-  // Check window size difference (devtools docked)
   const widthDiff = window.outerWidth - window.innerWidth;
   const heightDiff = window.outerHeight - window.innerHeight;
-
   if (widthDiff > threshold || heightDiff > threshold) {
     return true;
   }
 
-  // Check if console.debug timing is slow (devtools open)
+  // Method 2: Console.debug timing (devtools open slows this down)
   const start = performance.now();
   // eslint-disable-next-line no-console
   console.debug("");
   const end = performance.now();
-
   if (end - start > 100) {
     return true;
   }
 
+  // Method 3: Detect React DevTools / Vue DevTools extensions
+  try {
+    if ((window as any).__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+      // React DevTools installed — don't immediately flag, but watch for usage
+    }
+    if ((window as any).__VUE_DEVTOOLS_GLOBAL_HOOK__) {
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+
+  // Method 4: Detect if debugger statement pauses (advanced)
+  // This is commented out because it pauses execution for legit users too
+  // but can be enabled for high-security scenarios
+  // const t0 = Date.now();
+  // // eslint-disable-next-line no-debugger
+  // debugger;
+  // if (Date.now() - t0 > 100) return true;
+
+  return false;
+}
+
+/**
+ * Detect if the app is running in a non-production environment
+ * (localhost, dev build, or test runner).
+ */
+export function isDevEnvironment(): boolean {
+  if (typeof window === "undefined") return false;
+  return (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1" ||
+    window.location.hostname.includes("dev.") ||
+    window.location.port !== "" ||
+    (window as any).__CYPRESS_ENV === true ||
+    (window as any).__JEST_ENV === true
+  );
+}
+
+/**
+ * Detect if source code is being viewed via view-source: protocol
+ * or if the page is being loaded in a debugging proxy.
+ */
+export function detectSourceView(): boolean {
+  if (typeof window === "undefined") return false;
+  const url = window.location.href;
+  if (url.startsWith("view-source:") || url.startsWith("chrome:")) {
+    return true;
+  }
+  // Detect if loaded via file:// protocol (local file access)
+  if (window.location.protocol === "file:") {
+    return true;
+  }
   return false;
 }
 
 /**
  * Initialize anti-tampering measures.
  * Call this on app load.
+ *
+ * Multi-layer protection:
+ *   1. Disable right-click, F12, Ctrl+Shift+I/J, Ctrl+U
+ *   2. Periodic DevTools detection (clears console + warns)
+ *   3. Detect source view / file:// protocol
+ *   4. Detect iframe embedding
+ *   5. Disable drag (prevents image/code dragging)
+ *   6. Override console methods in production (limited)
+ *   7. Detect debugger / breakpoint attempts
  */
 export function initAntiTampering(): void {
   if (typeof window === "undefined") return;
@@ -228,7 +288,7 @@ export function initAntiTampering(): void {
     e.preventDefault();
   });
 
-  // Disable F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+U
+  // Disable F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+U, Ctrl+Shift+C
   document.addEventListener("keydown", (e) => {
     // F12
     if (e.key === "F12") {
@@ -240,27 +300,50 @@ export function initAntiTampering(): void {
       e.preventDefault();
       return;
     }
+    // Ctrl+Shift+C (Element Inspector)
+    if (e.ctrlKey && e.shiftKey && (e.key === "C" || e.key === "c")) {
+      e.preventDefault();
+      return;
+    }
     // Ctrl+U (View Source)
     if (e.ctrlKey && (e.key === "U" || e.key === "u")) {
       e.preventDefault();
       return;
     }
+    // Ctrl+S (Save Page)
+    if (e.ctrlKey && (e.key === "S" || e.key === "s")) {
+      e.preventDefault();
+      return;
+    }
   });
 
-  // Periodic DevTools detection
+  // Periodic DevTools detection (every 2 seconds)
   let devToolsOpen = false;
+  let devToolsWarnings = 0;
+  const MAX_WARNINGS = 3;
   setInterval(() => {
-    if (detectDevTools() && !devToolsOpen) {
-      devToolsOpen = true;
-      // Clear sensitive data when devtools detected
-      // Don't redirect — just clear console
-      // eslint-disable-next-line no-console
-      console.clear();
-      // eslint-disable-next-line no-console
-      console.warn("%c⚠️ STOP!", "font-size:48px;font-weight:bold;color:red;");
-      // eslint-disable-next-line no-console
-      console.warn("%cThis is a protected application. Tampering with the code is prohibited.", "font-size:14px;color:red;");
-    } else if (!detectDevTools()) {
+    if (detectDevTools()) {
+      if (!devToolsOpen) {
+        devToolsOpen = true;
+        devToolsWarnings++;
+        // Clear console
+        // eslint-disable-next-line no-console
+        console.clear();
+        // eslint-disable-next-line no-console
+        console.warn("%c⚠️ STOP!", "font-size:48px;font-weight:bold;color:red;");
+        // eslint-disable-next-line no-console
+        console.warn("%cThis is a protected application. Tampering with the code is prohibited.", "font-size:14px;color:red;");
+        // eslint-disable-next-line no-console
+        console.warn(`%cViolation #${devToolsWarnings} detected. After ${MAX_WARNINGS} violations, app will reload.`, "font-size:12px;color:orange;");
+        // After max warnings, reload the page to disrupt debugging
+        if (devToolsWarnings >= MAX_WARNINGS) {
+          // Log violation (could send to server in future)
+          localStorage.setItem("apna-crack-attempt", String(Date.now()));
+          // Reload to disrupt debugging session
+          setTimeout(() => window.location.reload(), 500);
+        }
+      }
+    } else {
       devToolsOpen = false;
     }
   }, 2000);
@@ -272,8 +355,78 @@ export function initAntiTampering(): void {
 
   // Detect if code is running in an iframe (prevent embedding)
   if (window.self !== window.top) {
-    window.top!.location = window.self.location;
+    try {
+      window.top!.location = window.self.location;
+    } catch {
+      // Cross-origin — block iframe rendering
+      document.body.style.display = "none";
+    }
   }
+
+  // Detect source view / file:// protocol
+  if (detectSourceView()) {
+    document.body.innerHTML = "<div style='text-align:center;padding:50px;font-family:sans-serif'><h2>⚠️ Access Denied</h2><p>This application cannot be viewed via source or local file protocol.</p></div>";
+  }
+
+  // Override console in production to make debugging harder
+  if (!isDevEnvironment()) {
+    // Don't completely disable console (breaks legitimate error logging)
+    // But override console.log to prevent easy variable inspection
+    const originalLog = console.log;
+    const originalInfo = console.info;
+    const originalTable = console.table;
+
+    // eslint-disable-next-line no-console
+    console.log = (...args: any[]) => {
+      // Only allow logs from our own code (check for our prefix)
+      const first = String(args[0] || "");
+      if (first.startsWith("[saveFantasyToken]") ||
+          first.startsWith("[multi-accounts]") ||
+          first.startsWith("[token-persist]") ||
+          first.startsWith("[clipboard]") ||
+          first.startsWith("[EliteAI]")) {
+        originalLog(...args);
+      }
+      // Other logs are silently dropped in production
+    };
+    // eslint-disable-next-line no-console
+    console.info = (...args: any[]) => {
+      // Drop info logs in production
+    };
+    // eslint-disable-next-line no-console
+    console.table = (...args: any[]) => {
+      // Drop table logs (commonly used for inspecting objects)
+    };
+  }
+
+  // Detect debugger statement abuse
+  // If a user sets breakpoints, the debugger statement will pause execution
+  // We add periodic debugger checks
+  setInterval(() => {
+    const t0 = performance.now();
+    // eslint-disable-next-line no-debugger
+    debugger;
+    const t1 = performance.now();
+    // If debugger paused execution for >500ms, someone is breakpoint-debugging
+    if (t1 - t0 > 500) {
+      localStorage.setItem("apna-crack-debugger", String(Date.now()));
+    }
+  }, 30000); // check every 30 seconds
+
+  // Detect window blur (user may have switched to devtools)
+  let blurTime = 0;
+  window.addEventListener("blur", () => {
+    blurTime = Date.now();
+  });
+  window.addEventListener("focus", () => {
+    // If user was away for more than 2 seconds, they might have been using devtools
+    if (blurTime > 0 && Date.now() - blurTime > 2000) {
+      // Just clear console, don't reload
+      // eslint-disable-next-line no-console
+      console.clear();
+    }
+    blurTime = 0;
+  });
 }
 
 // ===== LICENSE KEY VALIDATION (server-side simulation) =====

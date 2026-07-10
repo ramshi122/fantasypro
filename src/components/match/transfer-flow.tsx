@@ -7,6 +7,7 @@ import {
   Check,
   CheckCircle2,
   Copy,
+  ClipboardPaste,
   Crown,
   ExternalLink,
   Gift,
@@ -18,6 +19,7 @@ import {
   Save,
   Search,
   Send,
+  Smartphone,
   Star,
   Trash2,
   X,
@@ -46,6 +48,8 @@ import { ApnaTransferModal } from "./apna-transfer-modal";
 import { FreeContestsModal } from "./free-contests-modal";
 import { OtpLoginModal } from "@/components/auth/otp-login-modal";
 import { EliteAIGenerator } from "./elite-ai-generator";
+import { CopyPasteModal } from "./copy-paste-modal";
+import { MultiAccountManager } from "@/components/auth/multi-account-manager";
 import { ErrorBoundary } from "@/components/error-boundary";
 import {
   autoReplaceNonPlaying,
@@ -55,6 +59,7 @@ import {
   isLineupAnnounced,
 } from "@/lib/lineup";
 import { useLicense } from "@/lib/use-license";
+import { canMultiAccountDream11, canMultiAccountMy11Circle, canBulkCopyPaste } from "@/lib/subscription";
 import { cn } from "@/lib/utils";
 import { roleFromPlayerType, shortName, teamColor } from "@/lib/format";
 
@@ -77,6 +82,8 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   const [selectedTransferApp, setSelectedTransferApp] = useState<FantasyApp>("dream11");
   const [showFreeContests, setShowFreeContests] = useState(false);
   const [showOtpLogin, setShowOtpLogin] = useState(false);
+  const [showCopyPaste, setShowCopyPaste] = useState(false);
+  const [showMultiAccount, setShowMultiAccount] = useState<FantasyApp | null>(null);
   const [linkedApp, setLinkedApp] = useState<FantasyApp | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lineupAnnounced, setLineupAnnounced] = useState(false);
@@ -807,6 +814,70 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 {license.isLicensed ? <Plus className="w-4 h-4 mr-1.5" /> : <Lock className="w-4 h-4 mr-1.5" />}
                 {license.isLicensed ? "Add Team" : "Add 🔒"}
               </Button>
+
+              {/* Copy/Paste Teams — locked for trial users */}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (!canBulkCopyPaste(license.licenseKeyType)) {
+                    toast.error("Bulk Copy/Paste requires 1 Match (₹49) or higher subscription.");
+                    return;
+                  }
+                  setShowCopyPaste(true);
+                }}
+                disabled={existingTeams.length === 0 && !canBulkCopyPaste(license.licenseKeyType)}
+                className={cn(
+                  "border-violet-200 text-violet-700 dark:text-violet-300",
+                  !canBulkCopyPaste(license.licenseKeyType) && "opacity-60"
+                )}
+              >
+                {canBulkCopyPaste(license.licenseKeyType)
+                  ? <><ClipboardPaste className="w-3.5 h-3.5 mr-1" /> Copy/Paste</>
+                  : <><Lock className="w-3.5 h-3.5 mr-1" /> Copy/Paste 🔒</>}
+              </Button>
+
+              {/* Multi-Account Manager — Dream11 (5 accounts) */}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (!canMultiAccountDream11(license.licenseKeyType)) {
+                    toast.error("Multi-Account Dream11 requires 24 Hours (₹99) or higher subscription.");
+                    return;
+                  }
+                  setShowMultiAccount("dream11");
+                }}
+                className={cn(
+                  "border-red-200 text-red-700 dark:text-red-300",
+                  !canMultiAccountDream11(license.licenseKeyType) && "opacity-60"
+                )}
+              >
+                {canMultiAccountDream11(license.licenseKeyType)
+                  ? <><Smartphone className="w-3.5 h-3.5 mr-1" /> D11 (5x)</>
+                  : <><Lock className="w-3.5 h-3.5 mr-1" /> D11 🔒</>}
+              </Button>
+
+              {/* Multi-Account Manager — My11Circle (5 accounts) */}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (!canMultiAccountMy11Circle(license.licenseKeyType)) {
+                    toast.error("Multi-Account My11Circle requires Weekly (₹149) or higher subscription.");
+                    return;
+                  }
+                  setShowMultiAccount("my11circle");
+                }}
+                className={cn(
+                  "border-sky-200 text-sky-700 dark:text-sky-300",
+                  !canMultiAccountMy11Circle(license.licenseKeyType) && "opacity-60"
+                )}
+              >
+                {canMultiAccountMy11Circle(license.licenseKeyType)
+                  ? <><Smartphone className="w-3.5 h-3.5 mr-1" /> M11 (5x)</>
+                  : <><Lock className="w-3.5 h-3.5 mr-1" /> M11 🔒</>}
+              </Button>
             </div>
           </div>
 
@@ -1046,6 +1117,46 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Copy-Paste Modal */}
+      <CopyPasteModal
+        open={showCopyPaste}
+        onClose={() => setShowCopyPaste(false)}
+        teams={existingTeams}
+        onPaste={(pastedTeams) => {
+          handleBulkAddTeams(pastedTeams);
+          toast.success(`Pasted ${pastedTeams.length} teams`);
+        }}
+      />
+
+      {/* Multi-Account Manager — Dream11 */}
+      <MultiAccountManager
+        open={showMultiAccount === "dream11"}
+        onClose={() => setShowMultiAccount(null)}
+        app="dream11"
+        onAccountAdded={(account) => {
+          if (account.id === "_new_") {
+            // Trigger OTP login flow
+            setShowMultiAccount(null);
+            setLinkedApp("dream11");
+            setShowOtpLogin(true);
+          }
+        }}
+      />
+
+      {/* Multi-Account Manager — My11Circle */}
+      <MultiAccountManager
+        open={showMultiAccount === "my11circle"}
+        onClose={() => setShowMultiAccount(null)}
+        app="my11circle"
+        onAccountAdded={(account) => {
+          if (account.id === "_new_") {
+            setShowMultiAccount(null);
+            setLinkedApp("my11circle");
+            setShowOtpLogin(true);
+          }
+        }}
+      />
     </div>
   );
 }

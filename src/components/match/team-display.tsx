@@ -233,13 +233,19 @@ function PlayerCard({
         )}
       </div>
 
-      {/* Player name — full last name, dark + bold */}
+      {/* Player name — show full proper name (not short code) */}
       <p
         className="text-[10px] font-bold text-slate-900 dark:text-white leading-tight text-center truncate w-full"
         title={`${firstName} ${lastName}`.trim()}
       >
         {lastName}
       </p>
+      {/* First name (smaller, for context) */}
+      {firstName && (
+        <p className="text-[8px] text-slate-500 dark:text-slate-400 leading-tight text-center truncate w-full -mt-0.5">
+          {firstName.split(" ")[0]}
+        </p>
+      )}
 
       {/* Credits */}
       {credits && (

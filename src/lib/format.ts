@@ -62,6 +62,57 @@ export function shortName(name?: string, max = 4): string {
   return name.slice(0, max).toUpperCase();
 }
 
+/**
+ * Format a player's full name for display.
+ *
+ * Rules:
+ *   - Returns the full name (NOT short code) for readability
+ *   - Strips "(C)"/"(VC)" suffixes that some APIs append
+ *   - Capitalizes first letter of each word
+ *   - Falls back to "Unknown Player" if no name
+ *   - Truncates to 18 chars with ellipsis if too long
+ *
+ * This is the proper-name display function — use it everywhere
+ * player names are shown to users.
+ */
+export function formatPlayerName(name?: string | null): string {
+  if (!name || typeof name !== "string") return "Unknown Player";
+  let cleaned = name.trim();
+  // Remove trailing (C) / (VC) / (c) / (vc)
+  cleaned = cleaned.replace(/\s*\([CcVv]+\)\s*$/, "");
+  // Remove trailing role tags like "BAT", "BOWL" if name ends with them
+  cleaned = cleaned.replace(/\s+(BAT|BOWL|AR|WK|ALL)$/i, "");
+  // Capitalize first letter of each word (preserve mixed-case like "McCullum")
+  cleaned = cleaned.split(/\s+/).map(word => {
+    if (word.length === 0) return word;
+    // If word is all uppercase, convert to title case
+    if (word === word.toUpperCase() && word.length > 2) {
+      return word.charAt(0) + word.slice(1).toLowerCase();
+    }
+    return word.charAt(0).toUpperCase() + word.slice(1);
+  }).join(" ");
+  // Truncate if too long
+  if (cleaned.length > 20) {
+    cleaned = cleaned.slice(0, 18) + "...";
+  }
+  return cleaned;
+}
+
+/**
+ * Get a player's surname (last name) for compact display.
+ * Example: "Virat Kohli" → "Kohli"
+ * Falls back to shortName if no space in name.
+ */
+export function playerSurname(name?: string | null): string {
+  if (!name || typeof name !== "string") return "?";
+  const cleaned = name.trim().replace(/\s*\([CcVv]+\)\s*$/, "");
+  const parts = cleaned.split(/\s+/);
+  if (parts.length >= 2) {
+    return parts[parts.length - 1];
+  }
+  return shortName(cleaned);
+}
+
 export function classForRole(role?: string | number): string {
   const r = String(role || "").toLowerCase();
   if (r === "wk" || r.includes("keeper")) return "bg-amber-500";

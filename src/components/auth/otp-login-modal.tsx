@@ -215,28 +215,41 @@ export function OtpLoginModal({
             {/* Phase 1: Select App */}
             {phase === "select-app" && (
               <div className="space-y-2">
-                {APPS.map((a) => (
-                  <button
-                    key={a.id}
-                    onClick={() => {
-                      setSelectedApp(a.id);
-                      setPhase("enter-mobile");
-                    }}
-                    className={cn(
-                      "w-full p-3 rounded-xl border-2 transition-all text-left flex items-center gap-3",
-                      "border-violet-100 dark:border-violet-900/30 hover:border-violet-300 hover:bg-violet-50/50 dark:hover:bg-violet-900/10"
-                    )}
-                  >
-                    <div className={cn("w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center text-2xl flex-shrink-0", a.color)}>
-                      {a.emoji}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-foreground">{a.label}</p>
-                      <p className="text-xs text-muted-foreground">{a.desc}</p>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                  </button>
-                ))}
+                {APPS.map((a) => {
+                  // Show how many accounts are already linked for this platform
+                  let linkedCount = 0;
+                  try {
+                    const { listAccountsForApp, MAX_ACCOUNTS_PER_APP } = require("@/lib/multi-accounts");
+                    linkedCount = listAccountsForApp(a.id).length;
+                  } catch { /* ignore */ }
+                  return (
+                    <button
+                      key={a.id}
+                      onClick={() => {
+                        setSelectedApp(a.id);
+                        setPhase("enter-mobile");
+                      }}
+                      className={cn(
+                        "w-full p-3 rounded-xl border-2 transition-all text-left flex items-center gap-3",
+                        "border-violet-100 dark:border-violet-900/30 hover:border-violet-300 hover:bg-violet-50/50 dark:hover:bg-violet-900/10"
+                      )}
+                    >
+                      <div className={cn("w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center text-2xl flex-shrink-0", a.color)}>
+                        {a.emoji}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-foreground">{a.label}</p>
+                        <p className="text-xs text-muted-foreground">{a.desc}</p>
+                        {linkedCount > 0 && (
+                          <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-0.5">
+                            ✓ {linkedCount} account{linkedCount > 1 ? "s" : ""} linked
+                          </p>
+                        )}
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                    </button>
+                  );
+                })}
                 <div className="mt-4 p-3 rounded-xl bg-violet-50/50 dark:bg-violet-950/20 text-[11px] text-muted-foreground">
                   <p className="flex items-start gap-1.5">
                     <Shield className="w-3.5 h-3.5 text-violet-500 mt-0.5 flex-shrink-0" />

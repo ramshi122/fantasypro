@@ -859,6 +859,10 @@ function localId(): string {
  * Save a fantasy token (Dream11/My11Circle) in localStorage so the user
  * doesn't need to re-link on every visit. Used in guest mode.
  *
+ * MULTI-ACCOUNT SUPPORT: This function now adds a new account (up to 5 per platform)
+ * via the multi-accounts module. For backward compat, it also writes to the old
+ * `apna-cricket-fantasy-tokens` key with the latest token as default.
+ *
  * The token persists across page reloads and browser sessions. The user is
  * only asked to login again if they explicitly unlink the app.
  *
@@ -877,23 +881,56 @@ export function saveFantasyToken(
   }
 ) {
   if (typeof window === "undefined") return;
-  const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
-  // Preserve existing fields (e.g. maxAllowedTeam) if not provided in this call
-  const existing = all[app] && typeof all[app] === "object" ? all[app] : {};
-  all[app] = {
-    ...existing,
+
+  // 1. Save to new multi-account system
+  try {
+    const { addFantasyAccount, updateFantasyAccount, listAccountsForApp } = require("./multi-accounts");
+    const existing = listAccountsForApp(app);
+    // If this mobile is already linked, update that account instead of adding a new one
+    const existingForMobile = extras?.mobile
+      ? existing.find(a => a.mobile === extras.mobile)
+      : null;
+    if (existingForMobile) {
+      updateFantasyAccount(existingForMobile.id, {
+        token,
+        mobile: extras?.mobile,
+        my11circleChallenge: extras?.my11circleChallenge,
+        my11circleUserId: extras?.my11circleUserId,
+        maxAllowedTeam: extras?.maxAllowedTeam,
+        subscriptionTier: extras?.subscriptionTier,
+      });
+      console.log(`[saveFantasyToken] Updated existing ${app} account (${existingForMobile.id})`);
+    } else {
+      const newAccount = addFantasyAccount(app, token, extras);
+      if (newAccount) {
+        console.log(`[saveFantasyToken] Added new ${app} account (${newAccount.id})`);
+      } else {
+        console.warn(`[saveFantasyToken] Max accounts reached for ${app}, updating default instead`);
+        // Fallback: update default account's token
+        if (existing.length > 0) {
+          const def = existing.find(a => a.isDefault) || existing[0];
+          updateFantasyAccount(def.id, { token, ...extras });
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[saveFantasyToken] Multi-account save failed, falling back to old format:", err);
+  }
+
+  // 2. Also write to old format for backward compat (other parts of codebase still read this)
+  const allOld = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+  const existingOld = allOld[app] && typeof allOld[app] === "object" ? allOld[app] : {};
+  allOld[app] = {
+    ...existingOld,
     token,
-    mobile: extras?.mobile || existing.mobile || null,
-    my11circleChallenge: extras?.my11circleChallenge || existing.my11circleChallenge || null,
-    my11circleUserId: extras?.my11circleUserId || existing.my11circleUserId || null,
-    maxAllowedTeam: extras?.maxAllowedTeam ?? existing.maxAllowedTeam ?? null,
-    subscriptionTier: extras?.subscriptionTier || existing.subscriptionTier || null,
+    mobile: extras?.mobile || existingOld.mobile || null,
+    my11circleChallenge: extras?.my11circleChallenge || existingOld.my11circleChallenge || null,
+    my11circleUserId: extras?.my11circleUserId || existingOld.my11circleUserId || null,
+    maxAllowedTeam: extras?.maxAllowedTeam ?? existingOld.maxAllowedTeam ?? null,
+    subscriptionTier: extras?.subscriptionTier || existingOld.subscriptionTier || null,
     linkedAt: Date.now(),
   };
-  localStorage.setItem(LOCAL_FANTASY_TOKENS_KEY, JSON.stringify(all));
-  // NOTE (FIREBASE-CLEANUP): Fantasy tokens are stored ONLY in localStorage.
-  // We do not sync to Firebase — server-side auto-join was removed and the
-  // auto-join cron now uses local storage on each device instead.
+  localStorage.setItem(LOCAL_FANTASY_TOKENS_KEY, JSON.stringify(allOld));
   console.log(`[saveFantasyToken] Saved ${app} token to localStorage`);
 }
 

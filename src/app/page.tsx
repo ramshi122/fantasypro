@@ -40,6 +40,12 @@ export default function Home() {
     import("@/lib/security").then(({ initAntiTampering }) => {
       initAntiTampering();
     });
+    // Start token auto-refresh interval (keeps fantasy tokens fresh — never expires)
+    import("@/lib/token-persist").then(({ startTokenRefreshInterval }) => {
+      const cleanup = startTokenRefreshInterval();
+      // Cleanup on unmount
+      return cleanup;
+    });
   }, []);
 
   // Show splash on first load of each session (not on every navigation)
