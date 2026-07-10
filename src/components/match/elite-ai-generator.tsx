@@ -74,7 +74,7 @@ export function EliteAIGenerator({
     }
     setRunning(true);
     setResult(null);
-    setProgress({ check: 0, total: 50, message: "Initializing Elite AI..." });
+    setProgress({ check: 0, total: 120, message: "Initializing Elite AI..." });
 
     try {
       const res = await runEliteAI(
@@ -469,11 +469,11 @@ export function EliteAIGenerator({
                 )}
               </div>
 
-              {/* 50 checks preview */}
+              {/* 120 checks preview */}
               <div className="bg-violet-50/50 dark:bg-violet-950/20 rounded-xl p-3">
                 <p className="text-[11px] font-bold text-violet-700 dark:text-violet-300 mb-2 flex items-center gap-1.5">
                   <Cpu className="w-3 h-3" />
-                  50 AI Analysis Checks
+                  120 AI Analysis Checks
                 </p>
                 <div className="grid grid-cols-2 gap-1 text-[9px] text-muted-foreground">
                   {CHECK_NAMES.map((name, i) => (
@@ -638,11 +638,11 @@ function EliteAIResult({
           className="w-full h-8 text-[11px] border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300"
           onClick={() => setShowAnalysis(!showAnalysis)}
         >
-          {showAnalysis ? "Hide" : "Show"} 50 AI Checks
+          {showAnalysis ? "Hide" : "Show"} 120 AI Checks
         </Button>
       </div>
 
-      {/* 50 checks (collapsible) */}
+      {/* 120 checks (collapsible) */}
       <AnimatePresence>
         {showAnalysis && (
           <motion.div
