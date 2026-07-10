@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Check,
@@ -57,8 +58,65 @@ export function LicenseLockOverlay() {
     }
   }
 
-  // If licensed, don't render anything
-  if (isLicensed) return null;
+  // Check lockout state
+  const [lockoutState, setLockoutState] = useState<{ locked: boolean; remaining: string } | null>(null);
+
+  useEffect(() => {
+    // Check lockout on mount
+    import("@/lib/lockout").then(({ checkLockout, restoreLockoutFromFirebase }) => {
+      restoreLockoutFromFirebase().then(() => {
+        const status = checkLockout();
+        if (status.locked) {
+          setLockoutState({ locked: true, remaining: status.remainingFormatted });
+        }
+      });
+    });
+    // Update every second
+    const id = setInterval(() => {
+      import("@/lib/lockout").then(({ checkLockout }) => {
+        const status = checkLockout();
+        if (status.locked) {
+          setLockoutState({ locked: true, remaining: status.remainingFormatted });
+        } else if (lockoutState?.locked) {
+          setLockoutState(null);
+        }
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [lockoutState?.locked]);
+
+  // If licensed AND not locked out, don't render anything
+  if (isLicensed && !lockoutState?.locked) return null;
+
+  // If locked out (5 wrong attempts), show lockout screen even if licensed
+  if (lockoutState?.locked) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="fixed inset-0 z-[100] bg-red-950/95 backdrop-blur-md flex items-center justify-center p-4"
+      >
+        <div className="bg-red-900/50 border border-red-500 rounded-3xl p-6 max-w-sm w-full text-center">
+          <div className="w-16 h-16 mx-auto rounded-full bg-red-500/20 flex items-center justify-center mb-3">
+            <Lock className="w-8 h-8 text-red-400" />
+          </div>
+          <h2 className="text-xl font-black text-white mb-1">🔒 App Locked</h2>
+          <p className="text-[11px] text-red-200/80 mb-2">
+            Too many wrong key attempts. App is locked.
+          </p>
+          <p className="text-3xl font-mono font-black text-red-400 mb-2">
+            {lockoutState.remaining}
+          </p>
+          <p className="text-[9px] text-red-300/60 mb-4">
+            ⚠️ Lock persists even if you uninstall &amp; reinstall (tracked by device fingerprint + Firebase)
+          </p>
+          <p className="text-[10px] text-amber-300/80">
+            Contact admin via WhatsApp for a new key.
+          </p>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <>
