@@ -393,3 +393,53 @@ Stage Summary:
 - Firebase integration: 8 new collections added (referral_rewards, coupons, predictions, broadcasts, push_subscriptions, banned_devices, ip_logs, blocked_ips, leaderboard, contest_wins, bulk_messages, scheduler_config, scheduled_matches, cashback_trackers)
 - localStorage keys added: apna-cricket-analytics, apna-cricket-match-perf, apna-cricket-templates, apna-cricket-notifications, apna-cricket-api-logs, apna-cricket-contest-history, apna-cricket-theme, apna-cricket-lang, apna-cricket-admin-2fa, apna-cricket-suspicious-activities, apna-cricket-banned-local, apna-cricket-referral-rewards, apna-cricket-push-sub, apna-cricket-broadcast-read, apna-cricket-match-scheduler-config
 - Build passes with no TypeScript errors
+
+---
+Task ID: ADMIN-SYNC
+Agent: general-purpose
+Task: Admin Panel Global Firebase Sync — Firebase Firestore as the SINGLE SOURCE OF TRUTH (no localStorage for admin data)
+
+Work Log:
+- Created `/src/lib/admin-firebase-sync.ts` — new dedicated sync module providing:
+  - Fetch functions (one-shot reads): `fetchAllKeysFromFirebase()`, `fetchAllDevicesFromFirebase()`, `fetchAllUsersFromFirebase()`, `fetchLogsFromFirebase()` (last 100, ordered desc), `fetchSettingsFromFirebase()` (admin_config/settings doc)
+  - Subscribe functions (real-time onSnapshot): `subscribeToKeys(cb)`, `subscribeToUsers(cb)`, `subscribeToSettings(cb)` — each returns an unsubscribe function and fires immediately with the current state plus on every cross-device change
+  - Write functions: `writeKeyToFirebase(key)`, `bulkWriteKeysToFirebase(keys)` (chunked in 50s to respect Firestore rate limits), `deleteKeyFromFirebase(keyStr)`, `updateKeyInFirebase(keyStr, updates)`, `writeLogToFirebase(log)` (addDoc), `writeSettingsToFirebase(settings)` (setDoc to admin_config/settings), plus helpers `writeDeviceToFirebase` and `writeUserToFirebase`
+  - Each function guards against an uninitialised `db` (SSR / init-failure) and falls back gracefully
+
+- Updated `/src/lib/admin-store.ts` — Firebase is now the source of truth:
+  - Removed `persist` middleware + `createJSONStorage` import (NO localStorage for admin data anymore)
+  - Removed the entire persist config block (name, storage, version, migrate, merge, partialize)
+  - Added `syncFromFirebase()`: fetches ALL data (keys, devices, users, logs, settings) in parallel from Firebase and replaces the in-memory state. If Firebase has 0 keys, seeds the 500+ initial keys UP to Firebase so future opens on any device see them
+  - Added `subscribeToFirebase()`: idempotently attaches onSnapshot listeners for `license_keys`, `users`, and `admin_config/settings` so any change on ANY admin device propagates here in real-time. Returns an unsubscribe function
+  - Added `isSyncing`, `lastSyncedAt`, `isSubscribed` state fields to drive UI feedback
+  - Updated `generateKey`, `generateBulkKeys` — optimistically update in-memory state, then immediately write to Firebase via `writeKeyToFirebase` / `bulkWriteKeysToFirebase`
+  - Updated `activateKey`, `suspendKey`, `extendExpiry`, `resetDevice` — optimistically update local, then `updateKeyInFirebase` immediately
+  - Updated `deleteKey` — local delete + `deleteKeyFromFirebase` immediately
+  - Updated `validateAllKeys` — collects all modified keys and bulk-syncs them to Firebase
+  - Updated `verifyLicense` — writes the verification increment (deviceIds, lastVerified, verifications, status) back to Firebase so all admin panels stay in sync
+  - Updated `unbindDevice`, `banDevice`, `allowDevice`, `forceLogout` — sync affected device/key docs to Firebase
+  - Updated `banUser`, `unbanUser`, `deleteUser`, `resetUserLicense` — sync user docs to Firebase (`deleteUser` removes the doc from the `users` collection)
+  - Updated `updateSettings`, `toggleFeature`, `changePassword` — write the full settings object to `admin_config/settings`
+  - Updated `addLog` — appends admin_action / key_verification / error logs to `admin_logs` (skips noisy types to keep the audit trail clean)
+  - Replaced the old `setTimeout` localStorage-resync block with a smaller block that calls `syncFromFirebase()` and `subscribeToFirebase()` on first window load
+  - Kept the 500+ seed keys logic intact (still generated in `getInitialData`) — but now seeded UP to Firebase if Firebase is empty, not localStorage
+  - Kept user-facing `getDeviceId`, `getLicenseState`, `setLicenseVerified`, `clearLicense` (LICENSE_STORAGE_KEY) intact — these are NOT admin data
+  - Kept the `lockout.ts` system intact (separate localStorage usage for device lockouts)
+
+- Updated `/src/components/admin/admin-panel.tsx`:
+  - `AdminPanel` now calls `admin.syncFromFirebase()` and `admin.subscribeToFirebase()` on every open (via `useEffect` keyed on `open` + `isAdminAuthenticated`) — ensures the admin always sees the latest Firebase state on every refresh/open
+  - `DashboardTab` "Sync from Firebase" button now delegates to the store's `syncFromFirebase()` (instead of doing the merge locally) and re-attaches real-time listeners
+  - Added a richer "Synced from Firebase" status banner showing a live pulse dot when `isSubscribed`, an "● Live" / "○ Offline" indicator, and a human-readable "Last sync: X ago" timestamp derived from `lastSyncedAt`
+  - Preserved the existing card grid, design, and all other tabs — no UI redesign
+
+- Verified build: `npm run build` completes successfully with no new errors (`tsc --noEmit` shows zero errors in admin-store.ts, admin-firebase-sync.ts, admin-panel.tsx — pre-existing errors in unrelated files are unchanged).
+
+Stage Summary:
+- The admin panel now treats Firebase Firestore as the single source of truth.
+- NO localStorage is used for admin data (keys, devices, users, logs, settings) — the in-memory Zustand store acts only as a short-lived cache populated from Firebase.
+- All admin actions (generateKey, activateKey, suspendKey, deleteKey, extendExpiry, resetDevice, updateSettings, validateAllKeys, banUser, banDevice, unbindDevice, etc.) write to Firebase IMMEDIATELY in addition to updating local state.
+- Real-time onSnapshot listeners keep every admin device in sync — a key generated on phone A appears on phone B within seconds.
+- The 500+ seed keys survive: if Firebase is empty on first open, the seed is pushed UP to Firebase; thereafter all admin panels read from Firebase.
+- The user-facing license verification flow (verifyLicense + lockout.ts + getLicenseState/setLicenseVerified) is preserved — the lockout system's localStorage usage (device fingerprinting) is intentionally kept since it is per-device, not admin data.
+- A "Synced from Firebase" indicator with live status pulse and last-sync timestamp was added to the Dashboard tab, alongside a "Sync from Firebase" manual refresh button.
+- Build passes successfully — no new TypeScript errors introduced.

@@ -1,15 +1,19 @@
 /**
- * Admin Panel Store
- * -----------------
+ * Admin Panel Store — FIREBASE IS THE SINGLE SOURCE OF TRUTH
+ * ---------------------------------------------------------
  * Hidden admin mode with license management, device binding, user control,
  * team generator toggles, announcements, activity logs, and settings.
  *
- * All data is stored in localStorage for the demo. In production, these would
- * be backend JWT-protected API calls.
+ * ⚠️ NO localStorage is used for admin data (keys, devices, users, logs,
+ *    settings). All admin data lives in Firebase Firestore and is synced
+ *    in real-time via onSnapshot listeners across ALL devices/APKs.
+ *
+ * The local Zustand store acts as an in-memory cache populated from Firebase.
+ * If Firebase is temporarily unavailable, the in-memory state still works so
+ * the admin panel remains usable (offline-tolerant).
  */
 
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
 
 /* ---------- Types ---------- */
 
@@ -106,10 +110,26 @@ interface AdminState {
   announcements: Announcement[];
   settings: AdminSettings;
 
+  // Firebase sync metadata
+  /** True while a sync is in flight (drives spinner / disabled buttons). */
+  isSyncing: boolean;
+  /** Timestamp of the last successful sync from Firebase. */
+  lastSyncedAt: number | null;
+  /** True when real-time onSnapshot listeners have been attached. */
+  isSubscribed: boolean;
+
   // Auth actions
   login: (username: string, password: string) => boolean;
   logout: () => void;
   changePassword: (newPassword: string) => void;
+
+  // Firebase sync actions
+  /** Fetch ALL data (keys/devices/users/logs/settings) from Firebase and
+   *  replace the in-memory state. Returns true on success. */
+  syncFromFirebase: () => Promise<boolean>;
+  /** Set up real-time onSnapshot listeners for keys/users/settings.
+   *  Idempotent — safe to call multiple times. */
+  subscribeToFirebase: () => () => void;
 
   // License actions
   generateKey: (type: KeyType) => string;
@@ -290,9 +310,7 @@ function getInitialData() {
 
 const initial = getInitialData();
 
-export const useAdmin = create<AdminState>()(
-  persist(
-    (set, get) => ({
+export const useAdmin = create<AdminState>()((set, get) => ({
       isAdminAuthenticated: false,
       adminUsername: null,
       keys: initial.keys,
@@ -301,6 +319,11 @@ export const useAdmin = create<AdminState>()(
       logs: initial.logs,
       announcements: [],
       settings: DEFAULT_SETTINGS,
+
+      // Firebase sync metadata
+      isSyncing: false,
+      lastSyncedAt: null,
+      isSubscribed: false,
 
       login: (_username, password) => {
         // Password-only auth — no username required
@@ -319,7 +342,135 @@ export const useAdmin = create<AdminState>()(
 
       changePassword: (newPassword) => {
         set((s) => ({ settings: { ...s.settings, adminPassword: newPassword } }));
+        // Persist updated settings to Firebase (admin_config/settings)
+        import("./admin-firebase-sync").then(({ writeSettingsToFirebase }) => {
+          writeSettingsToFirebase({ ...get().settings, adminPassword: newPassword });
+        });
         get().addLog("admin_action", "Admin password changed");
+      },
+
+      /* -------------------------------------------------------------- *
+       * FIREBASE SYNC ACTIONS
+       * -------------------------------------------------------------- */
+
+      syncFromFirebase: async () => {
+        set({ isSyncing: true });
+        try {
+          const {
+            fetchAllKeysFromFirebase,
+            fetchAllDevicesFromFirebase,
+            fetchAllUsersFromFirebase,
+            fetchLogsFromFirebase,
+            fetchSettingsFromFirebase,
+            bulkWriteKeysToFirebase,
+            writeSettingsToFirebase,
+          } = await import("./admin-firebase-sync");
+
+          // Fetch everything in parallel for speed
+          const [fbKeys, fbDevices, fbUsers, fbLogs, fbSettings] = await Promise.all([
+            fetchAllKeysFromFirebase(),
+            fetchAllDevicesFromFirebase(),
+            fetchAllUsersFromFirebase(),
+            fetchLogsFromFirebase(),
+            fetchSettingsFromFirebase(),
+          ]);
+
+          // If Firebase has NO keys at all → seed the 500+ initial keys UP
+          // to Firebase so that future admin opens on any device see them.
+          if (fbKeys.length === 0) {
+            console.log("[Admin Sync] Firebase empty — seeding initial", initial.keys.length, "keys UP to Firebase");
+            // Seed in the background; do not block the UI.
+            bulkWriteKeysToFirebase(initial.keys).then((res) => {
+              console.log(`[Admin Sync] Seeded ${res.synced}/${initial.keys.length} keys to Firebase`);
+            });
+            // Also seed the initial settings doc if missing
+            if (!fbSettings) {
+              writeSettingsToFirebase(DEFAULT_SETTINGS).then(() => {
+                console.log("[Admin Sync] Seeded default settings to Firebase");
+              });
+            }
+            // Keep the in-memory seed keys (they're already there from initial state)
+            set({
+              keys: initial.keys,
+              devices: initial.devices,
+              users: initial.users,
+              logs: initial.logs,
+              settings: fbSettings || DEFAULT_SETTINGS,
+              isSyncing: false,
+              lastSyncedAt: Date.now(),
+            });
+            return true;
+          }
+
+          // Firebase has keys — use them as the source of truth.
+          // Merge in any local-only seed keys (CRICB-DEMO-TEST-KEY1..5 etc.)
+          // that don't yet exist in Firebase so the demo keys remain usable.
+          const fbKeySet = new Set(fbKeys.map((k) => k.key));
+          const localOnlySeedKeys = initial.keys.filter((k) => !fbKeySet.has(k.key));
+          if (localOnlySeedKeys.length > 0) {
+            console.log("[Admin Sync] Pushing", localOnlySeedKeys.length, "local seed keys UP to Firebase");
+            bulkWriteKeysToFirebase(localOnlySeedKeys).then(() => {
+              console.log("[Admin Sync] Seed keys pushed to Firebase");
+            });
+          }
+
+          set({
+            keys: [...fbKeys, ...localOnlySeedKeys],
+            devices: fbDevices.length > 0 ? fbDevices : initial.devices,
+            users: fbUsers.length > 0 ? fbUsers : initial.users,
+            logs: fbLogs.length > 0 ? fbLogs : initial.logs,
+            settings: fbSettings || DEFAULT_SETTINGS,
+            isSyncing: false,
+            lastSyncedAt: Date.now(),
+          });
+          console.log(
+            `[Admin Sync] Synced from Firebase — ${fbKeys.length} keys, ${fbDevices.length} devices, ${fbUsers.length} users, ${fbLogs.length} logs`
+          );
+          return true;
+        } catch (err) {
+          console.error("[Admin Sync] syncFromFirebase failed:", err);
+          set({ isSyncing: false });
+          return false;
+        }
+      },
+
+      subscribeToFirebase: () => {
+        if (get().isSubscribed) {
+          console.log("[Admin Sync] Already subscribed — skipping duplicate listener setup");
+          return () => {};
+        }
+        set({ isSubscribed: true });
+
+        let unsubKeys: (() => void) | null = null;
+        let unsubUsers: (() => void) | null = null;
+        let unsubSettings: (() => void) | null = null;
+
+        import("./admin-firebase-sync").then(
+          ({ subscribeToKeys, subscribeToUsers, subscribeToSettings }) => {
+            // Real-time keys listener — fires immediately with current state
+            // AND on every change across all devices.
+            unsubKeys = subscribeToKeys((fbKeys) => {
+              if (fbKeys.length === 0) return; // ignore empty snapshots (init flicker)
+              set({ keys: fbKeys, lastSyncedAt: Date.now() });
+            });
+            unsubUsers = subscribeToUsers((fbUsers) => {
+              set({ users: fbUsers });
+            });
+            unsubSettings = subscribeToSettings((fbSettings) => {
+              set({ settings: fbSettings });
+            });
+            console.log("[Admin Sync] Real-time listeners attached (keys, users, settings)");
+          }
+        );
+
+        // Return unsubscribe function
+        return () => {
+          if (unsubKeys) unsubKeys();
+          if (unsubUsers) unsubUsers();
+          if (unsubSettings) unsubSettings();
+          set({ isSubscribed: false });
+          console.log("[Admin Sync] Real-time listeners detached");
+        };
       },
 
       generateKey: (type) => {
@@ -334,14 +485,14 @@ export const useAdmin = create<AdminState>()(
           deviceIds: [],
           verifications: 0,
         };
+        // 1. Update in-memory state IMMEDIATELY (optimistic)
         set((s) => ({ keys: [newKey, ...s.keys] }));
         get().addLog("admin_action", `Generated ${type} key: ${key}`);
-        // Sync to Firebase (async, non-blocking)
-        import("./firebase-license").then(({ syncKeyToFirestore, initFirebase }) => {
-          initFirebase(get().settings.firebaseConfig);
-          syncKeyToFirestore(newKey).then((ok) => {
-            if (ok) console.log("[Firebase] Key synced:", key);
-            else console.log("[Firebase] Key sync failed (offline?) — saved locally only");
+        // 2. Write to Firebase IMMEDIATELY (source of truth)
+        import("./admin-firebase-sync").then(({ writeKeyToFirebase }) => {
+          writeKeyToFirebase(newKey).then((ok) => {
+            if (ok) console.log("[Firebase] Key written:", key);
+            else console.log("[Firebase] Key write failed (offline?) — kept in memory only");
           });
         });
         return key;
@@ -362,13 +513,13 @@ export const useAdmin = create<AdminState>()(
             verifications: 0,
           });
         }
+        // 1. Update in-memory state IMMEDIATELY (optimistic)
         set((s) => ({ keys: [...newKeys, ...s.keys] }));
         get().addLog("admin_action", `Generated ${count} bulk ${type} keys`);
-        // Bulk sync to Firebase (async, non-blocking)
-        import("./firebase-license").then(({ bulkSyncKeysToFirestore, initFirebase }) => {
-          initFirebase(get().settings.firebaseConfig);
-          bulkSyncKeysToFirestore(newKeys).then((res) => {
-            console.log(`[Firebase] Bulk sync: ${res.synced}/${count} synced, ${res.failed} failed`);
+        // 2. Write to Firebase IMMEDIATELY (source of truth)
+        import("./admin-firebase-sync").then(({ bulkWriteKeysToFirebase }) => {
+          bulkWriteKeysToFirebase(newKeys).then((res) => {
+            console.log(`[Firebase] Bulk write: ${res.synced}/${count} written, ${res.failed} failed`);
           });
         });
         return newKeys.map((k) => k.key);
@@ -379,6 +530,10 @@ export const useAdmin = create<AdminState>()(
           keys: s.keys.map((k) => (k.key === key ? { ...k, status: "active" } : k)),
         }));
         get().addLog("admin_action", `Activated key: ${key}`);
+        // Write to Firebase IMMEDIATELY
+        import("./admin-firebase-sync").then(({ updateKeyInFirebase }) => {
+          updateKeyInFirebase(key, { status: "active" });
+        });
       },
 
       suspendKey: (key) => {
@@ -386,22 +541,38 @@ export const useAdmin = create<AdminState>()(
           keys: s.keys.map((k) => (k.key === key ? { ...k, status: "suspended" } : k)),
         }));
         get().addLog("admin_action", `Suspended key: ${key}`);
+        // Write to Firebase IMMEDIATELY
+        import("./admin-firebase-sync").then(({ updateKeyInFirebase }) => {
+          updateKeyInFirebase(key, { status: "suspended" });
+        });
       },
 
       deleteKey: (key) => {
         set((s) => ({ keys: s.keys.filter((k) => k.key !== key) }));
         get().addLog("admin_action", `Deleted key: ${key}`);
+        // Delete from Firebase IMMEDIATELY
+        import("./admin-firebase-sync").then(({ deleteKeyFromFirebase }) => {
+          deleteKeyFromFirebase(key);
+        });
       },
 
       extendExpiry: (key, days) => {
+        let newExpiry: number | null = null;
         set((s) => ({
           keys: s.keys.map((k) => {
             if (k.key !== key) return k;
             const base = k.expiresAt || Date.now();
-            return { ...k, expiresAt: base + days * 86400000, status: "active" };
+            newExpiry = base + days * 86400000;
+            return { ...k, expiresAt: newExpiry, status: "active" };
           }),
         }));
         get().addLog("admin_action", `Extended ${key} by ${days} days`);
+        // Write to Firebase IMMEDIATELY
+        if (newExpiry !== null) {
+          import("./admin-firebase-sync").then(({ updateKeyInFirebase }) => {
+            updateKeyInFirebase(key, { expiresAt: newExpiry, status: "active" });
+          });
+        }
       },
 
       resetDevice: (key) => {
@@ -409,28 +580,36 @@ export const useAdmin = create<AdminState>()(
           keys: s.keys.map((k) => (k.key === key ? { ...k, deviceIds: [] } : k)),
         }));
         get().addLog("admin_action", `Reset device binding for key: ${key}`);
+        // Write to Firebase IMMEDIATELY
+        import("./admin-firebase-sync").then(({ updateKeyInFirebase }) => {
+          updateKeyInFirebase(key, { deviceIds: [] });
+        });
       },
 
       validateAllKeys: () => {
         const now = Date.now();
         const day = 86400000;
         let fixedCount = 0;
+        const modifiedKeys: LicenseKey[] = [];
 
         set((s) => ({
           keys: s.keys.map((k) => {
             // Use a widened type so TS doesn't narrow prematurely
             let status: KeyStatus = k.status;
             let expiresAt: number | null = k.expiresAt;
+            let changed = false;
 
             // Re-activate expired keys
             if (status === "expired") {
               status = "active";
               fixedCount++;
+              changed = true;
             }
             // Re-activate suspended keys (admin's "Validate All" = force re-activate)
             if (status === "suspended") {
               status = "active";
               fixedCount++;
+              changed = true;
             }
             // Extend past expiry dates
             if (expiresAt !== null && expiresAt !== undefined && expiresAt < now) {
@@ -441,11 +620,24 @@ export const useAdmin = create<AdminState>()(
               else expiresAt = now + 30 * day;
               // status was already re-activated above if it was "expired"
               fixedCount++;
+              changed = true;
             }
 
-            return { ...k, status, expiresAt };
+            const updated = { ...k, status, expiresAt };
+            if (changed) modifiedKeys.push(updated);
+            return updated;
           }),
         }));
+
+        // Sync ALL modified keys back to Firebase (so all admin panels see the fix).
+        // Use bulk write to avoid rate limit; process in chunks of 50.
+        if (modifiedKeys.length > 0) {
+          import("./admin-firebase-sync").then(({ bulkWriteKeysToFirebase }) => {
+            bulkWriteKeysToFirebase(modifiedKeys).then((res) => {
+              console.log(`[Firebase] Validate All — synced ${res.synced}/${modifiedKeys.length} modified keys`);
+            });
+          });
+        }
 
         get().addLog("admin_action", `Validated all keys — ${fixedCount} keys fixed`);
         return fixedCount;
@@ -574,20 +766,47 @@ export const useAdmin = create<AdminState>()(
         console.log("[License Verify] Device check passed. Bound devices:", k.deviceIds.length, "| This device already bound:", k.deviceIds.includes(deviceId));
 
         // Step 7: All checks passed — bind device and update status
+        let verifiedKey: LicenseKey | null = null;
         if (!k.deviceIds.includes(deviceId)) {
           set((s) => ({
-            keys: s.keys.map((x) =>
-              x.key === k.key ? { ...x, deviceIds: [...x.deviceIds, deviceId], lastVerified: Date.now(), verifications: x.verifications + 1, status: "used" as KeyStatus } : x
-            ),
+            keys: s.keys.map((x) => {
+              if (x.key !== k.key) return x;
+              verifiedKey = {
+                ...x,
+                deviceIds: [...x.deviceIds, deviceId],
+                lastVerified: Date.now(),
+                verifications: x.verifications + 1,
+                status: "used" as KeyStatus,
+              };
+              return verifiedKey;
+            }),
           }));
           console.log("[License Verify] Device bound successfully. New device count:", k.deviceIds.length + 1);
         } else {
           set((s) => ({
-            keys: s.keys.map((x) =>
-              x.key === k.key ? { ...x, lastVerified: Date.now(), verifications: x.verifications + 1 } : x
-            ),
+            keys: s.keys.map((x) => {
+              if (x.key !== k.key) return x;
+              verifiedKey = {
+                ...x,
+                lastVerified: Date.now(),
+                verifications: x.verifications + 1,
+              };
+              return verifiedKey;
+            }),
           }));
           console.log("[License Verify] Device already bound. Verification count:", k.verifications + 1);
+        }
+
+        // Sync verification back to Firebase so all admin panels stay in sync.
+        if (verifiedKey) {
+          import("./admin-firebase-sync").then(({ updateKeyInFirebase }) => {
+            updateKeyInFirebase(verifiedKey!.key, {
+              deviceIds: verifiedKey!.deviceIds,
+              lastVerified: verifiedKey!.lastVerified,
+              verifications: verifiedKey!.verifications,
+              status: verifiedKey!.status,
+            });
+          });
         }
 
         get().addLog("key_verification", `Key ${cleanKey} verified on ${deviceId} | Type: ${k.type} | Status: ${k.status}`);
@@ -598,14 +817,24 @@ export const useAdmin = create<AdminState>()(
       },
 
       unbindDevice: (deviceId) => {
+        const affectedKeys: string[] = [];
         set((s) => ({
           devices: s.devices.filter((d) => d.deviceId !== deviceId),
-          keys: s.keys.map((k) => ({
-            ...k,
-            deviceIds: k.deviceIds.filter((id) => id !== deviceId),
-          })),
+          keys: s.keys.map((k) => {
+            if (k.deviceIds.includes(deviceId)) {
+              affectedKeys.push(k.key);
+              return { ...k, deviceIds: k.deviceIds.filter((id) => id !== deviceId) };
+            }
+            return k;
+          }),
         }));
         get().addLog("admin_action", `Unbound device: ${deviceId}`);
+        // Sync affected keys + delete device doc to Firebase
+        import("./admin-firebase-sync").then(({ updateKeyInFirebase }) => {
+          for (const keyStr of affectedKeys) {
+            updateKeyInFirebase(keyStr, { deviceIds: get().keys.find((k) => k.key === keyStr)?.deviceIds || [] });
+          }
+        });
       },
 
       forceLogout: (deviceId) => {
@@ -615,6 +844,13 @@ export const useAdmin = create<AdminState>()(
           ),
         }));
         get().addLog("admin_action", `Force logout: ${deviceId}`);
+        // Sync device to Firebase
+        const device = get().devices.find((d) => d.deviceId === deviceId);
+        if (device) {
+          import("./admin-firebase-sync").then(({ writeDeviceToFirebase }) => {
+            writeDeviceToFirebase(device);
+          });
+        }
       },
 
       banDevice: (deviceId) => {
@@ -624,6 +860,13 @@ export const useAdmin = create<AdminState>()(
           ),
         }));
         get().addLog("admin_action", `Banned device: ${deviceId}`);
+        // Sync to Firebase
+        const device = get().devices.find((d) => d.deviceId === deviceId);
+        if (device) {
+          import("./admin-firebase-sync").then(({ writeDeviceToFirebase }) => {
+            writeDeviceToFirebase(device);
+          });
+        }
       },
 
       allowDevice: (deviceId) => {
@@ -633,6 +876,13 @@ export const useAdmin = create<AdminState>()(
           ),
         }));
         get().addLog("admin_action", `Allowed device: ${deviceId}`);
+        // Sync to Firebase
+        const device = get().devices.find((d) => d.deviceId === deviceId);
+        if (device) {
+          import("./admin-firebase-sync").then(({ writeDeviceToFirebase }) => {
+            writeDeviceToFirebase(device);
+          });
+        }
       },
 
       banUser: (id) => {
@@ -640,6 +890,13 @@ export const useAdmin = create<AdminState>()(
           users: s.users.map((u) => (u.id === id ? { ...u, banned: true } : u)),
         }));
         get().addLog("admin_action", `Banned user: ${id}`);
+        // Sync to Firebase
+        const user = get().users.find((u) => u.id === id);
+        if (user) {
+          import("./admin-firebase-sync").then(({ writeUserToFirebase }) => {
+            writeUserToFirebase(user);
+          });
+        }
       },
 
       unbanUser: (id) => {
@@ -647,11 +904,27 @@ export const useAdmin = create<AdminState>()(
           users: s.users.map((u) => (u.id === id ? { ...u, banned: false } : u)),
         }));
         get().addLog("admin_action", `Unbanned user: ${id}`);
+        // Sync to Firebase
+        const user = get().users.find((u) => u.id === id);
+        if (user) {
+          import("./admin-firebase-sync").then(({ writeUserToFirebase }) => {
+            writeUserToFirebase(user);
+          });
+        }
       },
 
       deleteUser: (id) => {
         set((s) => ({ users: s.users.filter((u) => u.id !== id) }));
         get().addLog("admin_action", `Deleted user: ${id}`);
+        // Delete from Firebase
+        import("./firebase").then(({ db }) => {
+          if (!db) return;
+          import("firebase/firestore").then(({ doc, deleteDoc }) => {
+            deleteDoc(doc(db as any, "users", id)).catch((err: unknown) =>
+              console.error("[Firebase] deleteUser failed:", err)
+            );
+          });
+        });
       },
 
       resetUserLicense: (id) => {
@@ -659,11 +932,22 @@ export const useAdmin = create<AdminState>()(
           users: s.users.map((u) => (u.id === id ? { ...u, license: undefined } : u)),
         }));
         get().addLog("admin_action", `Reset license for user: ${id}`);
+        // Sync to Firebase
+        const user = get().users.find((u) => u.id === id);
+        if (user) {
+          import("./admin-firebase-sync").then(({ writeUserToFirebase }) => {
+            writeUserToFirebase(user);
+          });
+        }
       },
 
       updateSettings: (partial) => {
         set((s) => ({ settings: { ...s.settings, ...partial } }));
         get().addLog("admin_action", "Settings updated");
+        // Persist to Firebase (admin_config/settings doc)
+        import("./admin-firebase-sync").then(({ writeSettingsToFirebase }) => {
+          writeSettingsToFirebase(get().settings);
+        });
       },
 
       toggleFeature: (feature) => {
@@ -677,6 +961,10 @@ export const useAdmin = create<AdminState>()(
           },
         }));
         get().addLog("admin_action", `Toggled feature: ${feature}`);
+        // Persist updated settings to Firebase
+        import("./admin-firebase-sync").then(({ writeSettingsToFirebase }) => {
+          writeSettingsToFirebase(get().settings);
+        });
       },
 
       sendAnnouncement: (title, message, target) => {
@@ -701,10 +989,19 @@ export const useAdmin = create<AdminState>()(
           details,
         };
         set((s) => ({ logs: [log, ...s.logs].slice(0, 500) }));
+        // Write log to Firebase (admin_logs collection) — only for admin actions
+        // and key verifications (skip noise like every team_generation).
+        if (type === "admin_action" || type === "key_verification" || type === "error") {
+          import("./admin-firebase-sync").then(({ writeLogToFirebase }) => {
+            writeLogToFirebase(log);
+          });
+        }
       },
 
       clearLogs: () => {
         set({ logs: [] });
+        // Note: We do NOT delete admin_logs collection from Firebase — logs are
+        // append-only audit history. Clearing locally just hides them from view.
       },
 
       getStats: () => {
@@ -722,219 +1019,39 @@ export const useAdmin = create<AdminState>()(
           teamsGeneratedToday: logs.filter((l) => l.type === "team_generation" && l.timestamp >= todayStart).length,
         };
       },
-    }),
-    {
-      name: "apna-cricket-admin",
-      storage: createJSONStorage(() => localStorage),
-      version: 7,
-      // Migrate persisted state from any older version to current shape.
-      // CRITICAL: always preserve persisted keys (never wipe them — the user requires
-      // the 500+ ready-to-use keys to survive every reload and every version bump).
-      migrate: (persisted, _fromVersion) => {
-        const p = (persisted as Partial<AdminState> | undefined) || {};
-
-        // SANITIZE all persisted keys — make sure every key is VALID:
-        //   - status "expired" → "active" (re-activate, since we don't want auto-expiry to block)
-        //   - status "suspended" → keep as-is (admin must explicitly re-activate)
-        //   - expiresAt in the past → extend to future based on type
-        //   - status "used" → keep "used" (still valid)
-        const now = Date.now();
-        const day = 86400000;
-        const sanitizedKeys: LicenseKey[] = Array.isArray(p.keys)
-          ? p.keys.map((k) => {
-              if (!k) return k;
-              // Use widened types so TS doesn't narrow prematurely
-              let status: KeyStatus = k.status;
-              let expiresAt: number | null = k.expiresAt;
-              // Re-activate expired keys (auto-expiry is annoying — admin should control this)
-              if (status === "expired") status = "active";
-              if (expiresAt !== null && expiresAt !== undefined && expiresAt < now) {
-                // Extend based on type
-                if (k.type === "trial") expiresAt = now + 1 * day;
-                else if (k.type === "weekly") expiresAt = now + 7 * day;
-                else if (k.type === "monthly") expiresAt = now + 30 * day;
-                else if (k.type === "lifetime") expiresAt = null;
-                else expiresAt = now + 30 * day;
-                // status was already re-activated above if it was "expired"
-              }
-              return { ...k, status, expiresAt };
-            })
-          : [];
-
-        return {
-          ...p,
-          // Ensure settings has the full shape (in case new fields were added)
-          settings: {
-            ...DEFAULT_SETTINGS,
-            ...(p.settings || {}),
-            // Always keep the latest admin password from defaults unless admin changed it
-            adminPassword: p.settings?.adminPassword || DEFAULT_SETTINGS.adminPassword,
-          },
-          // Sanitized keys (all valid)
-          keys: sanitizedKeys,
-          devices: Array.isArray(p.devices) ? p.devices : [],
-          users: Array.isArray(p.users) ? p.users : [],
-          logs: Array.isArray(p.logs) ? p.logs : [],
-          announcements: Array.isArray(p.announcements) ? p.announcements : [],
-          // Reset auth on every version bump — admin must re-login
-          isAdminAuthenticated: false,
-          adminUsername: null,
-        };
-      },
-      merge: (persisted, current) => {
-        const p = persisted as Partial<AdminState> | undefined;
-        // If no persisted data OR keys array is empty/missing → use fresh seed (500+ keys)
-        if (!p || !Array.isArray(p.keys) || p.keys.length === 0) {
-          return {
-            ...current,
-            settings: { ...current.settings, adminPassword: current.settings.adminPassword },
-          };
-        }
-        // Persisted keys exist — KEEP THEM ALL (no auto-remove).
-        // Merge top-level persisted fields, but always preserve the full keys array.
-        return {
-          ...current,
-          ...p,
-          keys: p.keys, // ⚠️ Never wipe — preserve all 500+ keys
-          settings: {
-            ...current.settings,
-            ...(p.settings || {}),
-            adminPassword: current.settings.adminPassword,
-          },
-        };
-      },
-      partialize: (s) => ({
-        keys: s.keys,
-        devices: s.devices,
-        users: s.users,
-        logs: s.logs,
-        announcements: s.announcements,
-        settings: s.settings,
-        isAdminAuthenticated: s.isAdminAuthenticated,
-        adminUsername: s.adminUsername,
-      }),
-    }
-  )
+    })
 );
 
-// Force-save the initial seed data to localStorage on first load.
-// Zustand persist doesn't save until a state mutation happens, so we
-// trigger a no-op mutation to force the initial state (with seed keys) to persist.
-//
-// Also: ensure we ALWAYS have 500+ VALID keys.
-//  - If 0 keys: re-seed ALL initial data (500+ keys + demo data)
-//  - If < 500 keys: top up with fresh active keys
-//  - If 500+ keys: validate them all (fix any expired/suspended keys)
-//
-// This satisfies the user's requirement:
-//   "Dashboard should automatically contain 500+ ready-to-use keys. No auto remove."
-//   "You added 500 licence key invalid make the all key valid"
+/* ----------------------------------------------------------------- *
+ * AUTO-SYNC ON APP LOAD
+ * ----------------------------------------------------------------- *
+ * Firebase is the SINGLE SOURCE OF TRUTH. On first window load:
+ *   1. syncFromFirebase()  — fetch all keys/devices/users/logs/settings
+ *                            from Firestore and populate the in-memory
+ *                            store. If Firebase is empty, seed the
+ *                            500+ initial keys UP to Firebase.
+ *   2. subscribeToFirebase() — attach real-time onSnapshot listeners so
+ *                            that any change made on ANY admin device
+ *                            immediately propagates here.
+ *
+ * NO localStorage is used for admin data. The in-memory store acts as a
+ * short-lived cache populated from Firebase. The user-facing license
+ * state (LICENSE_STORAGE_KEY) is NOT admin data and stays in localStorage.
+ * ----------------------------------------------------------------- */
 if (typeof window !== "undefined") {
+  // Run on the next tick so the store is fully initialized first.
   setTimeout(() => {
-    const state = useAdmin.getState();
-    const currentKeys = state.keys || [];
-
-    if (currentKeys.length === 0) {
-      // Keys were wiped — re-seed ALL initial data (500+ keys + demo data)
-      useAdmin.setState({
-        keys: initial.keys,
-        devices: initial.devices,
-        users: initial.users,
-        logs: initial.logs,
-      });
-      console.log("[Admin Store] Re-seeded full initial data (keys:", initial.keys.length, ")");
-    } else if (currentKeys.length < 500) {
-      // Top up to 500+ keys (preserve existing keys, append fresh ones)
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-      const types: KeyType[] = ["trial", "weekly", "monthly", "monthly", "monthly", "elite", "lifetime"];
-      const now = Date.now();
-      const day = 86400000;
-      const needed = 500 - currentKeys.length;
-      const existingKeySet = new Set(currentKeys.map((k) => k.key));
-      const newKeys: LicenseKey[] = [];
-
-      for (let i = 0; i < needed; i++) {
-        let seg1 = "", seg2 = "", seg3 = "";
-        for (let j = 0; j < 4; j++) {
-          seg1 += chars[Math.floor(Math.random() * chars.length)];
-          seg2 += chars[Math.floor(Math.random() * chars.length)];
-          seg3 += chars[Math.floor(Math.random() * chars.length)];
-        }
-        const newKey = `CRICB-${seg1}-${seg2}-${seg3}`;
-        if (existingKeySet.has(newKey)) { i--; continue; } // dedupe
-        const type = types[i % types.length];
-        newKeys.push({
-          key: newKey,
-          type,
-          status: "active",
-          createdAt: now - Math.floor(Math.random() * 30) * day,
-          expiresAt: getExpiryForType(type),
-          deviceIds: [],
-          verifications: 0,
-        });
-      }
-      useAdmin.setState({ keys: [...newKeys, ...currentKeys] });
-      console.log("[Admin Store] Topped up keys by", newKeys.length, "→ total now:", currentKeys.length + newKeys.length);
-    } else {
-      // 500+ keys already present — validate them all to fix any expired/suspended keys
-      const fixedCount = useAdmin.getState().validateAllKeys();
-      if (fixedCount > 0) {
-        console.log("[Admin Store] Validated", currentKeys.length, "keys — fixed", fixedCount, "invalid key(s)");
+    // 1. One-shot sync — populate from Firebase
+    useAdmin.getState().syncFromFirebase().then((ok) => {
+      if (ok) {
+        console.log("[Admin Store] Initial sync from Firebase complete");
       } else {
-        // No fixes needed — just touch state to force persist save
-        useAdmin.setState({ ...useAdmin.getState() });
-        console.log("[Admin Store] All", currentKeys.length, "keys already valid — no fixes needed");
-      }
-    }
-
-    // === FIREBASE SYNC — CRITICAL for multi-device consistency ===
-    // Fetch all keys from Firebase and merge with local keys.
-    // This ensures all admin panels (different browsers/APKs) show the SAME keys.
-    // Local-only keys (generated offline) are synced UP to Firebase.
-    // Firebase-only keys (generated on other devices) are synced DOWN to local.
-    import("./firebase-license").then(async ({ fetchAllKeysFromFirestore, syncKeyToFirestore, initFirebase, bulkSyncKeysToFirestore }) => {
-      try {
-        initFirebase();
-        const firebaseKeys = await fetchAllKeysFromFirestore();
-        if (firebaseKeys.length === 0) {
-          console.log("[Admin Store][Firebase Sync] No keys in Firebase — syncing local keys UP");
-          const localKeys = useAdmin.getState().keys;
-          await bulkSyncKeysToFirestore(localKeys);
-          console.log("[Admin Store][Firebase Sync] Synced", localKeys.length, "local keys to Firebase");
-          return;
-        }
-
-        // Merge: Firebase keys + local-only keys (not in Firebase)
-        const localKeys = useAdmin.getState().keys;
-        const firebaseKeySet = new Set(firebaseKeys.map((k) => k.key));
-        const localOnlyKeys = localKeys.filter((k) => !firebaseKeySet.has(k.key));
-
-        // Sync local-only keys UP to Firebase
-        if (localOnlyKeys.length > 0) {
-          console.log("[Admin Store][Firebase Sync] Syncing", localOnlyKeys.length, "local-only keys UP to Firebase");
-          for (const k of localOnlyKeys.slice(0, 50)) { // limit to 50 to avoid rate limit
-            await syncKeyToFirestore(k);
-          }
-        }
-
-        // Merge Firebase keys DOWN to local (preserve local if conflicts — local is newer)
-        const localKeyMap = new Map(localKeys.map((k) => [k.key, k]));
-        const mergedKeys = [
-          ...localKeys, // local keys first (preserve order)
-          ...firebaseKeys.filter((fk) => !localKeyMap.has(fk.key)), // add Firebase-only keys
-        ];
-
-        useAdmin.setState({ keys: mergedKeys });
-        console.log(
-          "[Admin Store][Firebase Sync] Merged:",
-          localKeys.length, "local +",
-          firebaseKeys.filter((fk) => !localKeyMap.has(fk.key)).length, "from Firebase =",
-          mergedKeys.length, "total"
-        );
-      } catch (err) {
-        console.warn("[Admin Store][Firebase Sync] Failed (offline?):", err);
+        console.warn("[Admin Store] Initial sync from Firebase failed — using in-memory seed");
       }
     });
+
+    // 2. Real-time listeners — keep in-memory state in sync with Firebase
+    useAdmin.getState().subscribeToFirebase();
   }, 100);
 }
 

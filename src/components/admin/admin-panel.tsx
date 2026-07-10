@@ -57,6 +57,18 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
   const admin = useAdmin();
   const [tab, setTab] = useState<Tab>("dashboard");
 
+  // Whenever the admin panel is opened (and after login), refresh ALL data
+  // from Firebase so the admin sees the latest state from the single source
+  // of truth. Also ensure real-time onSnapshot listeners are attached.
+  useEffect(() => {
+    if (!open) return;
+    if (!admin.isAdminAuthenticated) return;
+    // Refresh from Firebase on every open
+    admin.syncFromFirebase();
+    // Attach real-time listeners (idempotent — no-op if already subscribed)
+    admin.subscribeToFirebase();
+  }, [open, admin.isAdminAuthenticated]);
+
   // Login gate
   if (!admin.isAdminAuthenticated) {
     return <AdminLoginModal open={open} onClose={onClose} />;
@@ -299,62 +311,42 @@ function DashboardTab() {
   const devices = useAdmin((s) => s.devices);
   const users = useAdmin((s) => s.users);
   const logs = useAdmin((s) => s.logs);
+  const isSyncing = useAdmin((s) => s.isSyncing);
+  const lastSyncedAt = useAdmin((s) => s.lastSyncedAt);
+  const syncFromFirebase = useAdmin((s) => s.syncFromFirebase);
+  const subscribeToFirebase = useAdmin((s) => s.subscribeToFirebase);
+  const isSubscribed = useAdmin((s) => s.isSubscribed);
   const [syncing, setSyncing] = useState(false);
 
-  // Sync keys from Firebase — ensures all admin panels show SAME keys
-  async function syncFromFirebase() {
+  // Sync keys from Firebase — ensures all admin panels show SAME keys.
+  // Delegates to the store's syncFromFirebase which fetches ALL admin data
+  // (keys, devices, users, logs, settings) from the single source of truth.
+  async function handleSync() {
     setSyncing(true);
     try {
-      const { db } = await import("@/lib/firebase");
-      if (!db) {
-        toast.error("Firebase not configured");
-        return;
+      const ok = await syncFromFirebase();
+      // Re-subscribe (idempotent — no-op if already listening)
+      subscribeToFirebase();
+      if (ok) {
+        const total = useAdmin.getState().keys.length;
+        toast.success(`✓ Synced from Firebase — ${total} keys total`);
+      } else {
+        toast.error("Sync failed — Firebase may be offline");
       }
-      const { collection, getDocs } = await import("firebase/firestore");
-      const { syncKeyToFirestore, bulkSyncKeysToFirestore } = await import("@/lib/firebase-license");
-
-      // 1. Fetch all keys from Firebase
-      const snap = await getDocs(collection(db, "license_keys"));
-      const firebaseKeys: any[] = [];
-      snap.forEach((docSnap) => {
-        firebaseKeys.push({ key: docSnap.id, ...docSnap.data() });
-      });
-
-      // 2. Get local keys
-      const localKeys = useAdmin.getState().keys;
-      const firebaseKeySet = new Set(firebaseKeys.map((k: any) => k.key));
-
-      // 3. Sync local-only keys UP to Firebase
-      const localOnlyKeys = localKeys.filter((k) => !firebaseKeySet.has(k.key));
-      if (localOnlyKeys.length > 0) {
-        await bulkSyncKeysToFirestore(localOnlyKeys);
-      }
-
-      // 4. Merge Firebase keys DOWN to local
-      const localKeyMap = new Map(localKeys.map((k) => [k.key, k]));
-      const mergedKeys = [
-        ...localKeys,
-        ...firebaseKeys.filter((fk) => !localKeyMap.has(fk.key)).map((fk) => ({
-          key: fk.key,
-          type: fk.type || "trial",
-          status: fk.status || "active",
-          createdAt: fk.createdAt || Date.now(),
-          expiresAt: fk.expiresAt || null,
-          deviceIds: fk.deviceIds || [],
-          verifications: fk.verifications || 0,
-          userName: fk.userName || fk.mobile || "",
-          mobile: fk.mobile || "",
-        })),
-      ];
-
-      useAdmin.setState({ keys: mergedKeys });
-      toast.success(`✓ Synced: ${localKeys.length} local + ${firebaseKeys.length} Firebase = ${mergedKeys.length} total`);
     } catch (err: any) {
       toast.error(err?.message || "Sync failed");
     } finally {
       setSyncing(false);
     }
   }
+
+  const lastSyncedLabel = (() => {
+    if (!lastSyncedAt) return "Never";
+    const diff = Date.now() - lastSyncedAt;
+    if (diff < 60_000) return "just now";
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+    return new Date(lastSyncedAt).toLocaleTimeString();
+  })();
 
   const stats = (() => {
     const now = Date.now();
@@ -388,15 +380,21 @@ function DashboardTab() {
         <Button
           size="sm"
           className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs"
-          onClick={syncFromFirebase}
-          disabled={syncing}
+          onClick={handleSync}
+          disabled={syncing || isSyncing}
         >
-          {syncing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+          {syncing || isSyncing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
           Sync from Firebase
         </Button>
       </div>
-      <div className="bg-emerald-900/20 border border-emerald-800/50 rounded-lg p-2 text-[10px] text-emerald-300">
-        ✓ All admin panels now sync from Firebase — keys, plans, and data are the SAME across all devices/APKs
+      <div className="bg-emerald-900/20 border border-emerald-800/50 rounded-lg p-2 text-[10px] text-emerald-300 flex items-center justify-between flex-wrap gap-1">
+        <span className="flex items-center gap-1.5">
+          <span className={cn("w-1.5 h-1.5 rounded-full", isSubscribed ? "bg-emerald-400 animate-pulse" : "bg-emerald-600")} />
+          ✓ Synced from Firebase — keys, plans, and data are the SAME across all devices/APKs
+        </span>
+        <span className="text-emerald-400/80">
+          {isSubscribed ? "● Live" : "○ Offline"} · Last sync: {lastSyncedLabel}
+        </span>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {cards.map((c) => {
