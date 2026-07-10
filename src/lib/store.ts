@@ -70,7 +70,8 @@ export type AppView =
   | "cricket-live"
   | "contest-tracker"
   | "player-form"
-  | "whatsapp-share";
+  | "whatsapp-share"
+  | "ocr-generator";
 
 interface AppState {
   view: AppView;

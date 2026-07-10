@@ -10,6 +10,7 @@ import { MatchDetailScreen } from "@/components/match/match-detail-screen";
 import { MyMatchesScreen } from "@/components/pages/my-matches-screen";
 import { ResearchScreen } from "@/components/pages/research-screen";
 import { CricketLivePage } from "@/components/pages/cricket-live-page";
+import { OCRGenerator } from "@/components/pages/ocr-generator-screen";
 import { ContestTracker } from "@/components/contest-tracker";
 import { PlayerFormDashboard } from "@/components/player-form-dashboard";
 import { WhatsAppShareButton } from "@/components/whatsapp-share-button";
@@ -101,6 +102,7 @@ export default function Home() {
             {view === "my-matches" && <MyMatchesScreen />}
             {view === "research" && <ResearchScreen />}
             {view === "cricket-live" && <CricketLivePage onClose={() => setView("home")} />}
+            {view === "ocr-generator" && <OCRGenerator />}
             {view === "contest-tracker" && <ContestTracker onClose={() => setView("profile")} />}
             {view === "player-form" && <PlayerFormDashboard onClose={() => setView("research")} />}
             {view === "whatsapp-share" && <WhatsAppShareButton onClose={() => setView("home")} />}
