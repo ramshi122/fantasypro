@@ -202,7 +202,7 @@ export function BulkTransferModal({
           }));
         }
       } else {
-        // Linked account transfer — Step 1: Verify auth token first
+        // Linked account transfer
         const account = getLinkedAccount(selectedApp);
         if (!account) {
           toast.error(`${APP_LABELS[selectedApp]?.label} account not linked`);
@@ -211,41 +211,12 @@ export function BulkTransferModal({
           return;
         }
 
-        // Step 1: Verify auth token via /api/fantasy/auth/verify
+        // SKIP pre-verify — it gives false "session expired" errors
+        // The /api/transfer proxy will detect token expiry REACTIVELY during transfer
+        // and return needsReauth. This matches original APK behavior.
         setProgress({ done: 0, total: items.length });
-        try {
-          const verifyRes = await verifyFantasyAuth({
-            fantasyApp: selectedApp,
-            authToken: account.token,
-            matchId: matchNumericId,
-          });
-          if (!verifyRes.validToken) {
-            // Token is invalid/expired — stop and prompt relink
-            toast.error("Your session expired. Relink via OTP to continue.");
-            setResult({
-              totalAttempted: items.length,
-              successCount: 0,
-              failCount: items.length,
-              results: items.map((it) => ({ teamNo: it.teamNo, success: false, message: "Auth token expired — relink via OTP" })),
-              transferLinks: items.map((it) => ({ teamNo: it.teamNo })),
-            });
-            setPhase("done");
-            return;
-          }
-          // If backend returned a new token, update it
-          if (verifyRes.updateUiToken && verifyRes.authToken) {
-            saveFantasyToken(selectedApp, verifyRes.authToken, {
-              mobile: account.mobile || undefined,
-              my11circleChallenge: account.my11circleChallenge || undefined,
-              my11circleUserId: account.my11circleUserId || undefined,
-            });
-            account.token = verifyRes.authToken;
-          }
-        } catch {
-          // If verify fails (network), continue anyway — the add-team call will also fail if token is bad
-        }
 
-        // Step 2 (replace mode): Fetch existing teams via /api/fantasy/list-of-teams
+        // Step 1 (replace mode): Fetch existing teams via /api/fantasy/list-of-teams
         let existingIds: string[] | undefined;
         if (replaceExisting) {
           try {
@@ -274,6 +245,7 @@ export function BulkTransferModal({
             mobileNumber: account.mobile || undefined,
             replaceMode: replaceExisting,
             existingTeamIds: existingIds,
+            skipVerify: true, // SKIP pre-verify — matches original APK
           },
           (done, total) => setProgress({ done, total })
         );
