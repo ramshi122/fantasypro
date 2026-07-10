@@ -741,38 +741,27 @@ export function generateEliteTeams(
       }
 
       if (cfg.strategy === "safe") {
-        // Safe: pick from top half of shuffled pool (high EFV)
-        const topHalf = shuffled.slice(0, Math.max(need, Math.ceil(shuffled.length / 2)));
-        topHalf.sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
-        team.push(...topHalf.slice(0, need));
+        // Safe: pick from shuffled pool — NO EFV sort (that cancels the shuffle!)
+        team.push(...shuffled.slice(0, need));
       } else if (cfg.strategy === "balanced") {
-        // Balanced: 50% top EFV + 50% from shuffled mid pool
+        // Balanced: 50% from shuffled top + 50% from shuffled mid
         const topCount = Math.ceil(need * 0.5);
         const midCount = need - topCount;
-        const topByEFV = [...poolForRole].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)).slice(0, topCount);
-        const midPool = shuffled.filter((p) => !topByEFV.find((t) => playerId(t) === playerId(p)));
-        team.push(...topByEFV, ...midPool.slice(0, midCount));
+        team.push(...shuffled.slice(0, topCount), ...shuffled.slice(topCount, topCount + midCount));
       } else if (cfg.strategy === "differential") {
-        // Differential: 30% top EFV + 70% from shuffled low-sel pool
+        // Differential: 30% from shuffled top + 70% from shuffled low-sel
         const topCount = Math.ceil(need * 0.3);
         const diffCountNeed = need - topCount;
-        const topByEFV = [...poolForRole].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)).slice(0, topCount);
-        const lowSelPool = [...shuffled].sort((a, b) => selPct(a) - selPct(b));
-        const diff = lowSelPool.filter((p) => !topByEFV.find((t) => playerId(t) === playerId(p))).slice(0, diffCountNeed);
-        team.push(...topByEFV, ...diff);
+        const top = shuffled.slice(0, topCount);
+        const lowSelPool = shuffled.slice(topCount).sort((a, b) => selPct(a) - selPct(b));
+        team.push(...top, ...lowSelPool.slice(0, diffCountNeed));
       } else {
-        // grand-league: 30% top + 70% contrarian (rotated)
+        // grand-league: 30% from shuffled top + 70% from shuffled low-sel (contrarian)
         const topCount = Math.ceil(need * 0.3);
         const contraCount = need - topCount;
-        const startTop = rotationOffset % Math.max(1, poolForRole.length - topCount);
-        team.push(...poolForRole.slice(startTop, startTop + topCount));
-        if (team.length < topCount) team.push(...poolForRole.slice(0, topCount - team.length));
-        const contraPool = poolForRole.slice().reverse().slice(0, contraCount * 3);
-        for (let j = 0; j < contraCount && contraPool.length > 0; j++) {
-          const idx = Math.floor(rng() * contraPool.length);
-          team.push(contraPool[idx]);
-          contraPool.splice(idx, 1);
-        }
+        const top = shuffled.slice(0, topCount);
+        const contraPool = shuffled.slice(topCount).sort((a, b) => selPct(a) - selPct(b));
+        team.push(...top, ...contraPool.slice(0, contraCount));
       }
     }
 

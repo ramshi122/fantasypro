@@ -254,31 +254,28 @@ function buildStrategicTeam(
     }
 
     if (type === "safe") {
-      // Safe: pick from top half of shuffled pool (high EFV players)
-      const topHalf = shuffled.slice(0, Math.max(need, Math.ceil(shuffled.length / 2)));
-      // Sort top half by EFV to keep safe picks high quality
-      topHalf.sort((a, b) => b.efv - a.efv);
-      chosen = topHalf.slice(0, need);
+      // Safe: pick from shuffled pool — NO EFV sort (that cancels the shuffle!)
+      // Just take first N from shuffled (already randomized)
+      chosen = shuffled.slice(0, need);
     } else if (type === "balanced") {
-      // Balanced: 60% top EFV + 40% from shuffled mid pool
-      const topCount = Math.ceil(need * 0.6);
+      // Balanced: 50% from shuffled top + 50% from shuffled mid
+      const topCount = Math.ceil(need * 0.5);
       const midCount = need - topCount;
-      // Top players by EFV (consistent)
-      const topByEFV = [...pool].sort((a, b) => b.efv - a.efv).slice(0, topCount);
-      // Mid players from shuffled (varied)
-      const midPool = shuffled.filter((p) => !topByEFV.includes(p));
-      const mid = midPool.slice(0, midCount);
-      chosen = [...topByEFV, ...mid];
+      // Top half of shuffled (varied per team)
+      const top = shuffled.slice(0, topCount);
+      // Mid from rest of shuffled
+      const mid = shuffled.slice(topCount, topCount + midCount);
+      chosen = [...top, ...mid];
     } else {
-      // differential: 30% top EFV + 70% from shuffled low-sel pool
+      // differential: 30% from shuffled top + 70% from shuffled low-sel
       const topCount = Math.ceil(need * 0.3);
       const diffCount = need - topCount;
-      // Top players by EFV
-      const topByEFV = [...pool].sort((a, b) => b.efv - a.efv).slice(0, topCount);
-      // Low-sel players from shuffled (varied) — bottom half by sel%
-      const lowSelPool = [...shuffled].sort((a, b) => a.selNum - b.selNum);
-      const diff = lowSelPool.filter((p) => !topByEFV.includes(p)).slice(0, diffCount);
-      chosen = [...topByEFV, ...diff];
+      // Top from shuffled
+      const top = shuffled.slice(0, topCount);
+      // Low-sel from shuffled (sorted by sel% ascending for differential picks)
+      const lowSelPool = shuffled.slice(topCount).sort((a, b) => a.selNum - b.selNum);
+      const diff = lowSelPool.slice(0, diffCount);
+      chosen = [...top, ...diff];
     }
 
     // Deduplicate within role
