@@ -305,18 +305,23 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
       all[key] = newTeams;
       localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(all));
 
-      console.log(`[handleBulkAddTeams] Wiped ${oldCount} old teams. Saved ${newTeams.length} new teams.`);
+      // VERIFY save worked
+      const verifyData = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}");
+      const verifyTeams = verifyData[key] || [];
+      console.log(`[handleBulkAddTeams] Wiped ${oldCount} old. Saved ${newTeams.length}. Verified: ${verifyTeams.length} in localStorage.`);
 
       // IMMEDIATELY update the state (don't wait for refreshKey)
-      setExistingTeams(newTeams);
+      setExistingTeams([...newTeams]);
 
-      // Also trigger refresh to reload from localStorage
-      setRefreshKey((k) => k + 1);
+      // Force a complete reload after a short delay to ensure UI updates
+      setTimeout(() => {
+        setRefreshKey((k) => k + 1);
+      }, 100);
 
       if (oldCount > 0) {
-        toast.success(`Wiped ${oldCount} old teams. Generated ${newTeams.length} new teams!`);
+        toast.success(`✓ Wiped ${oldCount} old teams. Generated ${newTeams.length} new teams!`);
       } else {
-        toast.success(`Generated ${newTeams.length} new teams!`);
+        toast.success(`✓ Generated ${newTeams.length} new teams!`);
       }
     } catch (err) {
       console.error("[handleBulkAddTeams] Save error:", err);
