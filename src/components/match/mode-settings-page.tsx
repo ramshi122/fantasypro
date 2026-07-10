@@ -36,12 +36,16 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
   const [generating, setGenerating] = useState(false);
   const [teamCount, setTeamCount] = useState<SweepCount>(20);
   const [progress, setProgress] = useState<string>("");
+  const [generatedTeams, setGeneratedTeams] = useState<TeamRow[]>([]);
+  const [saved, setSaved] = useState(false);
   const info = MODE_INFO[mode];
   const Icon = info.icon;
 
   async function handleGenerate() {
     setGenerating(true);
     setProgress("Fetching latest playing XI...");
+    setGeneratedTeams([]);
+    setSaved(false);
     try {
       const detail = await getMatchDetail(matchId);
       if (!detail) { toast.error("Could not load player data"); setGenerating(false); return; }
@@ -55,13 +59,53 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
 
       if (res.teams.length === 0) { toast.error("Failed to generate teams — try smaller count"); setGenerating(false); return; }
 
+      // Store in state for preview
+      setGeneratedTeams(res.teams);
       toast.success(`Generated ${res.teams.length} teams in ${res.stats.durationMs}ms`);
-      onGenerated(res.teams);
     } catch (err: any) {
       toast.error(err?.message || "Generation failed");
     } finally {
       setGenerating(false);
     }
+  }
+
+  // Save teams to localStorage + notify parent
+  function handleSave() {
+    if (generatedTeams.length === 0) { toast.error("No teams to save"); return; }
+
+    try {
+      const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
+      const key = String(matchId);
+      let all: Record<string, TeamRow[]> = {};
+      try { all = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}"); } catch { all = {}; }
+
+      const oldCount = (all[key] || []).length;
+      // WIPE old, save only new
+      all[key] = generatedTeams.map((t, i) => ({
+        ...t,
+        _id: "local_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
+        teamId: "local_" + Math.random().toString(36).slice(2, 10),
+        teamNo: i + 1,
+        team_number: i + 1,
+        vicecaptain: t.viceCaptain,
+        c: t.captain,
+        vc: t.viceCaptain,
+        type: mode,
+        transferStatus: "pending",
+      }));
+      localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(all));
+      setSaved(true);
+      toast.success(`✓ Saved ${generatedTeams.length} teams to My Teams!`);
+    } catch (err) {
+      toast.error("Failed to save teams");
+    }
+  }
+
+  // Transfer — pass teams to parent which opens transfer modal
+  function handleTransfer() {
+    if (generatedTeams.length === 0) { toast.error("Generate teams first"); return; }
+    if (!saved) { handleSave(); }
+    onGenerated(generatedTeams);
   }
 
   return (
@@ -200,22 +244,69 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
           </div>
         )}
 
+        {/* === Generated Teams Preview (NEW) === */}
+        {generatedTeams.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[11px] font-bold text-foreground uppercase">📋 Generated Teams ({generatedTeams.length})</p>
+            <div className="max-h-[40vh] overflow-y-auto space-y-1.5">
+              {generatedTeams.slice(0, 20).map((t, i) => {
+                const players = (t.players || []) as any[];
+                const cap = String(t.captain || t.c || "");
+                const vc = String(t.viceCaptain || t.vc || t.vicecaptain || "");
+                return (
+                  <div key={i} className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-2 border border-slate-200 dark:border-slate-700">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold text-foreground">Team #{i + 1}</span>
+                      <span className="text-[8px] text-muted-foreground">{players.length} players</span>
+                    </div>
+                    <div className="flex flex-wrap gap-0.5">
+                      {players.slice(0, 11).map((p, j) => {
+                        const name = String(p.name || p.player_name || `P${j+1}`).slice(0, 4).toUpperCase();
+                        const isCap = String(p.player_fixed_id ?? p.pid ?? p.name) === cap;
+                        const isVC = String(p.player_fixed_id ?? p.pid ?? p.name) === vc;
+                        return (
+                          <span key={j} className={cn(
+                            "text-[7px] px-1 py-0.5 rounded font-bold",
+                            isCap ? "bg-amber-500 text-white" : isVC ? "bg-sky-500 text-white" : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                          )}>
+                            {name}{isCap ? " C" : isVC ? " VC" : ""}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              {generatedTeams.length > 20 && (
+                <p className="text-[9px] text-center text-muted-foreground">+ {generatedTeams.length - 20} more teams...</p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Action Buttons */}
         <div className="space-y-2">
           <Button className={cn("w-full h-12 bg-gradient-to-r text-white font-bold", info.color)} onClick={handleGenerate} disabled={generating}>
             {generating ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Icon className="w-5 h-5 mr-2" />}
             {generating ? "Generating..." : `Generate ${teamCount} Teams · ${info.label}`}
           </Button>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="bg-emerald-50 dark:bg-emerald-950/20 rounded-lg p-2 text-center">
-              <CheckCircle2 className="w-4 h-4 mx-auto text-emerald-500 mb-0.5" />
-              <p className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">✓ Save Team</p>
+
+          {generatedTeams.length > 0 && (
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                className={cn("h-10 font-bold text-sm", saved ? "bg-emerald-600 text-white" : "bg-emerald-500 hover:bg-emerald-600 text-white")}
+                onClick={handleSave}
+              >
+                {saved ? <><CheckCircle2 className="w-4 h-4 mr-1" /> Saved!</> : <><CheckCircle2 className="w-4 h-4 mr-1" /> Save Teams</>}
+              </Button>
+              <Button
+                className="h-10 bg-sky-500 hover:bg-sky-600 text-white font-bold text-sm"
+                onClick={handleTransfer}
+              >
+                <Send className="w-4 h-4 mr-1" /> Transfer
+              </Button>
             </div>
-            <div className="bg-sky-50 dark:bg-sky-950/20 rounded-lg p-2 text-center">
-              <Send className="w-4 h-4 mx-auto text-sky-500 mb-0.5" />
-              <p className="text-[9px] font-bold text-sky-600 dark:text-sky-400">✓ Transfer</p>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
