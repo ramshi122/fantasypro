@@ -261,18 +261,20 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
 
   // Called after the auto-generator has finished. Saves teams to localStorage
   // and refreshes the view to show newly generated teams.
+  // BEHAVIOR: New generate WIPES old teams — only new teams shown.
   function handleBulkAddTeams(teams: TeamRow[]) {
     if (!teams || teams.length === 0) {
       toast.error("No teams to save");
       return;
     }
 
-    // CRITICAL: Save teams to localStorage SYNCHRONOUSLY so they appear immediately
+    // CRITICAL: Save teams to localStorage SYNCHRONOUSLY
+    // NEW BEHAVIOR: Wipe old teams, show only new teams (user requested)
     try {
       const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
       const key = String(matchId);
 
-      // Read existing teams
+      // Read existing teams (to count how many were wiped)
       let all: Record<string, TeamRow[]> = {};
       try {
         all = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}");
@@ -280,15 +282,14 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         all = {};
       }
 
-      // Get existing teams for this match (APPEND, don't replace)
-      const existing = all[key] || [];
+      const oldCount = (all[key] || []).length;
 
-      // Add new teams to existing
+      // WIPE old teams — only new teams will be saved
       const newTeams: TeamRow[] = teams.map((t, i) => ({
         _id: "local_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
         teamId: "local_" + Math.random().toString(36).slice(2, 10),
-        teamNo: existing.length + i + 1,
-        team_number: existing.length + i + 1,
+        teamNo: i + 1,
+        team_number: i + 1,
         players: t.players || [],
         captain: t.captain,
         viceCaptain: t.viceCaptain,
@@ -300,19 +301,23 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         transferStatus: "pending",
       }));
 
-      // Save: existing + new teams
-      all[key] = [...existing, ...newTeams];
+      // Save: ONLY new teams (old teams wiped)
+      all[key] = newTeams;
       localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(all));
 
-      console.log(`[handleBulkAddTeams] Saved ${newTeams.length} teams. Total for match: ${all[key].length}`);
+      console.log(`[handleBulkAddTeams] Wiped ${oldCount} old teams. Saved ${newTeams.length} new teams.`);
 
       // IMMEDIATELY update the state (don't wait for refreshKey)
-      setExistingTeams([...existing, ...newTeams]);
+      setExistingTeams(newTeams);
 
       // Also trigger refresh to reload from localStorage
       setRefreshKey((k) => k + 1);
 
-      toast.success(`Generated ${teams.length} unique teams — saved to My Teams! (${all[key].length} total)`);
+      if (oldCount > 0) {
+        toast.success(`Wiped ${oldCount} old teams. Generated ${newTeams.length} new teams!`);
+      } else {
+        toast.success(`Generated ${newTeams.length} new teams!`);
+      }
     } catch (err) {
       console.error("[handleBulkAddTeams] Save error:", err);
       toast.error("Failed to save teams — try again");
