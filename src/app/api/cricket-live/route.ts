@@ -2,46 +2,36 @@ import { NextResponse } from "next/server";
 
 const GOSCORER_API = "https://api.goscorer.com";
 
+function extractTeamNames(result: string): { team1?: string; team2?: string } {
+  if (!result) return {};
+  // "Los Angeles Knight Riders won by 18 runs"
+  const m1 = result.match(/^(.+?) won by/);
+  if (m1) return { team1: m1[1].trim() };
+  // "X beat Y by..."
+  const m2 = result.match(/^(.+?) beat (.+?) by/);
+  if (m2) return { team1: m2[1].trim(), team2: m2[2].trim() };
+  // "X won the toss and elected to bat"
+  const m3 = result.match(/^(.+?) won the toss/);
+  if (m3) return { team1: m3[1].trim() };
+  return {};
+}
+
 /**
- * Proxy for CREX (cricketexchange) live match data
+ * CREX Cricket Live — scraped from api.goscorer.com
  * GET /api/cricket-live?type=live
- * GET /api/cricket-live?type=upcoming
- * GET /api/cricket-live?type=scorecard&matchId=XXX
- * GET /api/cricket-live?type=commentary&matchId=XXX
  */
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type") || "live";
-    const matchId = searchParams.get("matchId");
 
-    let endpoint = "";
-    switch (type) {
-      case "live":
-        endpoint = "/api/v3/getLiveMatches";
-        break;
-      case "upcoming":
-        endpoint = "/api/v3/getUpcomingMatches";
-        break;
-      case "recent":
-        endpoint = "/api/v3/getRecentMatches";
-        break;
-      case "scorecard":
-        endpoint = `/api/v3/getScorecard?matchId=${matchId}`;
-        break;
-      case "commentary":
-        endpoint = `/api/v3/getCommentary?matchId=${matchId}`;
-        break;
-      case "matchInfo":
-        endpoint = `/api/v3/getMatchInfo?matchId=${matchId}`;
-        break;
-      default:
-        endpoint = "/api/v3/getLiveMatches";
+    if (type !== "live") {
+      return NextResponse.json({ status: "fail", message: "Only type=live supported", data: [] }, { status: 200 });
     }
 
-    console.log(`[CricketLive] Fetching: ${GOSCORER_API}${endpoint}`);
+    console.log("[CricketLive] Fetching from api.goscorer.com...");
 
-    const res = await fetch(`${GOSCORER_API}${endpoint}`, {
+    const res = await fetch(`${GOSCORER_API}/api/v3/getLiveMatches`, {
       method: "GET",
       headers: {
         "Accept": "application/json, text/plain, */*",
@@ -54,51 +44,67 @@ export async function GET(request: Request) {
     });
 
     const text = await res.text();
-    let data: any;
+    let rawData: any;
     try {
-      data = JSON.parse(text);
+      rawData = JSON.parse(text);
     } catch {
-      return NextResponse.json({ status: "fail", message: "Non-JSON response" }, { status: 200 });
+      return NextResponse.json({ status: "fail", message: "Non-JSON response", data: [] }, { status: 200 });
     }
 
-    // Parse live matches into readable format
-    if (type === "live" && data && typeof data === "object") {
-      const matches = Object.entries(data).map(([key, v]: [string, any]) => ({
+    if (!rawData || typeof rawData !== "object") {
+      return NextResponse.json({ status: "fail", message: "Invalid data", data: [] }, { status: 200 });
+    }
+
+    // Parse all matches with full data extraction
+    const matches = Object.entries(rawData).map(([key, v]: [string, any]) => {
+      const result = v.res || "";
+      const names = extractTeamNames(result);
+
+      return {
         matchId: key,
         team1Code: v.b || "?",
         team2Code: v.c || "?",
+        team1Name: names.team1 || "",
+        team2Name: names.team2 || "",
         team1Score: v.j || "",
         team2Score: v.k || "",
-        result: v.res || "",
+        result: result,
         format: v.fo || "",
         startTime: v.ti || 0,
         finishTime: v.finishTime || 0,
         venue: v.v || "",
         status: v.es_id || 0,
         winningTeam: v.wp || "",
-        matchType: v.fo || "",
-        eventStatus: v.es_id || 0,
         isLive: v.j ? true : false,
         isFinished: v.finishTime ? true : false,
-        InningsStatus: v.n || 0,
         currentInnings: v.oi || "0",
-      }));
+        inningsStatus: v.n || 0,
+        // Raw encoded fields for debugging
+        rawQ: v.q || "",
+        rawR: v.r || "",
+        rawA: v.a || "",
+        rawFlb: v.flb || "",
+      };
+    });
 
-      const response = NextResponse.json({
-        status: "success",
-        type: "live",
-        count: matches.length,
-        data: matches,
-      }, { status: 200 });
-      response.headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
-      return response;
-    }
+    // Sort: live first, then upcoming, then finished
+    matches.sort((a, b) => {
+      if (a.isLive && !a.isFinished && !(b.isLive && !b.isFinished)) return -1;
+      if (!(a.isLive && !a.isFinished) && b.isLive && !b.isFinished) return 1;
+      return (a.startTime || 0) - (b.startTime || 0);
+    });
 
-    // For other types, pass through
+    console.log(`[CricketLive] Parsed ${matches.length} matches (${matches.filter(m => m.isLive && !m.isFinished).length} live)`);
+
     const response = NextResponse.json({
       status: "success",
-      type,
-      data,
+      type: "live",
+      count: matches.length,
+      liveCount: matches.filter(m => m.isLive && !m.isFinished).length,
+      upcomingCount: matches.filter(m => !m.isLive && !m.isFinished).length,
+      finishedCount: matches.filter(m => m.isFinished).length,
+      data: matches,
+      source: "api.goscorer.com (CREX Cricket Exchange)",
     }, { status: 200 });
     response.headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
     return response;
