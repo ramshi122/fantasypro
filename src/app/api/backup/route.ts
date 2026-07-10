@@ -1,27 +1,17 @@
 import { NextResponse } from "next/server";
 import { useAdmin } from "@/lib/admin-store";
-import { db } from "@/lib/firebase";
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  setDoc,
-  deleteDoc,
-  serverTimestamp,
-} from "firebase/firestore";
 
 /**
- * Backup/Restore API
- * GET  /api/backup              → export all data as JSON
+ * Backup/Restore API — LOCAL ONLY (per FIREBASE-CLEANUP)
+ * ========================================================
+ * GET  /api/backup              → export all local admin data as JSON
  * POST /api/backup?action=import   → restore from JSON {data}
  *
  * Export includes:
  *   - All license keys (from local admin store)
- *   - All devices
- *   - All users
- *   - All settings
- *   - Firebase collections: license_keys, users, wallets, transactions
+ *   - All devices, users, announcements, settings, recent logs
+ *
+ * No Firebase collections are exported/imported.
  */
 
 export async function GET() {
@@ -39,27 +29,8 @@ export async function GET() {
       users: adminState.users,
       announcements: adminState.announcements,
       settings: adminState.settings,
-      // Recent logs (last 200)
       logs: adminState.logs.slice(-200),
     };
-
-    // Pull Firebase collections (best effort)
-    const firebaseData: Record<string, unknown[]> = {};
-    if (db) {
-      const collectionsToExport = ["license_keys", "users", "wallets", "transactions", "broadcasts", "coupons", "predictions"];
-      for (const cName of collectionsToExport) {
-        try {
-          const snap = await getDocs(collection(db, cName));
-          const docs: unknown[] = [];
-          snap.forEach((d) => docs.push({ _id: d.id, ...d.data() }));
-          firebaseData[cName] = docs;
-        } catch (err) {
-          console.log(`[Backup] export ${cName} failed:`, err);
-          firebaseData[cName] = [];
-        }
-      }
-    }
-    exportData.firebase = firebaseData;
 
     return NextResponse.json({
       status: "success",
@@ -81,11 +52,10 @@ export async function POST(request: Request) {
     }
 
     const adminState = useAdmin.getState();
-    const result = { keys: 0, devices: 0, users: 0, settings: false, firebase: 0 };
+    const result = { keys: 0, devices: 0, users: 0, settings: false };
 
-    // Restore local store
+    // Restore local store — merge new entries (do not duplicate)
     if (Array.isArray(data.keys)) {
-      // Merge: add only keys that don't already exist
       const existingKeySet = new Set(adminState.keys.map((k) => k.key));
       const newKeys = (data.keys as any[]).filter((k) => k && k.key && !existingKeySet.has(k.key));
       if (newKeys.length > 0) {
@@ -112,26 +82,6 @@ export async function POST(request: Request) {
     if (data.settings && typeof data.settings === "object") {
       adminState.updateSettings(data.settings as any);
       result.settings = true;
-    }
-
-    // Restore Firebase collections (best effort)
-    if (db && data.firebase && typeof data.firebase === "object") {
-      for (const [cName, docs] of Object.entries(data.firebase as Record<string, unknown[]>)) {
-        if (!Array.isArray(docs)) continue;
-        for (const d of docs) {
-          const { _id, ...rest } = d as any;
-          if (!_id) continue;
-          try {
-            await setDoc(doc(db, cName, String(_id)), {
-              ...rest,
-              importedAt: serverTimestamp(),
-            }, { merge: true });
-            result.firebase++;
-          } catch (err) {
-            console.log(`[Backup] import ${cName}/${_id} failed:`, err);
-          }
-        }
-      }
     }
 
     return NextResponse.json({

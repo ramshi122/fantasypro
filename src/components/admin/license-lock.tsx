@@ -62,14 +62,12 @@ export function LicenseLockOverlay() {
   const [lockoutState, setLockoutState] = useState<{ locked: boolean; remaining: string } | null>(null);
 
   useEffect(() => {
-    // Check lockout on mount
-    import("@/lib/lockout").then(({ checkLockout, restoreLockoutFromFirebase }) => {
-      restoreLockoutFromFirebase().then(() => {
-        const status = checkLockout();
-        if (status.locked) {
-          setLockoutState({ locked: true, remaining: status.remainingFormatted });
-        }
-      });
+    // Check lockout on mount (LOCAL ONLY — no Firebase restore per FIREBASE-CLEANUP)
+    import("@/lib/lockout").then(({ checkLockout }) => {
+      const status = checkLockout();
+      if (status.locked) {
+        setLockoutState({ locked: true, remaining: status.remainingFormatted });
+      }
     });
     // Update every second
     const id = setInterval(() => {
@@ -108,7 +106,7 @@ export function LicenseLockOverlay() {
             {lockoutState.remaining}
           </p>
           <p className="text-[9px] text-red-300/60 mb-4">
-            ⚠️ Lock persists even if you uninstall &amp; reinstall (tracked by device fingerprint + Firebase)
+            ⚠️ Lock persists even if you uninstall &amp; reinstall (tracked by device fingerprint in localStorage)
           </p>
           <p className="text-[10px] text-amber-300/80">
             Contact admin via WhatsApp for a new key.

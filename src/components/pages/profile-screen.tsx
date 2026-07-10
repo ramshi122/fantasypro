@@ -829,15 +829,13 @@ function LicenseActivationCard() {
   const [countdown, setCountdown] = useState({ days: 0, hours: 0, mins: 0, secs: 0, expired: false });
   const [lockoutInfo, setLockoutInfo] = useState<{ locked: boolean; remaining: string; remainingMs: number } | null>(null);
 
-  // Check lockout on mount + restore from Firebase
+  // Check lockout on mount (LOCAL ONLY — no Firebase restore per FIREBASE-CLEANUP)
   useEffect(() => {
-    import("@/lib/lockout").then(({ checkLockout, restoreLockoutFromFirebase }) => {
-      restoreLockoutFromFirebase().then(() => {
-        const status = checkLockout();
-        if (status.locked) {
-          setLockoutInfo({ locked: true, remaining: status.remainingFormatted, remainingMs: status.remainingMs });
-        }
-      });
+    import("@/lib/lockout").then(({ checkLockout }) => {
+      const status = checkLockout();
+      if (status.locked) {
+        setLockoutInfo({ locked: true, remaining: status.remainingFormatted, remainingMs: status.remainingMs });
+      }
     });
     // Update lockout countdown every second
     const interval = setInterval(() => {

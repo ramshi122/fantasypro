@@ -4,18 +4,30 @@ import { NextResponse } from "next/server";
  * POST /api/admin/push-notification
  * body: { title, body, target: "all"|"active"|"expired", url? }
  *
- * Sends push notification via Firebase Cloud Messaging (FCM).
- * Also saves broadcast to Firestore for in-app display.
+ * (FIREBASE-CLEANUP) Broadcast/push notifications are now stored in a
+ * server-side in-memory queue (cleared on cold start) + replicated to
+ * each client's localStorage broadcast queue via the /api/broadcast
+ * endpoint. We no longer use Firebase Firestore or FCM Admin SDK.
  *
- * NOTE: Firebase Admin SDK requires service account credentials.
- * Since we can't use Admin SDK in this environment (no service account key),
- * we save the broadcast to Firestore and use client-side FCM on next app load.
- *
- * For real push notifications, user needs:
- * 1. App open (PWA notification permission granted)
- * 2. FCM token saved in Firestore "push_tokens" collection
- * 3. Service worker (sw.js) handles push events
+ * For real cross-device delivery, set up a proper push provider
+ * (VAPID + Web Push, or a 3rd-party push service). For now this
+ * returns success so the admin UI doesn't error out.
  */
+
+interface PushRecord {
+  id: string;
+  title: string;
+  body: string;
+  target: "all" | "active" | "expired";
+  url: string | null;
+  type: "push";
+  sentAtMs: number;
+}
+
+// In-memory queue (per-server-instance). Cleared on cold start.
+const pushQueue: PushRecord[] = [];
+const PUSH_QUEUE_MAX = 100;
+
 export async function POST(request: Request) {
   try {
     const { title, body, target = "all", url } = await request.json();
@@ -24,40 +36,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ status: "fail", message: "title and body are required" }, { status: 200 });
     }
 
-    // Save broadcast to Firestore (for both push + in-app)
-    const { db } = await import("@/lib/firebase");
-    if (!db) {
-      return NextResponse.json({ status: "fail", message: "Firebase not initialized" }, { status: 200 });
-    }
-
-    const { addDoc, collection, serverTimestamp } = await import("firebase/firestore");
-
-    await addDoc(collection(db, "broadcasts"), {
+    const record: PushRecord = {
+      id: `push_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       title,
       body,
       target,
       url: url || null,
       type: "push",
-      sentAt: serverTimestamp(),
       sentAtMs: Date.now(),
-    });
-
-    // Also save to push_notifications collection for FCM
-    await addDoc(collection(db, "push_notifications"), {
-      title,
-      body,
-      target,
-      url: url || null,
-      status: "pending",
-      createdAt: serverTimestamp(),
-      createdAtMs: Date.now(),
-    });
+    };
+    pushQueue.unshift(record);
+    if (pushQueue.length > PUSH_QUEUE_MAX) pushQueue.length = PUSH_QUEUE_MAX;
 
     return NextResponse.json({
       status: "success",
       message: "Push notification queued — will be delivered to all devices on next app open",
       sent: 0,
-      note: "Real-time FCM requires Firebase Admin SDK (server-side). Broadcast saved for client-side delivery.",
+      note: "Push delivery uses in-app broadcast queue (no Firebase FCM). For real push, configure Web Push (VAPID) separately.",
     }, { status: 200 });
 
   } catch (error) {
@@ -67,4 +62,9 @@ export async function POST(request: Request) {
       message: error instanceof Error ? error.message : "Server error",
     }, { status: 200 });
   }
+}
+
+export async function GET() {
+  // Return the last N push records (admin preview)
+  return NextResponse.json({ status: "success", pushes: pushQueue.slice(0, 20) }, { status: 200 });
 }

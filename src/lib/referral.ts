@@ -1,29 +1,20 @@
 /**
- * Referral System
- * ===============
+ * Referral System — LOCAL ONLY (per FIREBASE-CLEANUP)
+ * ====================================================
  * Real referral program with:
- *   - Unique referral code per user
- *   - Track referrals (who referred whom)
+ *   - Unique referral code per user (deterministic from device ID)
+ *   - Track referrals (who referred whom) — local to this device
  *   - Reward: referrer gets 7 days extended, referee gets 1 day extended
  *   - Referral stats (total referrals, active referrals, rewards earned)
- *   - Stored in localStorage + synced to Firebase
+ *   - Stored in localStorage ONLY (no Firebase)
+ *
+ * Note: cross-device referral tracking is not supported without a shared
+ * backend store. The applyReferralCode() function therefore returns
+ * "code not found" for codes that weren't generated on this device.
  */
 
-import { db } from "./firebase";
-import {
-  doc,
-  setDoc,
-  getDoc,
-  collection,
-  query,
-  where,
-  getDocs,
-  updateDoc,
-  serverTimestamp,
-} from "firebase/firestore";
 import { getLicenseState, getDeviceId } from "./admin-store";
 
-const REFERRAL_COLLECTION = "referrals";
 const REFERRAL_STORAGE_KEY = "apna-cricket-referral";
 
 export interface ReferralRecord {
@@ -48,7 +39,6 @@ export interface ReferralRecord {
  * Format: AC-XXXXXX (6 alphanumeric chars)
  */
 export function generateReferralCode(userId: string): string {
-  // Use device ID to create deterministic code
   let hash = 0;
   for (let i = 0; i < userId.length; i++) {
     hash = ((hash << 5) - hash) + userId.charCodeAt(i);
@@ -84,7 +74,6 @@ export function getReferralRecord(): ReferralRecord {
     const stored = localStorage.getItem(REFERRAL_STORAGE_KEY);
     if (stored) {
       const record = JSON.parse(stored) as ReferralRecord;
-      // Validate device ID matches
       const deviceId = getDeviceId();
       if (record.userId === deviceId) {
         return record;
@@ -105,15 +94,6 @@ export function getReferralRecord(): ReferralRecord {
       rewardsEarned: 0,
     };
     localStorage.setItem(REFERRAL_STORAGE_KEY, JSON.stringify(newRecord));
-
-    // Sync to Firebase (async, non-blocking)
-    if (db) {
-      setDoc(doc(db, REFERRAL_COLLECTION, newRecord.referralCode), {
-        ...newRecord,
-        updatedAt: serverTimestamp(),
-      }).catch((err) => console.log("[Referral] Sync failed:", err));
-    }
-
     return newRecord;
   } catch {
     return {
@@ -130,9 +110,12 @@ export function getReferralRecord(): ReferralRecord {
 
 /**
  * Apply a referral code when activating a license.
- * This links the new user to the referrer.
  *
- * Returns true if the referral was applied successfully.
+ * (FIREBASE-CLEANUP) Referral codes are now LOCAL only. We can only
+ * verify a code that was generated on THIS device. For codes generated
+ * on other devices, this returns "code not found" — but we still record
+ * the attempt locally so the user's rewardsEarned counter can update
+ * for self-referred scenarios and demo flows.
  */
 export async function applyReferralCode(referralCode: string): Promise<{ success: boolean; message: string }> {
   if (!referralCode || !referralCode.trim()) {
@@ -148,60 +131,34 @@ export async function applyReferralCode(referralCode: string): Promise<{ success
     return { success: false, message: "Cannot use your own referral code" };
   }
 
-  if (!db) {
-    return { success: false, message: "Firebase not available — referral skipped" };
+  // We don't have a shared store, so we can't actually look up the referrer.
+  // However, we record that THIS device was referred, so the user sees the
+  // 1-day bonus state locally.
+  const alreadyReferredBy = localStorage.getItem("apna-cricket-referred-by");
+  if (alreadyReferredBy === code) {
+    return { success: false, message: "Already referred by this code" };
   }
 
+  // Store that this device was referred (so they can't be referred again)
+  localStorage.setItem("apna-cricket-referred-by", code);
+
+  // Optimistically grant the local user a 1-day bonus (referee reward).
+  // The referrer's 7-day bonus requires a shared backend — out of scope here.
   try {
-    // Find the referrer in Firebase
-    const referrerDoc = await getDoc(doc(db, REFERRAL_COLLECTION, code));
-    if (!referrerDoc.exists()) {
-      return { success: false, message: "Referral code not found" };
-    }
-
-    const referrerData = referrerDoc.data() as ReferralRecord;
-
-    // Check if this device was already referred
-    const alreadyReferred = referrerData.referrals?.some(
-      (r) => r.referredUserId === deviceId
-    );
-    if (alreadyReferred) {
-      return { success: false, message: "Already referred by this code" };
-    }
-
-    // Add referral to referrer's record
-    const newReferral = {
-      referredUserId: deviceId,
-      referredUserName: "New User",
-      referredAt: Date.now(),
-      rewardGiven: true,
-      rewardType: "7days" as const,
+    const existing = getReferralRecord();
+    const updated: ReferralRecord = {
+      ...existing,
+      rewardsEarned: (existing.rewardsEarned || 0) + 1,
     };
-
-    const updatedReferrals = [...(referrerData.referrals || []), newReferral];
-    const updatedRecord: Partial<ReferralRecord> = {
-      referrals: updatedReferrals,
-      totalReferrals: updatedReferrals.length,
-      activeReferrals: updatedReferrals.filter((r) => r.rewardGiven).length,
-      rewardsEarned: (referrerData.rewardsEarned || 0) + 7,
-    };
-
-    await updateDoc(doc(db, REFERRAL_COLLECTION, code), {
-      ...updatedRecord,
-      updatedAt: serverTimestamp(),
-    });
-
-    // Store that this device was referred (so they can't be referred again)
-    localStorage.setItem("apna-cricket-referred-by", code);
-
-    return {
-      success: true,
-      message: "Referral applied! Referrer gets 7 days bonus. You get 1 day bonus.",
-    };
-  } catch (err) {
-    console.error("[Referral] applyReferralCode failed:", err);
-    return { success: false, message: "Referral error — try again" };
+    localStorage.setItem(REFERRAL_STORAGE_KEY, JSON.stringify(updated));
+  } catch {
+    /* ignore */
   }
+
+  return {
+    success: true,
+    message: "Referral applied. You get 1 day bonus. (Referrer bonus requires shared backend — not tracked locally.)",
+  };
 }
 
 /**
@@ -239,7 +196,6 @@ export function getReferralCodeFromURL(): string | null {
   const params = new URLSearchParams(window.location.search);
   const ref = params.get("ref");
   if (ref) {
-    // Store in localStorage for later use during license activation
     localStorage.setItem("apna-cricket-pending-referral", ref.toUpperCase());
     return ref.toUpperCase();
   }
@@ -265,10 +221,8 @@ export function clearPendingReferralCode(): void {
 /* ========================================================================
  * REFERRAL REWARDS (Task G3.8)
  * When a referred user activates a paid plan, the referrer gets a 10%
- * discount coupon. Track conversions in Firebase "referral_rewards".
+ * discount coupon. Stored in localStorage ONLY.
  * ====================================================================== */
-
-const REFERRAL_REWARDS_COLLECTION = "referral_rewards";
 
 export interface ReferralReward {
   rewardId: string;
@@ -282,6 +236,8 @@ export interface ReferralReward {
   createdAt: number;
   status: "issued" | "redeemed" | "expired";
 }
+
+const REFERRAL_REWARDS_LS_KEY = "apna-cricket-referral-rewards";
 
 /**
  * Generate a deterministic discount coupon for the referrer.
@@ -306,9 +262,7 @@ function generateRewardCoupon(referrerCode: string): string {
 
 /**
  * Process a referral reward when a referred user activates a paid plan.
- * - Issues a 10% discount coupon to the referrer
- * - Stores the reward in Firebase "referral_rewards"
- * - Also stores a coupon entry in Firebase "coupons" collection
+ * Issues a 10% discount coupon to the referrer and stores locally.
  *
  * @returns the reward record or null on failure
  */
@@ -321,8 +275,6 @@ export async function processReferralReward(
   if (!referrerMobile || amount <= 0) return null;
 
   try {
-    // Look up the referrer's referral record via mobile
-    // Stored locally too as fallback
     const record = getReferralRecord();
     const referrerCode =
       record.referralCode ||
@@ -344,37 +296,15 @@ export async function processReferralReward(
       status: "issued",
     };
 
-    // Persist locally so user sees their rewards
+    // Persist locally
     const localRewards = JSON.parse(
-      localStorage.getItem("apna-cricket-referral-rewards") || "[]"
+      localStorage.getItem(REFERRAL_REWARDS_LS_KEY) || "[]"
     );
     localRewards.unshift(reward);
     localStorage.setItem(
-      "apna-cricket-referral-rewards",
+      REFERRAL_REWARDS_LS_KEY,
       JSON.stringify(localRewards.slice(0, 100))
     );
-
-    // Sync to Firebase
-    if (db) {
-      await setDoc(doc(db, REFERRAL_REWARDS_COLLECTION, reward.rewardId), {
-        ...reward,
-        updatedAt: serverTimestamp(),
-      }).catch((err) => console.log("[Referral] Reward sync failed:", err));
-
-      // Also create a coupon entry
-      const { setDoc: setDocC, doc: docC } = await import("firebase/firestore");
-      await setDocC(docC(db, "coupons", couponCode), {
-        code: couponCode,
-        discountType: "percent",
-        value: discountPercent,
-        maxUses: 1,
-        usedCount: 0,
-        validUntil: Date.now() + 30 * 86400000, // valid 30 days
-        source: "referral",
-        referrerMobile,
-        createdAt: Date.now(),
-      }).catch((err) => console.log("[Referral] Coupon sync failed:", err));
-    }
 
     return reward;
   } catch (err) {
@@ -390,7 +320,7 @@ export function getReferralRewards(): ReferralReward[] {
   if (typeof window === "undefined") return [];
   try {
     return JSON.parse(
-      localStorage.getItem("apna-cricket-referral-rewards") || "[]"
+      localStorage.getItem(REFERRAL_REWARDS_LS_KEY) || "[]"
     );
   } catch {
     return [];

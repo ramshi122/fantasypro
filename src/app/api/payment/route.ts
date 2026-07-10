@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/firebase";
-import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { withSecurity } from "@/lib/security-wrapper";
 
 /**
- * Payment API — handles license key purchase
- * PROTECTED: Rate limited to 5 requests/minute per IP
+ * Payment API — LOCAL ONLY (per FIREBASE-CLEANUP)
+ * =================================================
+ * Handles license key purchase.
+ * PROTECTED: Rate limited to 5 requests/minute per IP.
+ *
+ * Orders + license keys are stored in an in-memory server-side Map
+ * (per-instance, cleared on cold start). On a successful payment, the
+ * generated license key is also written to the admin-store (localStorage)
+ * on the client that initiated the purchase — and to Firebase
+ * (license_keys/{keyStr}) via the admin-store's syncKeyToFirestore()
+ * flow so that the key can be verified on any device.
  *
  * Flow:
  *   1. POST /api/payment — create payment order
@@ -26,14 +33,30 @@ const PLAN_CONFIG: Record<string, { amount: number; keyType: string; label: stri
   "lifetime":  { amount: 4999, keyType: "lifetime",    label: "Lifetime" },
 };
 
-// Generate license key
+interface PaymentOrder {
+  orderId: string;
+  mobile: string;
+  plan: string;
+  amount: number;
+  keyType: string;
+  label: string;
+  status: "pending" | "completed" | "failed";
+  paymentId?: string;
+  licenseKey?: string;
+  expiresAt?: number | null;
+  createdAt: number;
+  completedAt?: number;
+  failedAt?: number;
+}
+
+const orders = new Map<string, PaymentOrder>();
+
 function generateKey(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const part = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
   return `CRICB-${part()}-${part()}-${part()}`;
 }
 
-// Get expiry for key type
 function getExpiry(keyType: string): number | null {
   const now = Date.now();
   const day = 86400000;
@@ -73,27 +96,18 @@ export const POST = withSecurity(async (request: Request) => {
         }, { status: 200 });
       }
 
-      // Generate order ID
       const newOrderId = `ORD_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-      // Store order in Firebase
-      if (db) {
-        try {
-          await setDoc(doc(db, "payment_orders", newOrderId), {
-            orderId: newOrderId,
-            mobile,
-            plan,
-            amount: config.amount,
-            keyType: config.keyType,
-            label: config.label,
-            status: "pending",
-            createdAt: Date.now(),
-            createdAtTs: serverTimestamp(),
-          });
-        } catch (err) {
-          console.error("[Payment] Order creation failed:", err);
-        }
-      }
+      const order: PaymentOrder = {
+        orderId: newOrderId,
+        mobile,
+        plan,
+        amount: config.amount,
+        keyType: config.keyType,
+        label: config.label,
+        status: "pending",
+        createdAt: Date.now(),
+      };
+      orders.set(newOrderId, order);
 
       console.log(`[Payment] Order created: ${newOrderId} for ${mobile} - ${plan} (₹${config.amount})`);
 
@@ -103,8 +117,6 @@ export const POST = withSecurity(async (request: Request) => {
         amount: config.amount,
         plan: config.label,
         keyType: config.keyType,
-        // Demo mode: payment URL is the verify endpoint
-        // Production: would return Razorpay/PhonePe checkout URL
         paymentUrl: null, // Client handles payment UI
       }, { status: 200 });
     }
@@ -118,19 +130,7 @@ export const POST = withSecurity(async (request: Request) => {
         }, { status: 200 });
       }
 
-      // Get order from Firebase
-      let orderData: any = null;
-      if (db) {
-        try {
-          const orderDoc = await getDoc(doc(db, "payment_orders", orderId));
-          if (orderDoc.exists()) {
-            orderData = orderDoc.data();
-          }
-        } catch (err) {
-          console.error("[Payment] Order fetch failed:", err);
-        }
-      }
-
+      const orderData = orders.get(orderId);
       if (!orderData) {
         return NextResponse.json({
           status: "fail",
@@ -139,7 +139,6 @@ export const POST = withSecurity(async (request: Request) => {
       }
 
       if (orderData.status === "completed") {
-        // Already completed — return existing key
         return NextResponse.json({
           status: "success",
           message: "Payment already verified",
@@ -150,20 +149,11 @@ export const POST = withSecurity(async (request: Request) => {
         }, { status: 200 });
       }
 
-      // Payment status check — ONLY generate key if status is "success"
-      // If user clicks "Payment Failed" or doesn't confirm, NO key is generated
       const paymentStatus = status || "pending";
 
       if (paymentStatus === "failed") {
-        // Mark order as failed in Firebase
-        if (db) {
-          try {
-            await updateDoc(doc(db, "payment_orders", orderId), {
-              status: "failed",
-              failedAt: Date.now(),
-            });
-          } catch { /* ignore */ }
-        }
+        orderData.status = "failed";
+        orderData.failedAt = Date.now();
         return NextResponse.json({
           status: "fail",
           message: "Payment failed. No key generated. Please try again.",
@@ -180,40 +170,31 @@ export const POST = withSecurity(async (request: Request) => {
       }
 
       // paymentStatus === "success" → generate key
-      // ⚠️ Key is ONLY generated here — after payment confirmation
-
-      // Generate license key
       const licenseKey = generateKey();
       const expiresAt = getExpiry(orderData.keyType);
+      orderData.status = "completed";
+      orderData.paymentId = paymentId || `PAY_${Date.now()}`;
+      orderData.licenseKey = licenseKey;
+      orderData.expiresAt = expiresAt;
+      orderData.completedAt = Date.now();
 
-      // Update order in Firebase
-      if (db) {
-        try {
-          await updateDoc(doc(db, "payment_orders", orderId), {
-            status: "completed",
-            paymentId: paymentId || `PAY_${Date.now()}`,
-            licenseKey,
-            expiresAt,
-            completedAt: Date.now(),
-            completedAtTs: serverTimestamp(),
-          });
-
-          // Also store in license_keys collection
-          await setDoc(doc(db, "license_keys", licenseKey), {
-            key: licenseKey,
-            type: orderData.keyType,
-            status: "active",
-            createdAt: Date.now(),
-            expiresAt,
-            deviceIds: [],
-            verifications: 0,
-            userName: orderData.mobile,
-            paymentOrderId: orderId,
-            updatedAt: serverTimestamp(),
-          });
-        } catch (err) {
-          console.error("[Payment] Activation failed:", err);
-        }
+      // Sync the new license key to Firebase (single-doc set) so that any
+      // device can verify it later via fetchKeyFromFirestore. The admin-store
+      // on the originating device will pick it up on its next sync.
+      try {
+        const { syncKeyToFirestore } = await import("@/lib/firebase-license");
+        await syncKeyToFirestore({
+          key: licenseKey,
+          type: orderData.keyType as any,
+          status: "active",
+          createdAt: Date.now(),
+          expiresAt,
+          deviceIds: [],
+          verifications: 0,
+          userName: orderData.mobile,
+        });
+      } catch (err) {
+        console.warn("[Payment] License sync to Firebase failed:", err);
       }
 
       console.log(`[Payment] ✅ Payment verified: ${orderId} → Key: ${licenseKey} (${orderData.keyType})`);

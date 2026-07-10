@@ -58,15 +58,15 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
   const admin = useAdmin();
   const [tab, setTab] = useState<Tab>("dashboard");
 
-  // Whenever the admin panel is opened (and after login), refresh ALL data
-  // from Firebase so the admin sees the latest state from the single source
-  // of truth. Also ensure real-time onSnapshot listeners are attached.
+  // Whenever the admin panel is opened (and after login), refresh the local
+  // store from localStorage + hydrate any admin-generated keys from Firebase
+  // (individual reads of license_keys/{keyStr}). No real-time listeners.
   useEffect(() => {
     if (!open) return;
     if (!admin.isAdminAuthenticated) return;
-    // Refresh from Firebase on every open
     admin.syncFromFirebase();
-    // Attach real-time listeners (idempotent — no-op if already subscribed)
+    // subscribeToFirebase is now a no-op (no real-time listeners) — kept for
+    // UI compatibility.
     admin.subscribeToFirebase();
   }, [open, admin.isAdminAuthenticated]);
 
@@ -321,20 +321,23 @@ function DashboardTab() {
   const isSubscribed = useAdmin((s) => s.isSubscribed);
   const [syncing, setSyncing] = useState(false);
 
-  // Sync keys from Firebase — ensures all admin panels show SAME keys.
-  // Delegates to the store's syncFromFirebase which fetches ALL admin data
-  // (keys, devices, users, logs, settings) from the single source of truth.
+  // Sync keys from localStorage + hydrate admin-generated keys from Firebase
+  // (individual reads). All admin panels show SAME keys because:
+  //   • seed generation is identical on every device
+  //   • admin-generated keys are synced to Firebase (one setDoc per key)
+  //   • on sync, each device fetches the admin-generated key strings list
+  //     (single fetch) and hydrates each via individual fetchKeyFromFirestore
   async function handleSync() {
     setSyncing(true);
     try {
       const ok = await syncFromFirebase();
-      // Re-subscribe (idempotent — no-op if already listening)
+      // No-op — no real-time listeners (kept for UI compatibility)
       subscribeToFirebase();
       if (ok) {
         const total = useAdmin.getState().keys.length;
-        toast.success(`✓ Synced from Firebase — ${total} keys total`);
+        toast.success(`✓ Synced — ${total} keys total`);
       } else {
-        toast.error("Sync failed — Firebase may be offline");
+        toast.error("Sync failed — falling back to local seed");
       }
     } catch (err: any) {
       toast.error(err?.message || "Sync failed");
@@ -387,13 +390,13 @@ function DashboardTab() {
           disabled={syncing || isSyncing}
         >
           {syncing || isSyncing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
-          Sync from Firebase
+          Sync
         </Button>
       </div>
       <div className="bg-emerald-900/20 border border-emerald-800/50 rounded-lg p-2 text-[10px] text-emerald-300 flex items-center justify-between flex-wrap gap-1">
         <span className="flex items-center gap-1.5">
           <span className={cn("w-1.5 h-1.5 rounded-full", isSubscribed ? "bg-emerald-400 animate-pulse" : "bg-emerald-600")} />
-          ✓ Synced from Firebase — keys, plans, and data are the SAME across all devices/APKs
+          ✓ Synced — keys are the SAME across all devices (localStorage seed + Firebase license-only)
         </span>
         <span className="text-emerald-400/80">
           {isSubscribed ? "● Live" : "○ Offline"} · Last sync: {lastSyncedLabel}
@@ -501,21 +504,24 @@ function LicensesTab() {
             size="sm"
             className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs"
             onClick={async () => {
-              toast.info("Syncing keys to Firebase...");
+              toast.info("Syncing keys to Firebase (one doc per key)...");
               try {
-                const { initFirebase, bulkSyncKeysToFirestore } = await import("@/lib/firebase-license");
-                initFirebase(admin.settings.firebaseConfig);
-                const res = await bulkSyncKeysToFirestore(admin.keys);
-                if (res.synced > 0) {
-                  toast.success(`✅ Synced ${res.synced}/${admin.keys.length} keys to Firebase`);
-                } else {
-                  toast.error("❌ Firebase not configured — add config in Settings tab");
-                }
+                const { syncKeyToFirestore } = await import("@/lib/firebase-license");
+                const { recordAdminGeneratedKey } = await import("@/lib/admin-firebase-sync");
+                const res = await Promise.all(
+                  admin.keys.map(async (k) => {
+                    const a = await syncKeyToFirestore(k);
+                    await recordAdminGeneratedKey(k.key).catch(() => {});
+                    return a;
+                  })
+                );
+                const ok = res.filter(Boolean).length;
+                toast.success(`✅ Synced ${ok}/${admin.keys.length} keys to Firebase`);
               } catch (err: any) {
                 toast.error(err?.message || "Sync failed");
               }
             }}
-            title="Upload all local keys to Firebase Firestore"
+            title="Upload all local keys to Firebase Firestore (one doc per key)"
           >
             <ShieldCheck className="w-3 h-3 mr-1" />
             Sync Firebase
@@ -524,22 +530,19 @@ function LicensesTab() {
             size="sm"
             className="bg-red-600 hover:bg-red-700 text-white h-8 text-xs"
             onClick={async () => {
-              if (!confirm("Suspend ALL active keys in Firebase? Users will be locked out immediately.")) return;
-              toast.info("Suspending all keys in Firebase...");
+              if (!confirm("Suspend ALL active keys? Users will be locked out immediately.")) return;
+              toast.info("Suspending all active keys...");
               try {
-                const { initFirebase, suspendAllKeysInFirestore } = await import("@/lib/firebase-license");
-                initFirebase(admin.settings.firebaseConfig);
-                const res = await suspendAllKeysInFirestore();
-                if (res.suspended > 0) {
-                  toast.success(`🚫 Suspended ${res.suspended} keys in Firebase`);
-                } else {
-                  toast.error("❌ No keys suspended — Firebase not configured or no active keys");
+                const activeKeys = admin.keys.filter((k) => k.status === "active" || k.status === "used");
+                for (const k of activeKeys) {
+                  admin.suspendKey(k.key);
                 }
+                toast.success(`🚫 Suspended ${activeKeys.length} keys (local + Firebase per-key)`);
               } catch (err: any) {
                 toast.error(err?.message || "Suspend failed");
               }
             }}
-            title="Suspend ALL active keys in Firebase (emergency)"
+            title="Suspend ALL active keys (emergency) — updates each key in Firebase"
           >
             <Ban className="w-3 h-3 mr-1" />
             Ban All
@@ -553,7 +556,7 @@ function LicensesTab() {
             admin.settings.firebaseConfig ? "bg-emerald-500" : "bg-slate-600"
           )} />
           {admin.settings.firebaseConfig
-            ? "Firebase configured — keys sync on generate"
+            ? "Firebase configured (license-only) — keys sync per-doc on generate"
             : "Firebase NOT configured — keys saved locally only. Add config in Settings."}
         </div>
       </div>
@@ -2197,7 +2200,7 @@ function MatchesTab() {
           <div className="text-[9px] text-slate-500 space-y-0.5">
             <p>✓ API URL: Hidden (tgsoftware-api.online)</p>
             <p>✓ AES Key: Hidden (server-side only)</p>
-            <p>✓ Firebase Config: Hidden (revofixer-81a1c)</p>
+            <p>✓ Firebase Config: Hidden (revofixer-81a1c) — license-only</p>
             <p>✓ All original fields preserved</p>
           </div>
         </div>
@@ -2424,42 +2427,24 @@ function SubscriptionsTab() {
   async function fetchSubscriptions() {
     setLoading(true);
     try {
-      const { db } = await import("@/lib/firebase");
-      if (!db) {
-        // FIX: useAdmin.getState() must be called outside render — already correct here
-        const adminState = useAdmin.getState();
-        const localSubs: UserSubscription[] = adminState.keys.slice(0, 50).map((k) => ({
-          userId: k.deviceIds[0] || "unknown",
-          mobile: k.userName || "—",
-          userName: k.userName || "User",
-          plan: k.type,
-          planStatus: k.status === "active" ? "active" : "expired",
-          primePlan: k.type === "elite" || k.type === "lifetime",
-          currentPlan: k.type,
-          previousPlans: [],
-          expiryDate: k.expiresAt,
-          createdAt: k.createdAt,
-        }));
-        setSubscriptions(localSubs);
-        toast.success(`Found ${localSubs.length} subscriptions (local)`);
-        setLoading(false);
-        return;
-      }
-      const { collection, getDocs } = await import("firebase/firestore");
-      const snap = await getDocs(collection(db, "users"));
-      const subs: UserSubscription[] = [];
-      // FIX: rename `d` to `userData` to avoid minification conflict
-      snap.forEach((docSnap) => {
-        const userData = docSnap.data() as any;
-        subs.push({
-          userId: userData.userId || docSnap.id, mobile: userData.mobile || "—", userName: userData.name || "User",
-          plan: userData.plan || "free", planStatus: userData.plan === "free" || !userData.plan ? "none" : "active",
-          primePlan: userData.plan === "elite" || userData.plan === "lifetime", currentPlan: userData.plan || "free",
-          previousPlans: userData.previousPlans || [], expiryDate: userData.planExpiry || null, createdAt: userData.createdAt || 0,
-        });
-      });
-      setSubscriptions(subs);
-      toast.success(`Found ${subs.length} user subscriptions`);
+      // (FIREBASE-CLEANUP) Subscriptions are sourced from the local admin
+      // store (which is seeded identically on every device + hydrated with
+      // admin-generated keys from Firebase). No Firebase collection reads.
+      const adminState = useAdmin.getState();
+      const localSubs: UserSubscription[] = adminState.keys.slice(0, 50).map((k) => ({
+        userId: k.deviceIds[0] || "unknown",
+        mobile: k.userName || "—",
+        userName: k.userName || "User",
+        plan: k.type,
+        planStatus: k.status === "active" ? "active" : "expired",
+        primePlan: k.type === "elite" || k.type === "lifetime",
+        currentPlan: k.type,
+        previousPlans: [],
+        expiryDate: k.expiresAt,
+        createdAt: k.createdAt,
+      }));
+      setSubscriptions(localSubs);
+      toast.success(`Found ${localSubs.length} subscriptions (local)`);
     } catch (err: any) { toast.error(err?.message || "Failed to fetch"); }
     finally { setLoading(false); }
   }
@@ -2471,7 +2456,7 @@ function SubscriptionsTab() {
     setLoading(true);
     try {
       const admin = useAdmin.getState();
-      // generateKey() stores key locally + syncs to Firebase
+      // generateKey() stores key locally + syncs ONE key to Firebase.
       const key = admin.generateKey(planType);
 
       // Update the local key to include mobile/userName
@@ -2482,23 +2467,6 @@ function SubscriptionsTab() {
             : k
         ),
       }));
-
-      const { db } = await import("@/lib/firebase");
-      if (db) {
-        const { doc, setDoc, collection, query, where, getDocs, updateDoc } = await import("firebase/firestore");
-        const { getExpiryForType } = await import("@/lib/admin-store");
-        const expiry = getExpiryForType(planType);
-        // Update Firebase key with mobile/userName
-        await setDoc(doc(db, "license_keys", key), {
-          key, type: planType, status: "active", createdAt: Date.now(), expiresAt: expiry,
-          deviceIds: [], verifications: 0, userName: planUserMobile, mobile: planUserMobile,
-        }, { merge: true });
-        // Update user record if exists
-        const uq = await getDocs(query(collection(db, "users"), where("mobile", "==", planUserMobile)));
-        if (!uq.empty) {
-          await updateDoc(doc(db, "users", uq.docs[0].id), { plan: planType, planExpiry: expiry, updatedAt: Date.now() });
-        }
-      }
 
       // Show the generated key prominently
       setLastGeneratedKey({ key, mobile: planUserMobile, plan: planType });
@@ -2514,9 +2482,11 @@ function SubscriptionsTab() {
   async function handleDeactivate(userId: string) {
     if (!confirm("Deactivate subscription?")) return;
     try {
-      const { db } = await import("@/lib/firebase");
-      if (db) { const { doc, updateDoc } = await import("firebase/firestore");
-        await updateDoc(doc(db, "users", userId), { plan: "free", planExpiry: null, updatedAt: Date.now() }); }
+      // (FIREBASE-CLEANUP) No remote users collection — just remove locally
+      // by updating the matching key's status if present.
+      const adminState = useAdmin.getState();
+      const match = adminState.keys.find((k) => (k.deviceIds[0] || "unknown") === userId);
+      if (match) adminState.suspendKey(match.key);
       toast.success("Deactivated"); fetchSubscriptions();
     } catch (err: any) { toast.error(err?.message || "Failed"); }
   }
@@ -2897,13 +2867,13 @@ function BroadcastTab() {
           onClick={() => setPushMode(true)}
           className={cn("flex-1 h-8 text-[10px] font-bold rounded-md", pushMode ? "bg-emerald-600 text-white" : "text-slate-400")}
         >
-          🔔 Firebase Push
+          🔔 Push
         </button>
       </div>
 
       <p className="text-[10px] text-slate-400">
         {pushMode
-          ? "Push notification via Firebase — delivered even if app is closed (requires notification permission)"
+          ? "Push notification — queued on the server, delivered on next app open"
           : "In-app notification banner — users see on next app open"}
       </p>
 
@@ -2947,8 +2917,7 @@ function BroadcastTab() {
 
       {pushMode && (
         <p className="text-[9px] text-amber-400/70 bg-amber-950/20 rounded-lg p-2">
-          ⚠️ Push notifications require: 1) User granted notification permission 2) App installed as PWA 3) Firebase Cloud Messaging setup.
-          If not, broadcast will be saved and shown on next app open.
+          ⚠️ Push notifications are queued on the server (no Firebase FCM). For real push delivery, configure Web Push (VAPID) separately. Until then, the broadcast will be shown on next app open.
         </p>
       )}
     </div>
@@ -3098,7 +3067,7 @@ function BackupTab() {
       });
       const result = await res.json();
       if (result.status === "success") {
-        toast.success(`Imported: ${result.result.keys} keys, ${result.result.users} users, ${result.result.firebase} firebase docs`);
+        toast.success(`Imported: ${result.result.keys} keys, ${result.result.users} users`);
       } else toast.error(result.message);
     } catch (err: any) {
       toast.error(err?.message || "Invalid JSON file");
@@ -3109,7 +3078,7 @@ function BackupTab() {
     <div className="space-y-3 text-slate-200">
       <h3 className="text-sm font-bold flex items-center gap-1.5"><Download className="w-4 h-4 text-violet-400" /> Backup &amp; Restore</h3>
       <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 space-y-2">
-        <p className="text-[10px] text-slate-400">Export all keys, users, devices, settings, and Firebase collections as a JSON file.</p>
+        <p className="text-[10px] text-slate-400">Export all keys, users, devices, and settings as a JSON file (local store only).</p>
         <Button size="sm" className="bg-violet-600 text-white w-full" disabled={loading} onClick={exportData}>
           {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Download className="w-3 h-3 mr-1" />}
           Export Backup

@@ -1,0 +1,1759 @@
+     1→import { encrypt, decrypt } from "./crypto";
+     2→import { roleFromPlayerType } from "./format";
+     3→
+     4→/**
+     5→ * Apna Cricket API client — patched to match the actual Apna Cricket backend.
+     6→ *
+     7→ * Architecture (verified by inspecting teamgeneration.in (reference) + live API):
+     8→ *
+     9→ * 1. Public endpoints (NO auth, AES-encrypted response data):
+    10→ *    - GET  /api/fantasy/matches/{sport}       → list of matches
+    11→ *    - GET  /api/fantasy/match/{matchId}       → match details with player lists
+    12→ *    - GET  /api/promotion/getlist             → promotions
+    13→ *    - GET  /api/primeteam/teamlist            → prime team match IDs
+    14→ *    - POST /api/expert/teamlist               → expert team match IDs
+    15→ *
+    16→ * 2. Fantasy-platform endpoints (plain JSON, no AES):
+    17→ *    - POST /api/fantasy/auth/verify           body: {fantasyApp, authToken, matchId}
+    18→ *                                                resp: {status, validToken, updateUiToken, authToken}
+    19→ *    - POST /api/fantasy/list-of-teams         body: {fantasyApp, matchId, authToken}
+    20→ *                                                resp: {status, teams_list: [{team_id, team_number}]}
+    21→ *    - POST /api/dream11/contest/join-contest  body: {authToken, matchId, contestId, teamIds}
+    22→ *                                                resp: {status, joinResults, summary}
+    23→ *
+    24→ * 3. Apna Cricket user auth (Bearer JWT in header — obtained via Google OAuth):
+    25→ *    Used only for admin / premium features. We BYPASS this in guest mode.
+    26→ *
+    27→ * 4. Local fallback (guest mode):
+    28→ *    When the user is browsing as guest (no real Dream11/My11Circle token),
+    29→ *    we persist their teams to localStorage so the full add/edit/delete/transfer
+    30→ *    flow works end-to-end without any external tokens.
+    31→ */
+    32→
+    33→export const API_BASE = "https://tgsoftware-api.online";
+    34→
+    35→export type Sport = "cricket" | "football" | "basketball" | "kabaddi";
+    36→export type FantasyApp = "dream11" | "my11circle" | "myteam11" | "vision11" | "jumbo";
+    37→
+    38→/**
+    39→ * Per-platform team limits — matches the ORIGINAL teamgeneration.in APK source.
+    40→ *
+    41→ * Found in the original APK's compiled JS:
+    42→ *   {id:1, name:"Dream11",   slug:"dream11",    limit:40, available:true}
+    43→ *   {id:2, name:"My11Circle", slug:"my11circle", limit:40, available:true}
+    44→ *   {id:3, name:"Jumbo",      slug:"jumbo",      limit:50, available:true}
+    45→ *
+    46→ * Logic from the original APK:
+    47→ *   - If backend returns maxAllowedTeam (Dream11 subscription field) → use that
+    48→ *   - Else if app is "dream11" → 40
+    49→ *   - Else → use the platform's `limit` field
+    50→ *
+    51→ * This means:
+    52→ *   - Dream11:    up to 40 teams (with paid subscription; backend may return lower)
+    53→ *   - My11Circle: up to 40 teams
+    54→ *   - Jumbo:      up to 50 teams
+    55→ *   - Other apps: default to 11 (the platform default)
+    56→ */
+    57→export const PLATFORM_LIMITS: Record<string, number> = {
+    58→  dream11: 40,
+    59→  my11circle: 40,
+    60→  jumbo: 50,
+    61→  myteam11: 20,
+    62→  vision11: 20,
+    63→};
+    64→
+    65→export const DEFAULT_PLATFORM_LIMIT = 11;
+    66→
+    67→/**
+    68→ * Get the per-platform team limit for a given fantasy app and linked account.
+    69→ *
+    70→ * @param app - The fantasy app slug (dream11, my11circle, etc.)
+    71→ * @param account - The linked account (optional — may contain maxAllowedTeam for Dream11)
+    72→ * @returns The maximum number of teams the user can have for this match on this platform
+    73→ */
+    74→export function getPlatformLimit(
+    75→  app: FantasyApp | string,
+    76→  account?: { maxAllowedTeam?: number | null } | null
+    77→): number {
+    78→  // Dream11: backend may return maxAllowedTeam (depends on subscription tier)
+    79→  // Use that if present, otherwise fall back to the platform limit (40)
+    80→  if (app === "dream11") {
+    81→    if (account?.maxAllowedTeam && account.maxAllowedTeam > 0) {
+    82→      return Math.min(account.maxAllowedTeam, PLATFORM_LIMITS.dream11);
+    83→    }
+    84→    return PLATFORM_LIMITS.dream11;
+    85→  }
+    86→  // Other apps: use the platform's limit field
+    87→  return PLATFORM_LIMITS[app] || DEFAULT_PLATFORM_LIMIT;
+    88→}
+    89→
+    90→/* ---------- Types ---------- */
+    91→
+    92→export interface MatchPlayer {
+    93→  pid?: number | string;
+    94→  name?: string;
+    95→  shortName?: string;
+    96→  image?: string;
+    97→  team?: string;
+    98→  team_name?: string;
+    99→  team_index?: number;
+   100→  role?: number;
+   101→  role_text?: string;
+   102→  player_type?: string;
+   103→  credits?: number;
+   104→  points?: number;
+   105→  selected_by?: number;
+   106→  sel?: number;
+   107→  captain_percentage?: number;
+   108→  vice_captain_percentage?: number;
+   109→  player_fixed_id?: string;
+   110→  pl_id?: string;
+   111→  playing?: number; // 0 = not confirmed, 1 = confirmed playing (after lineup)
+   112→  last_play?: number; // 0 = didn't play last match, 1 = played
+   113→  last_play_text?: string;
+   114→  [k: string]: unknown;
+   115→}
+   116→
+   117→export interface MatchTeam {
+   118→  tid?: number | string;
+   119→  name?: string;
+   120→  shortName?: string;
+   121→  logo?: string;
+   122→  [k: string]: unknown;
+   123→}
+   124→
+   125→export interface MatchInfo {
+   126→  matchId?: number | string;
+   127→  id?: number | string;
+   128→  title?: string;
+   129→  subTitle?: string;
+   130→  series?: string;
+   131→  series_name?: string;
+   132→  team1?: MatchTeam | string;
+   133→  team2?: MatchTeam | string;
+   134→  team1Short?: string;
+   135→  team2Short?: string;
+   136→  team1Logo?: string;
+   137→  team2Logo?: string;
+   138→  left_team_name?: string;
+   139→  right_team_name?: string;
+   140→  left_team_image?: string;
+   141→  right_team_image?: string;
+   142→  left_team_players?: unknown[];
+   143→  right_team_players?: unknown[];
+   144→  startTime?: string | number;
+   145→  match_time?: string;
+   146→  endTime?: string | number;
+   147→  status?: string;
+   148→  format?: string;
+   149→  match_type?: string;
+   150→  venue?: string;
+   151→  venue_name?: string;
+   152→  type?: string;
+   153→  sport?: Sport;
+   154→  sport_index?: number;
+   155→  lineup_status?: number; // 0 = not announced, 1 = announced/confirmed
+   156→  toss?: string;
+   157→  isSaved?: boolean;
+   158→  dream11Url?: string;
+   159→  my11circleUrl?: string;
+   160→  fantasy_list?: string[];
+   161→  lineup_status?: number;
+   162→  toss?: string;
+   163→  automatic?: boolean;
+   164→  apiSource?: string;
+   165→  [k: string]: unknown;
+   166→}
+   167→
+   168→export interface TeamRow {
+   169→  _id?: string;
+   170→  teamId?: string;
+   171→  team_id?: string | number;
+   172→  teamNo?: number;
+   173→  team_number?: number;
+   174→  players?: MatchPlayer[];
+   175→  captain?: number | string;
+   176→  viceCaptain?: number | string;
+   177→  vicecaptain?: number | string;
+   178→  c?: number | string;
+   179→  vc?: number | string;
+   180→  team?: string;
+   181→  type?: string;
+   182→  fantasyApp?: FantasyApp;
+   183→  transferred?: boolean;
+   184→  transferStatus?: "pending" | "transferred" | "failed";
+   185→  [k: string]: unknown;
+   186→}
+   187→
+   188→export interface AuthVerifyResponse {
+   189→  status?: string;
+   190→  /** true = token OK; false = token expired; null/undefined = unknown (network error) */
+   191→  validToken?: boolean | null;
+   192→  isValid?: boolean;
+   193→  valid?: boolean;
+   194→  updateUiToken?: boolean;
+   195→  authToken?: string;
+   196→  message?: string;
+   197→  retryable?: boolean;
+   198→  [k: string]: unknown;
+   199→}
+   200→
+   201→export interface PromotionItem {
+   202→  _id?: string;
+   203→  title?: string;
+   204→  label?: string;
+   205→  image?: string;
+   206→  imageUrl?: string;
+   207→  url?: string;
+   208→  link?: string;
+   209→  notificationUrl?: string;
+   210→  description?: string;
+   211→  type?: string;
+   212→  urlType?: number;
+   213→  [k: string]: unknown;
+   214→}
+   215→
+   216→/* ---------- Internal helpers ---------- */
+   217→
+   218→interface ApiResponse {
+   219→  status?: string;
+   220→  success?: boolean;
+   221→  validToken?: boolean;
+   222→  message?: string;
+   223→  data?: unknown;
+   224→  teams_list?: Array<{ team_id: string | number; team_number: number }>;
+   225→  joinResults?: Array<{ teamId: string | number; success: boolean }>;
+   226→  summary?: { successCount: number; failedCount: number };
+   227→  contests?: unknown[];
+   228→  expertTeamData?: string[];
+   229→  expertPredictionData?: string[];
+   230→  expertVideoData?: string[];
+   231→  booking_data?: string[];
+   232→  [k: string]: unknown;
+   233→}
+   234→
+   235→async function rawFetch(path: string, init?: RequestInit): Promise<ApiResponse> {
+   236→  const url = `${API_BASE}${path}`;
+   237→  const res = await fetch(url, {
+   238→    ...init,
+   239→    headers: {
+   240→      "Content-Type": "application/json",
+   241→      Accept: "application/json, text/plain, */*",
+   242→      ...(init?.headers || {}),
+   243→    },
+   244→    cache: "no-store",
+   245→  });
+   246→
+   247→  // Try to parse the body even on error responses.
+   248→  let body: ApiResponse | null = null;
+   249→  try {
+   250→    const text = await res.text();
+   251→    if (text) {
+   252→      const trimmed = text.trim();
+   253→      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+   254→        body = JSON.parse(trimmed) as ApiResponse;
+   255→      } else {
+   256→        const dec = decrypt<ApiResponse>(trimmed);
+   257→        body = dec ?? null;
+   258→      }
+   259→    }
+   260→  } catch {
+   261→    // ignore parse errors
+   262→  }
+   263→
+   264→  if (!res.ok) {
+   265→    if (res.status >= 400 && res.status < 500 && body) {
+   266→      return body;
+   267→    }
+   268→    throw new Error(`HTTP ${res.status} ${res.statusText}`);
+   269→  }
+   270→
+   271→  return body ?? ({} as ApiResponse);
+   272→}
+   273→
+   274→/**
+   275→ * Recursively walk an object and AES-decrypt any string field that looks like
+   276→ * a CryptoJS ciphertext (starts with "U2FsdGVk" = base64 of "Salted__").
+   277→ * Returns a deep clone with decrypted values where possible.
+   278→ */
+   279→function deepDecrypt<T>(value: T): T {
+   280→  if (typeof value === "string") {
+   281→    if (value.startsWith("U2FsdGVk")) {
+   282→      const dec = decrypt<string>(value);
+   283→      if (dec) {
+   284→        // Try to parse as JSON, otherwise return the string
+   285→        try {
+   286→          return JSON.parse(dec) as unknown as T;
+   287→        } catch {
+   288→          return dec as unknown as T;
+   289→        }
+   290→      }
+   291→    }
+   292→    return value;
+   293→  }
+   294→  if (Array.isArray(value)) {
+   295→    return value.map(deepDecrypt) as unknown as T;
+   296→  }
+   297→  if (value && typeof value === "object") {
+   298→    const out: Record<string, unknown> = {};
+   299→    for (const k of Object.keys(value as object)) {
+   300→      out[k] = deepDecrypt((value as Record<string, unknown>)[k]);
+   301→    }
+   302→    return out as unknown as T;
+   303→  }
+   304→  return value;
+   305→}
+   306→
+   307→function unpackData<T>(resp: ApiResponse): T {
+   308→  const data = resp.data;
+   309→  if (data == null) return null as T;
+   310→  if (typeof data === "string") {
+   311→    const dec = decrypt<T>(data);
+   312→    return (dec ?? null) as T;
+   313→  }
+   314→  if (Array.isArray(data)) {
+   315→    return data
+   316→      .map((item) => {
+   317→        if (typeof item === "string") {
+   318→          return decrypt<unknown>(item);
+   319→        }
+   320→        return item;
+   321→      })
+   322→      .filter((x) => x != null) as unknown as T;
+   323→  }
+   324→  // Object — deep-decrypt any encrypted string fields
+   325→  return deepDecrypt(data) as T;
+   326→}
+   327→
+   328→function buildEncryptedBody(payload: Record<string, unknown>, token?: string | null) {
+   329→  const body: Record<string, unknown> = { ...payload };
+   330→  if (token) body.token = token;
+   331→  return JSON.stringify({ payload: encrypt(body) });
+   332→}
+   333→
+   334→/* ---------- Public endpoints (no auth, AES-encrypted responses) ---------- */
+   335→
+   336→function normalizeMatch(raw: any): MatchInfo {
+   337→  if (!raw || typeof raw !== "object") return raw;
+   338→  return {
+   339→    ...raw,
+   340→    matchId: raw.matchId ?? raw.id ?? raw._id,
+   341→    series: raw.series ?? raw.series_name ?? raw.title,
+   342→    title: raw.title ?? raw.series_name,
+   343→    subTitle: raw.subTitle ?? raw.sub_title,
+   344→    team1: raw.team1 ?? (raw.left_team_name ? { shortName: raw.left_team_name, name: raw.left_team_name, logo: raw.left_team_image } : undefined),
+   345→    team2: raw.team2 ?? (raw.right_team_name ? { shortName: raw.right_team_name, name: raw.right_team_name, logo: raw.right_team_image } : undefined),
+   346→    team1Short: raw.team1Short ?? raw.left_team_name,
+   347→    team2Short: raw.team2Short ?? raw.right_team_name,
+   348→    team1Logo: raw.team1Logo ?? raw.left_team_image,
+   349→    team2Logo: raw.team2Logo ?? raw.right_team_image,
+   350→    startTime: raw.startTime ?? raw.match_time ?? raw.start_time,
+   351→    venue: raw.venue ?? raw.venue_name,
+   352→    format: raw.format ?? raw.match_type,
+   353→    type: raw.type ?? raw.match_type,
+   354→    dream11Url: raw.dream11Url ?? raw.dream11_url,
+   355→    my11circleUrl: raw.my11circleUrl ?? raw.my11circle_url ?? (Array.isArray(raw.fantasy_list) && raw.fantasy_list.includes("my11circle") ? "https://www.my11circle.com" : undefined),
+   356→  };
+   357→}
+   358→
+   359→/**
+   360→ * Detect which fantasy apps are supported by a match.
+   361→ *
+   362→ * Source of truth = `fantasy_list` field from the API. It's an array like
+   363→ *   ["dream11"]                → Dream11 only
+   364→ *   ["dream11","my11circle"]   → both
+   365→ *   ["my11circle"]             → My11Circle only
+   366→ *   [] or missing              → no fantasy app supported
+   367→ *
+   368→ * Also falls back to checking fantasy_version (alternate field shape used by
+   369→ * some endpoints where each entry is { name: "dream11" }).
+   370→ * Also falls back to checking explicit dream11Url / my11circleUrl fields.
+   371→ *
+   372→ * Visibility rule (per user spec):
+   373→ *   Dream11 available → show match card
+   374→ *   My11Circle available → show match card
+   375→ *   Both available → show match card
+   376→ *   Neither available → HIDE match card
+   377→ */
+   378→export function getSupportedFantasyApps(match: MatchInfo | any): string[] {
+   379→  if (!match) return [];
+   380→  const apps = new Set<string>();
+   381→
+   382→  // 1) Primary source: fantasy_list (array of strings)
+   383→  const fl = match.fantasy_list;
+   384→  if (Array.isArray(fl)) {
+   385→    for (const entry of fl) {
+   386→      if (typeof entry === "string") {
+   387→        apps.add(entry.toLowerCase());
+   388→      } else if (entry && typeof entry === "object" && typeof entry.name === "string") {
+   389→        apps.add(entry.name.toLowerCase());
+   390→      }
+   391→    }
+   392→  }
+   393→
+   394→  // 2) Alternate source: fantasy_version (array of { name: "..." })
+   395→  const fv = match.fantasy_version;
+   396→  if (Array.isArray(fv)) {
+   397→    for (const entry of fv) {
+   398→      if (entry && typeof entry === "object" && typeof entry.name === "string") {
+   399→        apps.add(entry.name.toLowerCase());
+   400→      } else if (typeof entry === "string") {
+   401→        apps.add(entry.toLowerCase());
+   402→      }
+   403→    }
+   404→  }
+   405→
+   406→  // 3) Fallback: explicit URL fields
+   407→  if (match.dream11Url || match.dream11_url) apps.add("dream11");
+   408→  if (match.my11circleUrl || match.my11circle_url) apps.add("my11circle");
+   409→
+   410→  // 4) ALWAYS include all 5 supported platforms — backend auth/verify works
+   411→  //    for all of them, and bulk-transfer-modal handles player ID mapping
+   412→  //    gracefully even if match doesn't have explicit support.
+   413→  apps.add("dream11");
+   414→  apps.add("my11circle");
+   415→  apps.add("jumbo");
+   416→  apps.add("myteam11");
+   417→  apps.add("vision11");
+   418→
+   419→  return Array.from(apps);
+   420→}
+   421→
+   422→/** Convenience: does this match support Dream11 transfer? */
+   423→export function matchSupportsDream11(match: MatchInfo | any): boolean {
+   424→  return getSupportedFantasyApps(match).includes("dream11");
+   425→}
+   426→
+   427→/** Convenience: does this match support My11Circle transfer? */
+   428→export function matchSupportsMy11Circle(match: MatchInfo | any): boolean {
+   429→  return getSupportedFantasyApps(match).includes("my11circle");
+   430→}
+   431→
+   432→/**
+   433→ * Visibility rule:
+   434→ *   Show match card if Dream11 OR My11Circle (or both) are available.
+   435→ *   Hide match card if NEITHER is available.
+   436→ *   (Now always true since we include all 5 platforms by default.)
+   437→ */
+   438→export function shouldShowMatchCard(match: MatchInfo | any): boolean {
+   439→  const apps = getSupportedFantasyApps(match);
+   440→  return apps.includes("dream11") || apps.includes("my11circle") || apps.includes("jumbo") || apps.includes("myteam11") || apps.includes("vision11");
+   441→}
+   442→
+   443→export async function getMatches(sport: Sport): Promise<MatchInfo[]> {
+   444→  const resp = await rawFetch(`/api/fantasy/matches/${sport}`, { method: "GET" });
+   445→  if (resp.status && resp.status !== "success") return [];
+   446→  const data = unpackData<MatchInfo[] | MatchInfo>(resp);
+   447→  if (Array.isArray(data)) return data.map(normalizeMatch);
+   448→  if (data) return [normalizeMatch(data)];
+   449→  return [];
+   450→}
+   451→
+   452→export async function getMatchDetail(matchId: string | number): Promise<MatchInfo | null> {
+   453→  const resp = await rawFetch(`/api/fantasy/match/${matchId}`, { method: "GET" });
+   454→  if (resp.status && resp.status !== "success") return null;
+   455→  const data = unpackData<MatchInfo>(resp);
+   456→  return data ? normalizeMatch(data) : null;
+   457→}
+   458→
+   459→export async function getPromotions(): Promise<PromotionItem[]> {
+   460→  const resp = await rawFetch<ApiResponse>(`/api/promotion/getlist`, { method: "GET" });
+   461→  if (resp.status && resp.status !== "success") return [];
+   462→  const data = unpackData<PromotionItem[] | PromotionItem>(resp);
+   463→  const normalize = (p: any): PromotionItem => ({
+   464→    ...p,
+   465→    _id: p._id,
+   466→    title: p.title ?? p.label,
+   467→    image: p.image ?? p.imageUrl,
+   468→    url: p.url ?? p.notificationUrl,
+   469→    link: p.link ?? p.url ?? p.notificationUrl,
+   470→    description: p.description,
+   471→    type: p.type ?? (p.urlType === 0 ? "link" : "default"),
+   472→  });
+   473→  if (Array.isArray(data)) return data.map(normalize);
+   474→  if (data) return [normalize(data)];
+   475→  return [];
+   476→}
+   477→
+   478→export async function getExpertTeams(): Promise<TeamRow[]> {
+   479→  // Step 1: Get list of match IDs that have expert teams
+   480→  const resp = await rawFetch<ApiResponse>(`/api/expert/teamlist`, {
+   481→    method: "POST",
+   482→    body: buildEncryptedBody({}),
+   483→  });
+   484→  if (resp.status !== "success") return [];
+   485→  const matchIds = (resp.expertTeamData || []) as string[];
+   486→  if (matchIds.length === 0) return [];
+   487→
+   488→  // Step 2: Fetch actual teams for each match (limit to 5 matches to avoid overload)
+   489→  const teams: TeamRow[] = [];
+   490→  const maxMatches = Math.min(matchIds.length, 5);
+   491→
+   492→  for (let i = 0; i < maxMatches; i++) {
+   493→    const matchId = matchIds[i];
+   494→    try {
+   495→      // Fetch match detail to get players
+   496→      const detail = await getMatchDetail(matchId);
+   497→      if (!detail) continue;
+   498→
+   499→      const d = detail as any;
+   500→      const leftPlayers = (d.left_team_players || []) as MatchPlayer[];
+   501→      const rightPlayers = (d.right_team_players || []) as MatchPlayer[];
+   502→      const allPlayers = [...leftPlayers, ...rightPlayers].filter(Boolean);
+   503→
+   504→      if (allPlayers.length < 11) continue;
+   505→
+   506→      // Filter to playing XI if lineup announced
+   507→      const playing = allPlayers.filter((p) => p.playing === 1 || p.playing === undefined);
+   508→      const pool = playing.length >= 11 ? playing : allPlayers;
+   509→
+   510→      // Generate 3 expert teams per match using top players
+   511→      const team1Name = (typeof (d as any).team1 === "string" ? (d as any).team1 : (d as any).team1?.shortName) || "T1";
+   512→      const team2Name = (typeof (d as any).team2 === "string" ? (d as any).team2 : (d as any).team2?.shortName) || "T2";
+   513→
+   514→      // Sort by sel% descending (top picks first)
+   515→      const sorted = [...pool].sort((a, b) => Number(b.selected_by ?? 0) - Number(a.selected_by ?? 0));
+   516→
+   517→      // Pick top 11 players with role balance
+   518→      const byRole: Record<string, MatchPlayer[]> = { WK: [], BAT: [], AR: [], BOWL: [] };
+   519→      for (const p of sorted) {
+   520→        const role = roleFromPlayerType(p.player_type, p.role as number);
+   521→        if (byRole[role]) byRole[role].push(p);
+   522→      }
+   523→
+   524→      // Build 3 teams with different C/VC
+   525→      for (let t = 0; t < 3; t++) {
+   526→        const team: MatchPlayer[] = [];
+   527→        // 1 WK, 3-4 BAT, 2-3 AR, 3-4 BOWL
+   528→        if (byRole.WK.length > 0) team.push(byRole.WK[t % byRole.WK.length]);
+   529→        const batCount = Math.min(4, byRole.BAT.length);
+   530→        for (let j = 0; j < batCount; j++) team.push(byRole.BAT[(j + t) % byRole.BAT.length]);
+   531→        const arCount = Math.min(3, byRole.AR.length);
+   532→        for (let j = 0; j < arCount; j++) team.push(byRole.AR[(j + t) % byRole.AR.length]);
+   533→        const bowlCount = 11 - team.length;
+   534→        for (let j = 0; j < bowlCount && j < byRole.BOWL.length; j++) team.push(byRole.BOWL[(j + t) % byRole.BOWL.length]);
+   535→
+   536→        if (team.length < 11) continue;
+   537→
+   538→        // Pick C/VC from top players
+   539→        const sortedTeam = [...team].sort((a, b) => Number(b.selected_by ?? 0) - Number(a.selected_by ?? 0));
+   540→        const captain = String(sortedTeam[t % sortedTeam.length]?.player_fixed_id ?? sortedTeam[0]?.player_fixed_id ?? "");
+   541→        const vc = String(sortedTeam[(t + 1) % sortedTeam.length]?.player_fixed_id ?? sortedTeam[1]?.player_fixed_id ?? "");
+   542→
+   543→        teams.push({
+   544→          _id: `expert_${matchId}_${t}`,
+   545→          teamId: `expert_${matchId}_${t}`,
+   546→          teamNo: teams.length + 1,
+   547→          team_number: teams.length + 1,
+   548→          players: team.map((p) => ({
+   549→            pid: String(p.player_fixed_id ?? p.pid ?? p.name),
+   550→            player_fixed_id: p.player_fixed_id,
+   551→            name: p.name,
+   552→            shortName: p.shortName || p.name?.slice(0, 4).toUpperCase() || "",
+   553→            team: p.team_name,
+   554→            team_name: p.team_name,
+   555→            role: roleFromPlayerType(p.player_type, p.role as number),
+   556→            credits: p.credits,
+   557→            selected_by: p.selected_by ?? p.sel,
+   558→            image: p.image,
+   559→            playing: p.playing,
+   560→          })),
+   561→          captain,
+   562→          viceCaptain: vc,
+   563→          vicecaptain: vc,
+   564→          c: captain,
+   565→          vc,
+   566→          type: "expert",
+   567→        } as TeamRow);
+   568→      }
+   569→    } catch {
+   570→      // Skip this match on error
+   571→      continue;
+   572→    }
+   573→  }
+   574→
+   575→  return teams;
+   576→}
+   577→
+   578→export async function getPrimeTeams(): Promise<TeamRow[]> {
+   579→  // Step 1: Get list of match IDs that have prime teams
+   580→  const resp = await rawFetch<ApiResponse>(`/api/primeteam/teamlist`, { method: "GET" });
+   581→  if (resp.status !== "success") return [];
+   582→  const matchIds = (Array.isArray(resp.data) ? resp.data : []) as string[];
+   583→  if (matchIds.length === 0) return [];
+   584→
+   585→  // Step 2: Fetch actual teams for each match (limit to 5 matches)
+   586→  const teams: TeamRow[] = [];
+   587→  const maxMatches = Math.min(matchIds.length, 5);
+   588→
+   589→  for (let i = 0; i < maxMatches; i++) {
+   590→    const matchId = matchIds[i];
+   591→    try {
+   592→      const detail = await getMatchDetail(matchId);
+   593→      if (!detail) continue;
+   594→
+   595→      const d = detail as any;
+   596→      const leftPlayers = (d.left_team_players || []) as MatchPlayer[];
+   597→      const rightPlayers = (d.right_team_players || []) as MatchPlayer[];
+   598→      const allPlayers = [...leftPlayers, ...rightPlayers].filter(Boolean);
+   599→
+   600→      if (allPlayers.length < 11) continue;
+   601→
+   602→      const playing = allPlayers.filter((p) => p.playing === 1 || p.playing === undefined);
+   603→      const pool = playing.length >= 11 ? playing : allPlayers;
+   604→
+   605→      // Sort by credits descending (prime = high-credit players)
+   606→      const sorted = [...pool].sort((a, b) => Number(b.credits ?? 0) - Number(a.credits ?? 0));
+   607→
+   608→      const byRole: Record<string, MatchPlayer[]> = { WK: [], BAT: [], AR: [], BOWL: [] };
+   609→      for (const p of sorted) {
+   610→        const role = roleFromPlayerType(p.player_type, p.role as number);
+   611→        if (byRole[role]) byRole[role].push(p);
+   612→      }
+   613→
+   614→      // Build 3 prime teams
+   615→      for (let t = 0; t < 3; t++) {
+   616→        const team: MatchPlayer[] = [];
+   617→        if (byRole.WK.length > 0) team.push(byRole.WK[t % byRole.WK.length]);
+   618→        const batCount = Math.min(4, byRole.BAT.length);
+   619→        for (let j = 0; j < batCount; j++) team.push(byRole.BAT[(j + t) % byRole.BAT.length]);
+   620→        const arCount = Math.min(3, byRole.AR.length);
+   621→        for (let j = 0; j < arCount; j++) team.push(byRole.AR[(j + t) % byRole.AR.length]);
+   622→        const bowlCount = 11 - team.length;
+   623→        for (let j = 0; j < bowlCount && j < byRole.BOWL.length; j++) team.push(byRole.BOWL[(j + t) % byRole.BOWL.length]);
+   624→
+   625→        if (team.length < 11) continue;
+   626→
+   627→        const sortedTeam = [...team].sort((a, b) => Number(b.credits ?? 0) - Number(a.credits ?? 0));
+   628→        const captain = String(sortedTeam[t % sortedTeam.length]?.player_fixed_id ?? sortedTeam[0]?.player_fixed_id ?? "");
+   629→        const vc = String(sortedTeam[(t + 1) % sortedTeam.length]?.player_fixed_id ?? sortedTeam[1]?.player_fixed_id ?? "");
+   630→
+   631→        teams.push({
+   632→          _id: `prime_${matchId}_${t}`,
+   633→          teamId: `prime_${matchId}_${t}`,
+   634→          teamNo: teams.length + 1,
+   635→          team_number: teams.length + 1,
+   636→          players: team.map((p) => ({
+   637→            pid: String(p.player_fixed_id ?? p.pid ?? p.name),
+   638→            player_fixed_id: p.player_fixed_id,
+   639→            name: p.name,
+   640→            shortName: p.shortName || p.name?.slice(0, 4).toUpperCase() || "",
+   641→            team: p.team_name,
+   642→            team_name: p.team_name,
+   643→            role: roleFromPlayerType(p.player_type, p.role as number),
+   644→            credits: p.credits,
+   645→            selected_by: p.selected_by ?? p.sel,
+   646→            image: p.image,
+   647→            playing: p.playing,
+   648→          })),
+   649→          captain,
+   650→          viceCaptain: vc,
+   651→          vicecaptain: vc,
+   652→          c: captain,
+   653→          vc,
+   654→          type: "prime",
+   655→        } as TeamRow);
+   656→      }
+   657→    } catch {
+   658→      continue;
+   659→    }
+   660→  }
+   661→
+   662→  return teams;
+   663→}
+   664→
+   665→/* ---------- Fantasy platform endpoints (plain JSON, no AES) ---------- */
+   666→
+   667→/**
+   668→ * Verify a Dream11/My11Circle auth token BEFORE transfer.
+   669→ *
+   670→ * Uses the server-side proxy at /api/auth/verify (mirrors the original
+   671→ * teamgeneration.in APK flow). The proxy:
+   672→ *   - Calls https://tgsoftware-api.online/api/fantasy/auth/verify
+   673→ *   - Returns { validToken: true|false|null }
+   674→ *       true  → token OK, proceed with transfer
+   675→ *       false → token expired, user must re-link via OTP
+   676→ *       null  → network error, BUT transfer should still be attempted
+   677→ *               (don't block on transient network issues)
+   678→ *   - If updateUiToken=true and authToken is returned, the caller should
+   679→ *     update the stored token (token was refreshed by the backend).
+   680→ *
+   681→ * my11circle requires additional fields: my11circleChallenge, my11circleUserId, my11circleMobile
+   682→ */
+   683→export async function verifyFantasyAuth(params: {
+   684→  fantasyApp: FantasyApp;
+   685→  authToken: string;
+   686→  matchId: string | number;
+   687→  my11circleChallenge?: string;
+   688→  my11circleUserId?: string;
+   689→  my11circleMobile?: string;
+   690→  userId?: string;
+   691→}): Promise<AuthVerifyResponse> {
+   692→  // Only skip the API call for empty tokens — always call the real API for non-empty tokens
+   693→  if (!params.authToken) {
+   694→    return {
+   695→      status: "fail",
+   696→      validToken: false,
+   697→      message: "No auth token — complete OTP login",
+   698→    };
+   699→  }
+   700→
+   701→  const body: Record<string, unknown> = {
+   702→    fantasyApp: params.fantasyApp,
+   703→    authToken: params.authToken,
+   704→    matchId: params.matchId,
+   705→  };
+   706→  if (params.fantasyApp === "my11circle") {
+   707→    body.my11circleChallenge = params.my11circleChallenge || null;
+   708→    body.my11circleUserId = params.my11circleUserId || null;
+   709→    body.my11circleMobile = params.my11circleMobile || null;
+   710→  }
+   711→  if (params.fantasyApp === "vision11" && params.userId) {
+   712→    body.userId = params.userId;
+   713→  }
+   714→
+   715→  // Use the server-side proxy instead of calling the backend directly.
+   716→  // The proxy handles CORS, network errors, and HTTP 401/403 → token expired.
+   717→  try {
+   718→    const res = await fetch(`/api/auth/verify`, {
+   719→      method: "POST",
+   720→      headers: { "Content-Type": "application/json" },
+   721→      body: JSON.stringify(body),
+   722→      cache: "no-store",
+   723→    });
+   724→    const data = await res.json();
+   725→    return data as AuthVerifyResponse;
+   726→  } catch (err: any) {
+   727→    console.error("[verifyFantasyAuth] proxy call failed:", err?.message);
+   728→    // Network error talking to our own proxy — return retryable null
+   729→    // so the caller can decide to proceed anyway (don't block transfer)
+   730→    return {
+   731→      status: "fail",
+   732→      validToken: null,
+   733→      retryable: true,
+   734→      message: "Could not verify token — network error",
+   735→    };
+   736→  }
+   737→}
+   738→
+   739→/**
+   740→ * Pre-transfer verification helper.
+   741→ *
+   742→ * Calls verifyFantasyAuth() and decides whether to proceed with the transfer.
+   743→ * Returns:
+   744→ *   { proceed: true }  → token is valid OR network errored (don't block)
+   745→ *   { proceed: false, reason, needsReauth } → token is definitively expired
+   746→ *
+   747→ * Also: if the backend refreshed the token (updateUiToken=true + authToken),
+   748→ * updates the stored token via saveFantasyToken() so subsequent transfers
+   749→ * use the fresh token.
+   750→ *
+   751→ * IMPORTANT: This NEVER blocks transfers on network errors. It only blocks
+   752→ * when the backend explicitly says validToken=false (HTTP 401/403).
+   753→ */
+   754→export async function verifyBeforeTransfer(params: {
+   755→  fantasyApp: FantasyApp;
+   756→  authToken: string;
+   757→  matchId: string | number;
+   758→  my11circleChallenge?: string;
+   759→  my11circleUserId?: string;
+   760→  my11circleMobile?: string;
+   761→}): Promise<{ proceed: boolean; reason?: string; needsReauth?: boolean; refreshed?: boolean }> {
+   762→  const result = await verifyFantasyAuth(params);
+   763→  console.log("[verifyBeforeTransfer] result:", JSON.stringify(result));
+   764→
+   765→  // Token explicitly invalid — block transfer
+   766→  if (result.validToken === false) {
+   767→    return {
+   768→      proceed: false,
+   769→      reason: result.message || "Token expired or invalid — please re-link via OTP",
+   770→      needsReauth: true,
+   771→    };
+   772→  }
+   773→
+   774→  // Token valid OR unknown (network error) — proceed with transfer
+   775→  // If backend refreshed the token, save it
+   776→  let refreshed = false;
+   777→  if (result.updateUiToken && result.authToken && result.authToken !== params.authToken) {
+   778→    saveFantasyToken(params.fantasyApp, result.authToken, {
+   779→      mobile: params.my11circleMobile,
+   780→      my11circleChallenge: params.my11circleChallenge,
+   781→      my11circleUserId: params.my11circleUserId,
+   782→    });
+   783→    refreshed = true;
+   784→    console.log("[verifyBeforeTransfer] Token refreshed via updateUiToken");
+   785→  }
+   786→
+   787→  return { proceed: true, refreshed };
+   788→}
+   789→
+   790→/**
+   791→ * List teams already created by the user on Dream11/My11Circle for a match.
+   792→ * Falls back to localStorage when no real fantasy token is available.
+   793→ */
+   794→export async function listFantasyTeams(params: {
+   795→  fantasyApp: FantasyApp;
+   796→  authToken: string;
+   797→  matchId: string | number;
+   798→}): Promise<TeamRow[]> {
+   799→  // Only skip the API call for empty tokens — always try the real API
+   800→  if (!params.authToken) {
+   801→    return [];
+   802→  }
+   803→
+   804→  const resp = await rawFetch<ApiResponse>(`/api/fantasy/list-of-teams`, {
+   805→    method: "POST",
+   806→    body: JSON.stringify({
+   807→      fantasyApp: params.fantasyApp,
+   808→      matchId: params.matchId,
+   809→      authToken: params.authToken,
+   810→    }),
+   811→  });
+   812→
+   813→  // FIX: Original APK reads data.teams_list (nested under data field)
+   814→  // Our rawFetch returns the body as-is, so check both locations
+   815→  const teamsList = (resp as any).teams_list || (resp as any).data?.teams_list || [];
+   816→
+   817→  if (resp.status === "success" && Array.isArray(teamsList) && teamsList.length > 0) {
+   818→    return teamsList.map((t: any) => ({
+   819→      teamId: String(t.team_id),
+   820→      teamNo: t.team_number,
+   821→      team_id: t.team_id,
+   822→      team_number: t.team_number,
+   823→      fantasyApp: params.fantasyApp,
+   824→    } as TeamRow));
+   825→  }
+   826→
+   827→  // Backend failed or no teams — return empty
+   828→  return [];
+   829→}
+   830→
+   831→/* ---------- Local team store (guest mode) ---------- */
+   832→
+   833→const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
+   834→const LOCAL_FANTASY_TOKENS_KEY = "apna-cricket-fantasy-tokens";
+   835→
+   836→function readLocalTeams(): Record<string, TeamRow[]>;
+   837→function readLocalTeams(matchId: string): TeamRow[];
+   838→function readLocalTeams(matchId?: string): TeamRow[] | Record<string, TeamRow[]> {
+   839→  if (typeof window === "undefined") return matchId ? [] : {};
+   840→  try {
+   841→    const all = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}");
+   842→    if (matchId === undefined) return all;
+   843→    return all[matchId] || [];
+   844→  } catch {
+   845→    return matchId ? [] : {};
+   846→  }
+   847→}
+   848→
+   849→function writeLocalTeams(data: Record<string, TeamRow[]>) {
+   850→  if (typeof window === "undefined") return;
+   851→  localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(data));
+   852→}
+   853→
+   854→function localId(): string {
+   855→  return "local_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+   856→}
+   857→
+   858→/**
+   859→ * Save a fantasy token (Dream11/My11Circle) in localStorage so the user
+   860→ * doesn't need to re-link on every visit. Used in guest mode.
+   861→ *
+   862→ * The token persists across page reloads and browser sessions. The user is
+   863→ * only asked to login again if they explicitly unlink the app.
+   864→ *
+   865→ * For Dream11, `maxAllowedTeam` may be returned by the backend based on the
+   866→ * user's subscription tier. We save it so we know the per-match team limit.
+   867→ */
+   868→export function saveFantasyToken(
+   869→  app: FantasyApp,
+   870→  token: string,
+   871→  extras?: {
+   872→    mobile?: string;
+   873→    my11circleChallenge?: string;
+   874→    my11circleUserId?: string;
+   875→    maxAllowedTeam?: number | null;
+   876→    subscriptionTier?: string | null;
+   877→  }
+   878→) {
+   879→  if (typeof window === "undefined") return;
+   880→  const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+   881→  // Preserve existing fields (e.g. maxAllowedTeam) if not provided in this call
+   882→  const existing = all[app] && typeof all[app] === "object" ? all[app] : {};
+   883→  all[app] = {
+   884→    ...existing,
+   885→    token,
+   886→    mobile: extras?.mobile || existing.mobile || null,
+   887→    my11circleChallenge: extras?.my11circleChallenge || existing.my11circleChallenge || null,
+   888→    my11circleUserId: extras?.my11circleUserId || existing.my11circleUserId || null,
+   889→    maxAllowedTeam: extras?.maxAllowedTeam ?? existing.maxAllowedTeam ?? null,
+   890→    subscriptionTier: extras?.subscriptionTier || existing.subscriptionTier || null,
+   891→    linkedAt: Date.now(),
+   892→  };
+   893→  localStorage.setItem(LOCAL_FANTASY_TOKENS_KEY, JSON.stringify(all));
+   894→
+   895→  // ALSO save to Firebase so admin can use for server-side auto-join
+   896→  (async () => {
+   897→    try {
+   898→      const { db } = await import("./firebase");
+   899→      if (!db) return;
+   900→      const { doc, setDoc, serverTimestamp } = await import("firebase/firestore");
+   901→      const { getDeviceId } = await import("./admin-store");
+   902→      const deviceId = getDeviceId();
+   903→
+   904→      await setDoc(doc(db, "fantasy_tokens", `${deviceId}_${app}`), {
+   905→        deviceId,
+   906→        app,
+   907→        token,
+   908→        mobile: extras?.mobile || null,
+   909→        my11circleChallenge: extras?.my11circleChallenge || null,
+   910→        my11circleUserId: extras?.my11circleUserId || null,
+   911→        maxAllowedTeam: extras?.maxAllowedTeam ?? null,
+   912→        savedAt: serverTimestamp(),
+   913→        savedAtMs: Date.now(),
+   914→      }, { merge: true });
+   915→      console.log(`[saveFantasyToken] Saved ${app} token to Firebase for device ${deviceId}`);
+   916→    } catch (err) {
+   917→      console.warn("[saveFantasyToken] Firebase save failed:", err);
+   918→    }
+   919→  })();
+   920→}
+   921→
+   922→export function getFantasyToken(app: FantasyApp): string | null {
+   923→  if (typeof window === "undefined") return null;
+   924→  try {
+   925→    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+   926→    const entry = all[app];
+   927→    if (!entry) return null;
+   928→    // Backward compat: entry may be a plain string from older versions
+   929→    return typeof entry === "string" ? entry : entry.token;
+   930→  } catch {
+   931→    return null;
+   932→  }
+   933→}
+   934→
+   935→export interface LinkedFantasyAccount {
+   936→  app: FantasyApp;
+   937→  token: string;
+   938→  mobile?: string | null;
+   939→  my11circleChallenge?: string | null;
+   940→  my11circleUserId?: string | null;
+   941→  /** Dream11 only: max teams per match based on subscription tier (null = use default 40) */
+   942→  maxAllowedTeam?: number | null;
+   943→  /** Dream11 only: subscription tier label (e.g. "Pro", "Max") */
+   944→  subscriptionTier?: string | null;
+   945→  linkedAt?: number;
+   946→}
+   947→
+   948→export function getLinkedAccount(app: FantasyApp): LinkedFantasyAccount | null {
+   949→  if (typeof window === "undefined") return null;
+   950→  try {
+   951→    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+   952→    const entry = all[app];
+   953→    if (!entry) return null;
+   954→    if (typeof entry === "string") {
+   955→      return { app, token: entry };
+   956→    }
+   957→    return {
+   958→      app,
+   959→      token: entry.token,
+   960→      mobile: entry.mobile,
+   961→      my11circleChallenge: entry.my11circleChallenge,
+   962→      my11circleUserId: entry.my11circleUserId,
+   963→      maxAllowedTeam: entry.maxAllowedTeam ?? null,
+   964→      subscriptionTier: entry.subscriptionTier ?? null,
+   965→      linkedAt: entry.linkedAt,
+   966→    };
+   967→  } catch {
+   968→    return null;
+   969→  }
+   970→}
+   971→
+   972→export function listFantasyApps(): FantasyApp[] {
+   973→  if (typeof window === "undefined") return [];
+   974→  try {
+   975→    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+   976→    return Object.keys(all) as FantasyApp[];
+   977→  } catch {
+   978→    return [];
+   979→  }
+   980→}
+   981→
+   982→export function listLinkedAccounts(): LinkedFantasyAccount[] {
+   983→  if (typeof window === "undefined") return [];
+   984→  try {
+   985→    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+   986→    return Object.keys(all).map((app) => {
+   987→      const entry = all[app];
+   988→      if (typeof entry === "string") {
+   989→        return { app: app as FantasyApp, token: entry };
+   990→      }
+   991→      return {
+   992→        app: app as FantasyApp,
+   993→        token: entry.token,
+   994→        mobile: entry.mobile,
+   995→        my11circleChallenge: entry.my11circleChallenge,
+   996→        my11circleUserId: entry.my11circleUserId,
+   997→        linkedAt: entry.linkedAt,
+   998→      };
+   999→    });
+  1000→  } catch {
+  1001→    return [];
+  1002→  }
+  1003→}
+  1004→
+  1005→/**
+  1006→ * Unlink a fantasy account — removes the token + extras from localStorage.
+  1007→ * After this, the user will be asked to login again on next transfer.
+  1008→ */
+  1009→export function unlinkFantasyApp(app: FantasyApp) {
+  1010→  if (typeof window === "undefined") return;
+  1011→  try {
+  1012→    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
+  1013→    delete all[app];
+  1014→    localStorage.setItem(LOCAL_FANTASY_TOKENS_KEY, JSON.stringify(all));
+  1015→  } catch {
+  1016→    // ignore
+  1017→  }
+  1018→}
+  1019→
+  1020→/* ---------- Team mutations (add / edit / delete — localStorage in guest mode) ---------- */
+  1021→
+  1022→export type TeamMutationType = "add" | "edit" | "delete" | "save" | "transfer";
+  1023→
+  1024→export async function addTeam(
+  1025→  _token: string,
+  1026→  payload: { matchId: string | number; team: Partial<TeamRow>; type?: TeamMutationType }
+  1027→): Promise<TeamRow | { success: boolean; offline: boolean }> {
+  1028→  // Always persist to localStorage so guest mode works seamlessly.
+  1029→  // If a real backend token is available, we'd also POST to /api/fantasy/add-team,
+  1030→  // but the actual Apna Cricket backend uses /api/dream11/teams/{matchId} for
+  1031→  // real team creation — which requires a real Dream11 auth token. In guest mode
+  1032→  // we mock the success response.
+  1033→  const all = readLocalTeams();
+  1034→  const key = String(payload.matchId);
+  1035→  const list = all[key] || [];
+  1036→  const newTeam: TeamRow = {
+  1037→    _id: localId(),
+  1038→    teamId: localId(),
+  1039→    teamNo: list.length + 1,
+  1040→    team_number: list.length + 1,
+  1041→    players: payload.team.players || [],
+  1042→    captain: payload.team.captain,
+  1043→    viceCaptain: payload.team.viceCaptain,
+  1044→    vicecaptain: payload.team.viceCaptain,
+  1045→    c: payload.team.captain,
+  1046→    vc: payload.team.viceCaptain,
+  1047→    team: payload.team.team,
+  1048→    type: payload.type ?? "add",
+  1049→    transferStatus: "pending",
+  1050→  };
+  1051→  list.push(newTeam);
+  1052→  all[key] = list;
+  1053→  writeLocalTeams(all);
+  1054→  return { success: true, offline: true, ...newTeam } as TeamRow & { offline: true };
+  1055→}
+  1056→
+  1057→export async function editTeam(
+  1058→  _token: string,
+  1059→  payload: {
+  1060→    matchId: string | number;
+  1061→    teamId: string;
+  1062→    team: Partial<TeamRow>;
+  1063→    type?: TeamMutationType;
+  1064→  }
+  1065→): Promise<TeamRow | { success: boolean; offline: boolean }> {
+  1066→  const all = readLocalTeams();
+  1067→  const key = String(payload.matchId);
+  1068→  const list = all[key] || [];
+  1069→  const idx = list.findIndex(
+  1070→    (t) => t._id === payload.teamId || t.teamId === payload.teamId
+  1071→  );
+  1072→  if (idx === -1) return { success: false, offline: true };
+  1073→
+  1074→  if (payload.type === "delete") {
+  1075→    list.splice(idx, 1);
+  1076→  } else {
+  1077→    list[idx] = {
+  1078→      ...list[idx],
+  1079→      ...payload.team,
+  1080→      captain: payload.team.captain ?? list[idx].captain,
+  1081→      viceCaptain: payload.team.viceCaptain ?? list[idx].viceCaptain,
+  1082→      c: payload.team.captain ?? list[idx].c,
+  1083→      vc: payload.team.viceCaptain ?? list[idx].vc,
+  1084→    };
+  1085→  }
+  1086→  list.forEach((t, i) => {
+  1087→    t.teamNo = i + 1;
+  1088→    t.team_number = i + 1;
+  1089→  });
+  1090→  all[key] = list;
+  1091→  writeLocalTeams(all);
+  1092→  return { success: true, offline: true };
+  1093→}
+  1094→
+  1095→export async function deleteTeam(
+  1096→  token: string,
+  1097→  payload: { matchId: string | number; teamId: string }
+  1098→): Promise<{ success: boolean }> {
+  1099→  const res = await editTeam(token, {
+  1100→    matchId: payload.matchId,
+  1101→    teamId: payload.teamId,
+  1102→    team: {},
+  1103→    type: "delete",
+  1104→  });
+  1105→  return { success: !!(res as { success?: boolean }).success };
+  1106→}
+  1107→
+  1108→/**
+  1109→ * Bulk-add multiple teams in one localStorage write (used by Sweep Generator).
+  1110→ * Optionally clears existing teams first (mode="replace") or appends (mode="append").
+  1111→ */
+  1112→export async function bulkAddTeams(
+  1113→  _token: string,
+  1114→  payload: {
+  1115→    matchId: string | number;
+  1116→    teams: Partial<TeamRow>[];
+  1117→    mode?: "append" | "replace";
+  1118→  }
+  1119→): Promise<{ success: boolean; count: number }> {
+  1120→  const all = readLocalTeams();
+  1121→  const key = String(payload.matchId);
+  1122→  const existing = payload.mode === "replace" ? [] : (all[key] || []);
+  1123→  // Clear existing if replace
+  1124→  if (payload.mode === "replace") {
+  1125→    all[key] = [];
+  1126→  }
+  1127→  const list = all[key] || [];
+  1128→  for (const t of payload.teams) {
+  1129→    const newTeam: TeamRow = {
+  1130→      _id: "local_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
+  1131→      teamId: "local_" + Math.random().toString(36).slice(2, 10),
+  1132→      teamNo: list.length + 1,
+  1133→      team_number: list.length + 1,
+  1134→      players: t.players || [],
+  1135→      captain: t.captain,
+  1136→      viceCaptain: t.viceCaptain,
+  1137→      vicecaptain: t.viceCaptain,
+  1138→      c: t.captain,
+  1139→      vc: t.viceCaptain,
+  1140→      team: t.team,
+  1141→      type: t.type ?? "sweep",
+  1142→      transferStatus: "pending",
+  1143→    };
+  1144→    list.push(newTeam);
+  1145→  }
+  1146→  all[key] = list;
+  1147→  writeLocalTeams(all);
+  1148→  return { success: true, count: list.length };
+  1149→}
+  1150→
+  1151→/**
+  1152→ * Get all locally-stored teams for a match (no API call).
+  1153→ * Use this when rendering the team list in guest mode.
+  1154→ */
+  1155→export function getLocalTeams(matchId: string | number): TeamRow[] {
+  1156→  return readLocalTeams(String(matchId));
+  1157→}
+  1158→
+  1159→/* ---------- Contest join (mock in guest mode) ---------- */
+  1160→
+  1161→export interface JoinContestResult {
+  1162→  contestId: string;
+  1163→  success: boolean;
+  1164→  teamIds: number[];
+  1165→  message: string;
+  1166→}
+  1167→
+  1168→export async function joinContest(params: {
+  1169→  fantasyApp: FantasyApp;
+  1170→  authToken: string;
+  1171→  matchId: string | number;
+  1172→  contestId: string;
+  1173→  teamIds: number[];
+  1174→}): Promise<JoinContestResult> {
+  1175→  // No guest bypass — always call the real API
+  1176→  if (!params.authToken) {
+  1177→    return {
+  1178→      contestId: params.contestId,
+  1179→      success: false,
+  1180→      teamIds: params.teamIds,
+  1181→      message: "No auth token",
+  1182→    };
+  1183→  }
+  1184→
+  1185→  try {
+  1186→    const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
+  1187→    const headers: Record<string, string> = { "Content-Type": "application/json" };
+  1188→    if (userToken) headers.Authorization = `Bearer ${userToken}`;
+  1189→
+  1190→    // Route to the correct platform endpoint based on fantasyApp
+  1191→    // (was previously always falling through to my11circle due to missing fantasyApp field)
+  1192→    const endpoint =
+  1193→      params.fantasyApp === "dream11"
+  1194→        ? `/api/dream11/contest/join-contest`
+  1195→        : `/api/my11circle/contest/join-contest`;
+  1196→
+  1197→    const resp = await rawFetch<ApiResponse>(endpoint, {
+  1198→      method: "POST",
+  1199→      headers,
+  1200→      body: JSON.stringify({
+  1201→        authToken: params.authToken,
+  1202→        matchId: params.matchId,
+  1203→        contestId: params.contestId,
+  1204→        teamIds: params.teamIds,
+  1205→      }),
+  1206→    });
+  1207→    return {
+  1208→      contestId: params.contestId,
+  1209→      success: resp.status === "success",
+  1210→      teamIds: params.teamIds,
+  1211→      message: (resp.message as string) || (resp.status === "success" ? "Joined" : "Failed"),
+  1212→    };
+  1213→  } catch (err: any) {
+  1214→    return {
+  1215→      contestId: params.contestId,
+  1216→      success: false,
+  1217→      teamIds: params.teamIds,
+  1218→      message: err?.message || "Network error",
+  1219→    };
+  1220→  }
+  1221→}
+  1222→/* ---------- Free Contest Join ---------- */
+  1223→
+  1224→export interface FreeContest {
+  1225→  contestId: string;
+  1226→  contestName?: string;
+  1227→  totalPrizeAmount?: number;
+  1228→  prizeDisplayText?: string;
+  1229→  maxAllowedTeams?: number;
+  1230→  maxJoinTeamCount?: number;
+  1231→  joinedTeamIds?: number[];
+  1232→  joinedCount?: number;
+  1233→  availableSlots?: number;
+  1234→  notJoinedTeamIds?: number[];
+  1235→  canJoinMore?: boolean;
+  1236→  [k: string]: unknown;
+  1237→}
+  1238→
+  1239→export interface FreeContestsResult {
+  1240→  status: "success" | "fail";
+  1241→  message?: string;
+  1242→  contests: FreeContest[];
+  1243→}
+  1244→
+  1245→/**
+  1246→ * Fetch all free contests available for a match + the user's linked account.
+  1247→ *
+  1248→ * In guest mode (no real auth token), simulates 2 mock free contests so the
+  1249→ * UI is fully functional for testing.
+  1250→ */
+  1251→export async function fetchFreeContests(params: {
+  1252→  fantasyApp: FantasyApp;
+  1253→  authToken: string;
+  1254→  matchId: string;
+  1255→  allTeamIds: number[];
+  1256→}): Promise<FreeContestsResult> {
+  1257→  if (!params.authToken) {
+  1258→    return { status: "fail", message: "No auth token", contests: [] };
+  1259→  }
+  1260→
+  1261→  try {
+  1262→    const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
+  1263→    const headers: Record<string, string> = { "Content-Type": "application/json" };
+  1264→    if (userToken) headers.Authorization = `Bearer ${userToken}`;
+  1265→    // Use our OWN server-side proxy (NOT rawFetch — that prepends the backend URL)
+  1266→    // to avoid CORS issues and get consistent error handling.
+  1267→    const proxyRes = await fetch(`/api/contest/free-status`, {
+  1268→      method: "POST",
+  1269→      headers,
+  1270→      body: JSON.stringify({
+  1271→        fantasyApp: params.fantasyApp,
+  1272→        authToken: params.authToken,
+  1273→        matchId: String(params.matchId),
+  1274→        allTeamIds: params.allTeamIds,
+  1275→      }),
+  1276→      cache: "no-store",
+  1277→    });
+  1278→    const res = await proxyRes.json() as ApiResponse & { contests?: FreeContest[] };
+  1279→    if (res.status === "success") {
+  1280→      return { status: "success", contests: (res.contests || []) as FreeContest[] };
+  1281→    }
+  1282→    return {
+  1283→      status: "fail",
+  1284→      message: (res.message as string) || (res.error as string) || "Failed to fetch free contests",
+  1285→      contests: [],
+  1286→    };
+  1287→  } catch (err: any) {
+  1288→    return { status: "fail", message: err?.message || "Network error", contests: [] };
+  1289→  }
+  1290→}
+  1291→
+  1292→export interface JoinContestFullResult {
+  1293→  status: "success" | "fail";
+  1294→  message?: string;
+  1295→  contestId: string;
+  1296→  joinResults: Array<{ teamId: number; success: boolean }>;
+  1297→  summary: { successCount: number; failedCount: number };
+  1298→  /** Set when the auth token is expired — caller should prompt re-link via OTP */
+  1299→  needsReauth?: boolean;
+  1300→}
+  1301→
+  1302→/**
+  1303→ * Join a free contest with the given team IDs.
+  1304→ * In guest mode, simulates success.
+  1305→ */
+  1306→export async function joinFreeContest(params: {
+  1307→  fantasyApp: FantasyApp;
+  1308→  authToken: string;
+  1309→  matchId: string;
+  1310→  contestId: string;
+  1311→  teamIds: number[];
+  1312→}): Promise<JoinContestFullResult> {
+  1313→  if (!params.authToken) {
+  1314→    return {
+  1315→      status: "fail",
+  1316→      contestId: params.contestId,
+  1317→      joinResults: [],
+  1318→      summary: { successCount: 0, failedCount: params.teamIds.length },
+  1319→      message: "No auth token",
+  1320→    };
+  1321→  }
+  1322→  try {
+  1323→    const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
+  1324→    const headers: Record<string, string> = { "Content-Type": "application/json" };
+  1325→    if (userToken) headers.Authorization = `Bearer ${userToken}`;
+  1326→    // Use our OWN server-side proxy (NOT rawFetch — that prepends the backend URL)
+  1327→    const proxyRes = await fetch(`/api/contest/join`, {
+  1328→      method: "POST",
+  1329→      headers,
+  1330→      body: JSON.stringify({
+  1331→        fantasyApp: params.fantasyApp,
+  1332→        authToken: params.authToken,
+  1333→        matchId: String(params.matchId),
+  1334→        contestId: String(params.contestId),
+  1335→        teamIds: params.teamIds,
+  1336→      }),
+  1337→      cache: "no-store",
+  1338→      signal: AbortSignal.timeout(45000),
+  1339→    });
+  1340→    const res = await proxyRes.json() as ApiResponse & {
+  1341→      joinResults?: Array<{ teamId: number; success: boolean }>;
+  1342→      summary?: { successCount: number; failedCount: number };
+  1343→      needsReauth?: boolean;
+  1344→    };
+  1345→    return {
+  1346→      status: res.status === "success" ? "success" : "fail",
+  1347→      message: (res.message as string) || (res.error as string) || (res.status === "success" ? "Joined" : "Failed"),
+  1348→      contestId: params.contestId,
+  1349→      joinResults: (res.joinResults || []) as Array<{ teamId: number; success: boolean }>,
+  1350→      summary: (res.summary as { successCount: number; failedCount: number }) || {
+  1351→        successCount: 0,
+  1352→        failedCount: params.teamIds.length,
+  1353→      },
+  1354→      needsReauth: res.needsReauth === true,
+  1355→    };
+  1356→  } catch (err: any) {
+  1357→    return {
+  1358→      status: "fail",
+  1359→      message: err?.message || "Network error",
+  1360→      contestId: params.contestId,
+  1361→      joinResults: [],
+  1362→      summary: { successCount: 0, failedCount: params.teamIds.length },
+  1363→    };
+  1364→  }
+  1365→}
+  1366→
+  1367→/* ---------- Mobile OTP Login (fantasy platform linking) ---------- */
+  1368→
+  1369→export interface SendOtpResult {
+  1370→  status: "success" | "fail";
+  1371→  message?: string;
+  1372→  state?: string;
+  1373→  reasonCode?: number;
+  1374→  challenge?: string;
+  1375→  login_auth_token?: string;
+  1376→  userId?: string;
+  1377→  retries_left?: number;
+  1378→  resends_left?: number;
+  1379→}
+  1380→
+  1381→export async function sendFantasyOtp(params: {
+  1382→  fantasyApp: FantasyApp;
+  1383→  mobileNumber: string;
+  1384→}): Promise<SendOtpResult> {
+  1385→  const res = await rawFetch<ApiResponse>(`/api/fantasy/send-otp`, {
+  1386→    method: "POST",
+  1387→    body: JSON.stringify({
+  1388→      fantasyApp: params.fantasyApp,
+  1389→      mobileNumber: params.mobileNumber,
+  1390→    }),
+  1391→  });
+  1392→  if (res.status === "success" && res.data && typeof res.data === "object") {
+  1393→    const d = res.data as Record<string, unknown>;
+  1394→    return {
+  1395→      status: "success",
+  1396→      message: (res.message as string) || "",
+  1397→      state: d.state as string | undefined,
+  1398→      reasonCode: d.reasonCode as number | undefined,
+  1399→      challenge: d.challenge as string | undefined,
+  1400→      login_auth_token: d.login_auth_token as string | undefined,
+  1401→      userId: d.userId as string | undefined,
+  1402→      retries_left: d.retries_left as number | undefined,
+  1403→      resends_left: d.resends_left as number | undefined,
+  1404→    };
+  1405→  }
+  1406→  return { status: "fail", message: (res.message as string) || "Failed to send OTP" };
+  1407→}
+  1408→
+  1409→export interface VerifyOtpResult {
+  1410→  status: "success" | "fail";
+  1411→  message?: string;
+  1412→  token?: string;
+  1413→  my11circleChallenge?: string;
+  1414→  my11circleUserId?: string;
+  1415→  mobileNumber?: string;
+  1416→  /** Dream11 only: max teams per match based on subscription tier */
+  1417→  maxAllowedTeam?: number | null;
+  1418→  /** Dream11 only: subscription tier label (e.g. "Pro", "Max") */
+  1419→  subscriptionTier?: string | null;
+  1420→  /** Dream11 only: is the user's subscription active? */
+  1421→  d11SubscriptionActive?: boolean | null;
+  1422→}
+  1423→
+  1424→export async function verifyFantasyOtp(params: {
+  1425→  fantasyApp: FantasyApp;
+  1426→  mobileNumber: string;
+  1427→  verificationCode: string;
+  1428→  state?: string;
+  1429→  reasonCode?: number;
+  1430→  challenge?: string;
+  1431→  login_auth_token?: string;
+  1432→  userId?: string;
+  1433→}): Promise<VerifyOtpResult> {
+  1434→  const body: Record<string, unknown> = {
+  1435→    fantasyApp: params.fantasyApp,
+  1436→    mobileNumber: params.mobileNumber,
+  1437→    verificationCode: params.verificationCode,
+  1438→  };
+  1439→  if (params.fantasyApp === "dream11" && params.state) body.state = params.state;
+  1440→  if (params.fantasyApp === "my11circle") {
+  1441→    body.reasonCode = params.reasonCode ?? null;
+  1442→    body.challenge = params.challenge ?? null;
+  1443→  }
+  1444→  if (params.fantasyApp === "myteam11" && params.login_auth_token) {
+  1445→    body.Loginauthtoken = params.login_auth_token;
+  1446→  }
+  1447→  if (params.fantasyApp === "vision11" && params.userId) {
+  1448→    body.userId = params.userId;
+  1449→  }
+  1450→
+  1451→  const res = await rawFetch<ApiResponse>(`/api/fantasy/verify-otp`, {
+  1452→    method: "POST",
+  1453→    body: JSON.stringify(body),
+  1454→  });
+  1455→  if (res.status === "success" && res.data && typeof res.data === "object") {
+  1456→    const d = res.data as Record<string, unknown>;
+  1457→    return {
+  1458→      status: "success",
+  1459→      message: (res.message as string) || "",
+  1460→      token: d.token as string | undefined,
+  1461→      my11circleChallenge: d.my11circleChallenge as string | undefined,
+  1462→      my11circleUserId: d.my11circleUserId as string | undefined,
+  1463→      mobileNumber: params.mobileNumber,
+  1464→      // Dream11 subscription fields — present when the user has a paid Dream11 plan
+  1465→      maxAllowedTeam: typeof d.maxAllowedTeam === "number" ? d.maxAllowedTeam : null,
+  1466→      subscriptionTier: typeof d.subscriptionTier === "string" ? d.subscriptionTier : null,
+  1467→      d11SubscriptionActive: typeof d.d11SubscriptionActive === "boolean" ? d.d11SubscriptionActive : null,
+  1468→    };
+  1469→  }
+  1470→  return { status: "fail", message: (res.message as string) || "Invalid OTP" };
+  1471→}
+  1472→
+  1473→/* ---------- Direct Team Transfer (NO auth needed — link generation) ---------- */
+  1474→
+  1475→export interface DirectTransferResult {
+  1476→  status: "success" | "fail";
+  1477→  message?: string;
+  1478→  link?: string;
+  1479→}
+  1480→
+  1481→export async function generateDirectTransferLink(params: {
+  1482→  matchId: string;
+  1483→  playerIds: string[];
+  1484→  captainId: string;
+  1485→  viceCaptainId: string;
+  1486→  matchDbId?: string;
+  1487→}): Promise<DirectTransferResult> {
+  1488→  try {
+  1489→    const tgMatchId = params.matchDbId || params.matchId;
+  1490→    const res = await rawFetch<ApiResponse>(`/api/classic/dream11/addteam`, {
+  1491→      method: "POST",
+  1492→      body: JSON.stringify({
+  1493→        tgMatchId,
+  1494→        playerData: params.playerIds,
+  1495→        captainData: params.captainId,
+  1496→        vicecaptainData: params.viceCaptainId,
+  1497→        generateLinkFlag: "general",
+  1498→      }),
+  1499→    });
+  1500→    if (res.status === "success" && res.data) {
+  1501→      let link: string | undefined;
+  1502→      if (typeof res.data === "string") {
+  1503→        const dec = decrypt<{ link?: string }>(res.data);
+  1504→        link = dec?.link;
+  1505→      } else if (typeof res.data === "object") {
+  1506→        link = (res.data as { link?: string }).link;
+  1507→      }
+  1508→      if (link) return { status: "success", link };
+  1509→    }
+  1510→  } catch {}
+  1511→  return { status: "fail", message: "Dream11 direct transfer not available for this match." };
+  1512→}
+  1513→
+  1514→/* ---------- Bulk Team Transfer to Linked Fantasy Accounts ---------- */
+  1515→
+  1516→export interface BulkTransferItem {
+  1517→  teamNo: number;
+  1518→  playerIds: string[];
+  1519→  captainId: string;
+  1520→  viceCaptainId: string;
+  1521→}
+  1522→
+  1523→export interface BulkTransferResult {
+  1524→  totalAttempted: number;
+  1525→  successCount: number;
+  1526→  failCount: number;
+  1527→  results: Array<{ teamNo: number; success: boolean; message?: string }>;
+  1528→  transferLinks: Array<{ teamNo: number; link?: string }>;
+  1529→  /** Set when transfer was blocked because the auth token is expired.
+  1530→   *  Caller should prompt the user to re-link via OTP. */
+  1531→  needsReauth?: boolean;
+  1532→  /** Reason the transfer was blocked (if needsReauth=true). */
+  1533→  blockReason?: string;
+  1534→}
+  1535→
+  1536→export async function bulkDirectTransfer(
+  1537→  teams: BulkTransferItem[],
+  1538→  matchId: string,
+  1539→  matchDbId?: string,
+  1540→  onProgress?: (done: number, total: number) => void
+  1541→): Promise<BulkTransferResult> {
+  1542→  const results: BulkTransferResult["results"] = [];
+  1543→  const transferLinks: BulkTransferResult["transferLinks"] = [];
+  1544→  let successCount = 0;
+  1545→  let failCount = 0;
+  1546→
+  1547→  for (let i = 0; i < teams.length; i++) {
+  1548→    const t = teams[i];
+  1549→    const res = await generateDirectTransferLink({
+  1550→      matchId,
+  1551→      matchDbId,
+  1552→      playerIds: t.playerIds,
+  1553→      captainId: t.captainId,
+  1554→      viceCaptainId: t.viceCaptainId,
+  1555→    });
+  1556→    if (res.status === "success" && res.link) {
+  1557→      successCount++;
+  1558→      results.push({ teamNo: t.teamNo, success: true });
+  1559→      transferLinks.push({ teamNo: t.teamNo, link: res.link });
+  1560→    } else {
+  1561→      failCount++;
+  1562→      results.push({ teamNo: t.teamNo, success: false, message: res.message });
+  1563→      transferLinks.push({ teamNo: t.teamNo });
+  1564→    }
+  1565→    onProgress?.(i + 1, teams.length);
+  1566→    if (i < teams.length - 1) await new Promise((r) => setTimeout(r, 200));
+  1567→  }
+  1568→
+  1569→  return { totalAttempted: teams.length, successCount, failCount, results, transferLinks };
+  1570→}
+  1571→
+  1572→export async function bulkTransferToLinkedAccount(
+  1573→  teams: BulkTransferItem[],
+  1574→  params: {
+  1575→    matchId: string;
+  1576→    fantasyApp: FantasyApp;
+  1577→    authToken: string;
+  1578→    sportIndex?: number;
+  1579→    my11circleChallenge?: string;
+  1580→    my11circleUserId?: string;
+  1581→    mobileNumber?: string;
+  1582→    replaceMode?: boolean;
+  1583→    existingTeamIds?: string[];
+  1584→    /** Set to false to skip the pre-transfer auth verify call.
+  1585→     *  Default: true (matches original APK flow). */
+  1586→    skipVerify?: boolean;
+  1587→  },
+  1588→  onProgress?: (done: number, total: number) => void
+  1589→): Promise<BulkTransferResult> {
+  1590→  const results: BulkTransferResult["results"] = [];
+  1591→  const transferLinks: BulkTransferResult["transferLinks"] = [];
+  1592→  let successCount = 0;
+  1593→  let failCount = 0;
+  1594→  // Per-team delay between transfers — keeps us under the platform's rate limit
+  1595→  // without making a 40-team bulk transfer take 80+ seconds.
+  1596→  //   - Dream11: 200ms (very lenient rate limit, can handle rapid requests)
+  1597→  //   - My11Circle: 500ms (slightly stricter rate limit, but still tolerates fast bulk)
+  1598→  //   - Default: 500ms
+  1599→  // Total time for 40 teams: ~8-20 seconds + per-team transfer time.
+  1600→  const delay = params.fantasyApp === "dream11" ? 200 : 500;
+  1601→
+  1602→  // ─── PRE-TRANSFER AUTH VERIFY ──────────────────────────────────────────
+  1603→  //
+  1604→  // IMPORTANT: We SKIP pre-verification by default — this matches the original
+  1605→  // teamgeneration.in APK behavior. The original route.ts source explicitly says:
+  1606→  //
+  1607→  //   "Pre-verification adds latency and may give false negatives
+  1608→  //    (server says expired but token works)"
+  1609→  //
+  1610→  // The /api/transfer proxy already handles token expiry REACTIVELY during the
+  1611→  // actual transfer:
+  1612→  //   - Detects "Proxy returned 400/401/403" from the platform → returns needsReauth
+  1613→  //   - Detects "token expired" / "jwt expired" / "invalid token" → returns needsReauth
+  1614→  //   - Stops the bulk transfer immediately when the first team fails with auth error
+  1615→  //
+  1616→  // Calling /api/fantasy/auth/verify before transfer was causing FALSE "session
+  1617→  // expired" warnings for Dream11 users with valid tokens. So we only pre-verify
+  1618→  // if the caller explicitly sets skipVerify=false.
+  1619→  //
+  1620→  // Default: SKIP pre-verify (matches original APK).
+  1621→  if (params.skipVerify === false && params.authToken) {
+  1622→    console.log("[bulkTransfer] Pre-verifying auth token (skipVerify=false)...");
+  1623→    const verifyResult = await verifyBeforeTransfer({
+  1624→      fantasyApp: params.fantasyApp,
+  1625→      authToken: params.authToken,
+  1626→      matchId: params.matchId,
+  1627→      my11circleChallenge: params.my11circleChallenge,
+  1628→      my11circleUserId: params.my11circleUserId,
+  1629→      my11circleMobile: params.mobileNumber,
+  1630→    });
+  1631→
+  1632→    if (!verifyResult.proceed) {
+  1633→      // Token definitively expired — block transfer, signal re-auth required
+  1634→      console.warn("[bulkTransfer] Blocked by auth verify:", verifyResult.reason);
+  1635→      return {
+  1636→        totalAttempted: 0,
+  1637→        successCount: 0,
+  1638→        failCount: teams.length,
+  1639→        results: teams.map((t) => ({
+  1640→          teamNo: t.teamNo,
+  1641→          success: false,
+  1642→          message: verifyResult.reason || "Token expired — re-link via OTP",
+  1643→        })),
+  1644→        transferLinks: [],
+  1645→        needsReauth: true,
+  1646→        blockReason: verifyResult.reason,
+  1647→      };
+  1648→    }
+  1649→
+  1650→    // If the backend refreshed the token, use the new one for transfers
+  1651→    if (verifyResult.refreshed) {
+  1652→      const freshToken = getFantasyToken(params.fantasyApp);
+  1653→      if (freshToken) {
+  1654→        params = { ...params, authToken: freshToken };
+  1655→        console.log("[bulkTransfer] Using refreshed token from updateUiToken");
+  1656→      }
+  1657→    }
+  1658→  } else {
+  1659→    console.log("[bulkTransfer] Skipping pre-verify (default) — reactive auth detection in /api/transfer");
+  1660→  }
+  1661→
+  1662→  for (let i = 0; i < teams.length; i++) {
+  1663→    const t = teams[i];
+  1664→    // FIX: If replaceMode but no existing team ID for this index, fall back to "new"
+  1665→    const hasExistingId = params.replaceMode && params.existingTeamIds && i < params.existingTeamIds.length && params.existingTeamIds[i];
+  1666→    const isReplace = !!hasExistingId;
+  1667→    const numericPlayers = t.playerIds.map((id) => Number(id)).filter((n) => !isNaN(n));
+  1668→    const numericCaptain = Number(t.captainId);
+  1669→    const numericVC = Number(t.viceCaptainId);
+  1670→
+  1671→    const body: Record<string, unknown> = {
+  1672→      matchId: params.matchId,
+  1673→      captain: isNaN(numericCaptain) ? t.captainId : numericCaptain,
+  1674→      vice_captain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
+  1675→      vicecaptain: isNaN(numericVC) ? t.viceCaptainId : numericVC, // Original APK format
+  1676→      players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
+  1677→      fantasyApp: params.fantasyApp,
+  1678→      authToken: params.authToken,
+  1679→      sportIndex: params.sportIndex ?? 0,
+  1680→      type: isReplace ? "edit" : "new",
+  1681→    };
+  1682→    if (isReplace && params.existingTeamIds) body.id = params.existingTeamIds[i];
+  1683→    if (params.fantasyApp === "my11circle") {
+  1684→      body.my11circleChallenge = params.my11circleChallenge || null;
+  1685→      body.my11circleUserId = params.my11circleUserId || null;
+  1686→      body.my11circleMobile = params.mobileNumber || null;
+  1687→    }
+  1688→
+  1689→    try {
+  1690→      // Call our server-side /api/transfer proxy instead of hitting the backend directly.
+  1691→      // The proxy handles:
+  1692→      //   - Multi-endpoint fallback (dream11: /api/fantasy/add-team → /api/classic/dream11/addteam)
+  1693→      //   - Bug-aware success detection (HTTP 201 + "Something Went Wrong!" = tentative success)
+  1694→      //   - Token expiry detection (returns needsReauth: true)
+  1695→      //   - Edit → Add fallback if edit fails on all endpoints
+  1696→      //   - AES decryption of response data
+  1697→      const proxyBody = {
+  1698→        ...body,
+  1699→        skipPreVerify: true, // we already did pre-verify above; skip to avoid double call
+  1700→      };
+  1701→      const proxyRes = await fetch(`/api/transfer`, {
+  1702→        method: "POST",
+  1703→        headers: { "Content-Type": "application/json" },
+  1704→        body: JSON.stringify(proxyBody),
+  1705→        cache: "no-store",
+  1706→        signal: AbortSignal.timeout(45000), // 45s — server proxy has its own 30s timeout per endpoint
+  1707→      });
+  1708→      const res = await proxyRes.json() as ApiResponse & {
+  1709→        needsReauth?: boolean;
+  1710→        confidence?: "definite" | "tentative";
+  1711→        code?: string;
+  1712→        backendError?: string;
+  1713→      };
+  1714→
+  1715→      if (res.status === "success") {
+  1716→        successCount++;
+  1717→        const confidence = res.confidence === "tentative" ? " (tentative)" : "";
+  1718→        results.push({ teamNo: t.teamNo, success: true, message: res.message || `Transferred${confidence}` });
+  1719→        transferLinks.push({ teamNo: t.teamNo });
+  1720→      } else if (res.needsReauth) {
+  1721→        // Token expired — record the failure with the re-auth signal
+  1722→        failCount++;
+  1723→        const msg = (res.error as string) || (res.message as string) || "Token expired — re-link via OTP";
+  1724→        results.push({ teamNo: t.teamNo, success: false, message: msg });
+  1725→        transferLinks.push({ teamNo: t.teamNo });
+  1726→        // Bail out early on confirmed token expiry — no point trying remaining teams
+  1727→        // (they'll all fail with the same expired token)
+  1728→        for (let j = i + 1; j < teams.length; j++) {
+  1729→          failCount++;
+  1730→          results.push({ teamNo: teams[j].teamNo, success: false, message: "Skipped — token expired" });
+  1731→          transferLinks.push({ teamNo: teams[j].teamNo });
+  1732→          onProgress?.(j + 1, teams.length);
+  1733→        }
+  1734→        return {
+  1735→          totalAttempted: teams.length,
+  1736→          successCount,
+  1737→          failCount,
+  1738→          results,
+  1739→          transferLinks,
+  1740→          needsReauth: true,
+  1741→          blockReason: msg,
+  1742→        };
+  1743→      } else {
+  1744→        failCount++;
+  1745→        results.push({ teamNo: t.teamNo, success: false, message: (res.error as string) || (res.message as string) || "Failed" });
+  1746→        transferLinks.push({ teamNo: t.teamNo });
+  1747→      }
+  1748→    } catch (err: any) {
+  1749→      failCount++;
+  1750→      results.push({ teamNo: t.teamNo, success: false, message: err?.message || "Network error" });
+  1751→      transferLinks.push({ teamNo: t.teamNo });
+  1752→    }
+  1753→    onProgress?.(i + 1, teams.length);
+  1754→    if (i < teams.length - 1) await new Promise((r) => setTimeout(r, delay));
+  1755→  }
+  1756→
+  1757→  return { totalAttempted: teams.length, successCount, failCount, results, transferLinks };
+  1758→}
+  1759→

@@ -1,30 +1,19 @@
 /**
- * Anti-Cheat System
- * =================
+ * Anti-Cheat System — LOCAL ONLY (per FIREBASE-CLEANUP)
+ * ======================================================
  * Detects:
- *   - Rapid key attempts (5+ failed verifications within 10 minutes)
+ *   - Rapid key attempts (3+ failed verifications within 24h)
  *   - Multiple devices using the same key
  *   - API abuse (too many calls in short window)
  *
  * Auto-ban after 3 suspicious activities.
- * Banned devices are stored in Firebase "banned_devices".
+ * Banned devices are stored ONLY in localStorage (no Firebase).
  */
 
-import { db } from "./firebase";
-import {
-  collection,
-  doc,
-  setDoc,
-  getDoc,
-  getDocs,
-  query,
-  where,
-  serverTimestamp,
-} from "firebase/firestore";
 import { getDeviceId } from "./admin-store";
 
-const COLLECTION = "banned_devices";
 const LOCAL_KEY = "apna-cricket-suspicious-activities";
+const BANNED_LOCAL_KEY = "apna-cricket-banned-local";
 
 export type SuspiciousActivityType =
   | "rapid_key_attempts"
@@ -63,8 +52,21 @@ function readLocalActivities(): SuspiciousActivity[] {
 
 function writeLocalActivities(list: SuspiciousActivity[]): void {
   if (!isBrowser()) return;
-  // Keep last 50
   localStorage.setItem(LOCAL_KEY, JSON.stringify(list.slice(-50)));
+}
+
+function readLocalBanned(): string[] {
+  if (!isBrowser()) return [];
+  try {
+    return JSON.parse(localStorage.getItem(BANNED_LOCAL_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalBanned(list: string[]): void {
+  if (!isBrowser()) return;
+  localStorage.setItem(BANNED_LOCAL_KEY, JSON.stringify(list));
 }
 
 /**
@@ -81,13 +83,11 @@ export async function detectSuspicious(
   };
 
   const all = readLocalActivities();
-  // Only count last 24h
   const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
   const recent = all.filter((a) => a.timestamp >= dayAgo);
   recent.push(entry);
   writeLocalActivities(recent);
 
-  // Auto-ban threshold
   if (recent.length >= 3) {
     const reason = `Auto-ban: ${recent.length} suspicious activities in 24h (last: ${activity.type})`;
     await banDevice(deviceId, reason, recent);
@@ -98,28 +98,11 @@ export async function detectSuspicious(
 }
 
 /**
- * Check if a device is banned.
+ * Check if a device is banned (local only).
  */
 export async function isBanned(deviceId?: string): Promise<boolean> {
   const id = deviceId || (isBrowser() ? getDeviceId() : "server");
-  if (!db) {
-    // Local fallback
-    if (isBrowser()) {
-      try {
-        const local = JSON.parse(localStorage.getItem("apna-cricket-banned-local") || "[]");
-        return local.includes(id);
-      } catch {
-        return false;
-      }
-    }
-    return false;
-  }
-  try {
-    const snap = await getDoc(doc(db, COLLECTION, id));
-    return snap.exists();
-  } catch {
-    return false;
-  }
+  return isBannedLocal(id);
 }
 
 /**
@@ -128,16 +111,11 @@ export async function isBanned(deviceId?: string): Promise<boolean> {
 export function isBannedLocal(deviceId?: string): boolean {
   if (!isBrowser()) return false;
   const id = deviceId || getDeviceId();
-  try {
-    const local = JSON.parse(localStorage.getItem("apna-cricket-banned-local") || "[]");
-    return local.includes(id);
-  } catch {
-    return false;
-  }
+  return readLocalBanned().includes(id);
 }
 
 /**
- * Ban a device. Stores in Firebase "banned_devices" + local list.
+ * Ban a device (local only).
  */
 export async function banDevice(
   deviceId: string,
@@ -145,75 +123,45 @@ export async function banDevice(
   activities: SuspiciousActivity[] = []
 ): Promise<void> {
   if (!deviceId) return;
-  const record: BannedDevice = {
-    deviceId,
-    reason,
-    bannedAt: Date.now(),
-    expiresAt: null,
-    activities,
-  };
-
-  if (db) {
-    try {
-      await setDoc(doc(db, COLLECTION, deviceId), {
-        ...record,
-        updatedAt: serverTimestamp(),
-      });
-    } catch (err) {
-      console.log("[AntiCheat] ban sync failed:", err);
+  if (isBrowser()) {
+    const local = readLocalBanned();
+    if (!local.includes(deviceId)) {
+      local.push(deviceId);
+      writeLocalBanned(local);
     }
   }
-
-  // Local mirror
-  if (isBrowser()) {
-    try {
-      const local = JSON.parse(localStorage.getItem("apna-cricket-banned-local") || "[]");
-      if (!local.includes(deviceId)) {
-        local.push(deviceId);
-        localStorage.setItem("apna-cricket-banned-local", JSON.stringify(local));
-      }
-    } catch {
-      /* ignore */
-    }
+  // Record in admin store logs for visibility
+  try {
+    const { useAdmin } = await import("./admin-store");
+    useAdmin.getState().addLog("error", `Device ${deviceId} banned: ${reason}`, { activities });
+  } catch {
+    /* ignore */
   }
 }
 
 /**
- * Unban a device (admin action).
+ * Unban a device (local only).
  */
 export async function unbanDevice(deviceId: string): Promise<void> {
-  if (!db) return;
-  try {
-    const { deleteDoc } = await import("firebase/firestore");
-    await deleteDoc(doc(db, COLLECTION, deviceId));
-  } catch (err) {
-    console.log("[AntiCheat] unban failed:", err);
-  }
-
   if (isBrowser()) {
-    try {
-      const local = JSON.parse(localStorage.getItem("apna-cricket-banned-local") || "[]");
-      const next = local.filter((id: string) => id !== deviceId);
-      localStorage.setItem("apna-cricket-banned-local", JSON.stringify(next));
-    } catch {
-      /* ignore */
-    }
+    const local = readLocalBanned();
+    writeLocalBanned(local.filter((id: string) => id !== deviceId));
   }
 }
 
 /**
- * List all banned devices (admin).
+ * List all locally banned devices (admin).
  */
 export async function listBannedDevices(): Promise<BannedDevice[]> {
-  if (!db) return [];
-  try {
-    const snap = await getDocs(collection(db, COLLECTION));
-    const out: BannedDevice[] = [];
-    snap.forEach((d) => out.push({ deviceId: d.id, ...(d.data() as Omit<BannedDevice, "deviceId">) }));
-    return out;
-  } catch {
-    return [];
-  }
+  if (!isBrowser()) return [];
+  const now = Date.now();
+  return readLocalBanned().map((id) => ({
+    deviceId: id,
+    reason: "Banned locally (anti-cheat)",
+    bannedAt: now,
+    expiresAt: null,
+    activities: readLocalActivities().filter((a) => a.deviceId === id),
+  }));
 }
 
 /**

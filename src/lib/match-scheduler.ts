@@ -1,21 +1,9 @@
 /**
- * Match Scheduler — Auto-check for new matches
- * ============================================
+ * Match Scheduler — LOCAL ONLY (per FIREBASE-CLEANUP)
+ * =====================================================
  * Auto-check every 30 min, auto-add matches starting within 24h.
- * Config: enabled/disabled, sport, platform.
+ * Config + scheduled matches stored in localStorage ONLY.
  */
-
-import { db } from "./firebase";
-import {
-  collection,
-  doc,
-  setDoc,
-  getDoc,
-  getDocs,
-  query,
-  where,
-  serverTimestamp,
-} from "firebase/firestore";
 
 export type Sport = "cricket" | "football" | "basketball" | "kabaddi";
 export type Platform = "dream11" | "my11circle";
@@ -39,16 +27,29 @@ export interface SchedulerConfig {
   lastCheckedAt?: number;
 }
 
-const CONFIG_DOC = "match_scheduler_config";
-const MATCHES_COLLECTION = "scheduled_matches";
 const LOCAL_CONFIG_KEY = "apna-cricket-match-scheduler-config";
+const LOCAL_MATCHES_KEY = "apna-cricket-scheduled-matches";
 
 function isBrowser(): boolean {
   return typeof window !== "undefined" && !!window.localStorage;
 }
 
+function readLocalMatches(): Record<string, ScheduledMatch> {
+  if (!isBrowser()) return {};
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_MATCHES_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function writeLocalMatches(map: Record<string, ScheduledMatch>): void {
+  if (!isBrowser()) return;
+  localStorage.setItem(LOCAL_MATCHES_KEY, JSON.stringify(map));
+}
+
 /**
- * Get the scheduler config (from Firebase or local fallback).
+ * Get the scheduler config from localStorage.
  */
 export async function getSchedulerConfig(): Promise<SchedulerConfig> {
   const defaults: SchedulerConfig = {
@@ -58,35 +59,19 @@ export async function getSchedulerConfig(): Promise<SchedulerConfig> {
     checkIntervalMin: 30,
     autoAddWindowHours: 24,
   };
-
-  // Try local first
   if (isBrowser()) {
     try {
       const local = localStorage.getItem(LOCAL_CONFIG_KEY);
-      if (local) {
-        return { ...defaults, ...JSON.parse(local) };
-      }
+      if (local) return { ...defaults, ...JSON.parse(local) };
     } catch {
       /* ignore */
     }
   }
-
-  if (db) {
-    try {
-      const snap = await getDoc(doc(db, "scheduler_config", CONFIG_DOC));
-      if (snap.exists()) {
-        return { ...defaults, ...(snap.data() as Partial<SchedulerConfig>) };
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
   return defaults;
 }
 
 /**
- * Enable or disable auto-add.
+ * Enable or disable auto-add (local only).
  */
 export async function enableAutoAdd(enabled: boolean, config?: Partial<SchedulerConfig>): Promise<SchedulerConfig> {
   const current = await getSchedulerConfig();
@@ -94,57 +79,35 @@ export async function enableAutoAdd(enabled: boolean, config?: Partial<Scheduler
   if (isBrowser()) {
     localStorage.setItem(LOCAL_CONFIG_KEY, JSON.stringify(next));
   }
-  if (db) {
-    try {
-      await setDoc(doc(db, "scheduler_config", CONFIG_DOC), {
-        ...next,
-        updatedAt: serverTimestamp(),
-      });
-    } catch (err) {
-      console.log("[Scheduler] config save failed:", err);
-    }
-  }
   return next;
 }
 
 /**
- * Schedule a match for auto-add tracking.
+ * Schedule a match for auto-add tracking (local).
  */
 export async function scheduleMatch(match: Omit<ScheduledMatch, "addedAt" | "autoAdded"> & { autoAdded?: boolean }): Promise<void> {
-  if (!db || !match.matchId) return;
-  try {
-    await setDoc(doc(db, MATCHES_COLLECTION, match.matchId), {
-      ...match,
-      autoAdded: match.autoAdded ?? true,
-      addedAt: Date.now(),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (err) {
-    console.log("[Scheduler] scheduleMatch failed:", err);
-  }
+  if (!isBrowser() || !match.matchId) return;
+  const all = readLocalMatches();
+  all[match.matchId] = {
+    ...match,
+    autoAdded: match.autoAdded ?? true,
+    addedAt: Date.now(),
+  };
+  writeLocalMatches(all);
 }
 
 /**
- * Get all scheduled matches.
+ * Get all scheduled matches (local).
  */
 export async function getScheduledMatches(): Promise<ScheduledMatch[]> {
-  if (!db) return [];
-  try {
-    const snap = await getDocs(collection(db, MATCHES_COLLECTION));
-    const out: ScheduledMatch[] = [];
-    snap.forEach((d) => out.push({ matchId: d.id, ...(d.data() as Omit<ScheduledMatch, "matchId">) }));
-    return out.sort((a, b) => (a.startTime || 0) - (b.startTime || 0));
-  } catch {
-    return [];
-  }
+  if (!isBrowser()) return [];
+  return Object.values(readLocalMatches()).sort(
+    (a, b) => (a.startTime || 0) - (b.startTime || 0)
+  );
 }
 
 /**
- * Auto-add matches starting within the configured window.
- * Called by the scheduler poller.
- *
- * @param fetchedMatches list of matches fetched from API
- * @returns number of matches added
+ * Auto-add matches starting within the configured window (local).
  */
 export async function scheduleAutoAdd(
   fetchedMatches: Array<{
@@ -161,50 +124,35 @@ export async function scheduleAutoAdd(
   const windowMs = config.autoAddWindowHours * 60 * 60 * 1000;
   let added = 0;
   let skipped = 0;
+  const all = readLocalMatches();
 
   for (const m of fetchedMatches) {
     const start = Number(m.matchDate || m.start_time || 0);
-    if (!start) {
-      skipped++;
-      continue;
-    }
+    if (!start) { skipped++; continue; }
     const delta = start - now;
     if (delta > 0 && delta <= windowMs) {
-      // Check if already scheduled
-      if (db) {
-        try {
-          const existing = await getDoc(doc(db, MATCHES_COLLECTION, m.id));
-          if (existing.exists()) {
-            skipped++;
-            continue;
-          }
-        } catch {
-          /* ignore */
-        }
-      }
-      await scheduleMatch({
+      if (all[m.id]) { skipped++; continue; }
+      all[m.id] = {
         matchId: m.id,
         matchName: m.name,
         sport: config.sport,
         platform: config.platform,
         startTime: start,
-      });
+        autoAdded: true,
+        addedAt: now,
+      };
       added++;
     } else {
       skipped++;
     }
   }
+  writeLocalMatches(all);
 
   // Update lastCheckedAt
-  if (db) {
-    try {
-      await setDoc(doc(db, "scheduler_config", CONFIG_DOC), {
-        lastCheckedAt: now,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-    } catch {
-      /* ignore */
-    }
+  if (isBrowser()) {
+    const current = await getSchedulerConfig();
+    const next = { ...current, lastCheckedAt: now };
+    localStorage.setItem(LOCAL_CONFIG_KEY, JSON.stringify(next));
   }
 
   return { added, skipped };
@@ -212,7 +160,6 @@ export async function scheduleAutoAdd(
 
 /**
  * Start a poller that checks for new matches every X minutes.
- * Returns a cleanup function.
  */
 export function startSchedulerPoller(
   fetchMatches: () => Promise<Array<{ id: string; name?: string; matchDate?: number; start_time?: number }>>
@@ -230,11 +177,7 @@ export function startSchedulerPoller(
     }
   }
 
-  // Initial tick after 5s
   setTimeout(tick, 5000);
-
-  // Poll every configured interval
   const interval = setInterval(tick, 30 * 60 * 1000);
-
   return () => clearInterval(interval);
 }

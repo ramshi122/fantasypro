@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/firebase";
-import { collection, getDocs, query, where, orderBy } from "firebase/firestore";
+import { transactions } from "@/lib/server-wallet-store";
 
 /**
- * Wallet Transactions API
+ * Wallet Transactions API — LOCAL ONLY (per FIREBASE-CLEANUP)
+ * =============================================================
+ * Returns transactions from the in-memory server-side store
+ * (per-instance, cleared on cold start).
+ *
  * GET /api/wallet/transactions?userId=XXX
- * Returns all transactions for a user
  */
 
 export async function GET(request: Request) {
@@ -17,23 +19,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ status: "fail", transactions: [] }, { status: 200 });
     }
 
-    if (!db) {
-      return NextResponse.json({ status: "fail", transactions: [] }, { status: 200 });
-    }
-
-    const q = query(
-      collection(db, "transactions"),
-      where("userId", "==", userId),
-      orderBy("createdAt", "desc")
-    );
-
-    const snap = await getDocs(q);
-    const transactions: any[] = [];
-    snap.forEach((doc) => {
-      transactions.push(doc.data());
-    });
-
-    return NextResponse.json({ status: "success", transactions }, { status: 200 });
+    const userTxns = transactions.filter((t) => t.userId === userId);
+    return NextResponse.json({ status: "success", transactions: userTxns }, { status: 200 });
   } catch (error) {
     console.error("[Transactions API] Error:", error);
     return NextResponse.json({ status: "fail", transactions: [] }, { status: 200 });

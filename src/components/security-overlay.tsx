@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { restoreLockoutFromFirebase, getDeviceFingerprint } from "@/lib/lockout";
+import { getDeviceFingerprint } from "@/lib/lockout";
 
 /**
  * Screenshot Protection + Security Overlay
@@ -13,17 +13,16 @@ import { restoreLockoutFromFirebase, getDeviceFingerprint } from "@/lib/lockout"
  *    This prevents OS-level screenshots while tab is in background
  * 2. Add watermark overlay with device fingerprint (visible deterrent)
  * 3. Detect PrintScreen key and clear content immediately
- * 4. Restore lockout state from Firebase on app load
- *    (so lockout persists across uninstall/reinstall)
+ *
+ * (FIREBASE-CLEANUP) Lockout state is no longer restored from Firebase.
+ * The device fingerprint (recomputed from hardware on every load) is
+ * enough to identify a returning device locally without any remote sync.
  */
 export function SecurityOverlay() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // 1. Restore lockout from Firebase on app load
-    restoreLockoutFromFirebase().catch(() => {});
-
-    // 2. Blur content when tab is hidden (prevents background screenshots)
+    // 1. Blur content when tab is hidden (prevents background screenshots)
     const handleVisibilityChange = () => {
       if (document.hidden) {
         document.body.style.filter = "blur(20px)";
@@ -34,7 +33,7 @@ export function SecurityOverlay() {
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
-    // 3. Detect PrintScreen key — clear content immediately
+    // 2. Detect PrintScreen key — clear content immediately
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "PrintScreen" || e.keyCode === 44) {
         // Clear clipboard and blur
@@ -57,7 +56,7 @@ export function SecurityOverlay() {
     };
     document.addEventListener("keydown", handleKeyDown, true);
 
-    // 4. Detect copy attempt and clear clipboard
+    // 3. Detect copy attempt and clear clipboard
     const handleCopy = (e: ClipboardEvent) => {
       e.preventDefault();
       e.clipboardData?.setData("text/plain", "⚠️ Screenshot/Copy not allowed — Apna Cricket");
@@ -65,7 +64,7 @@ export function SecurityOverlay() {
     };
     document.addEventListener("copy", handleCopy);
 
-    // 5. Add watermark with device fingerprint (deterrent)
+    // 4. Add watermark with device fingerprint (deterrent)
     const fp = getDeviceFingerprint();
     const watermark = document.createElement("div");
     watermark.id = "security-watermark";

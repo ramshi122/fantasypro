@@ -1,23 +1,12 @@
 /**
- * Coupon System
- * =============
+ * Coupon System — LOCAL ONLY (per FIREBASE-CLEANUP)
+ * =================================================
  * Pre-defined coupons: CRIC10 (10%), CRIC20 (20%), CRIC50 (₹50 off)
- * Plus referral-issued coupons.
+ * Plus referral-issued coupons (stored in localStorage).
  *
- * Firebase collection "coupons": {code, discountType, value, maxUses, usedCount, validUntil}
+ * Used coupon counters are tracked in localStorage (per-device). Cross-
+ * device usage limits are not enforced without a shared backend.
  */
-
-import { db } from "./firebase";
-import {
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  collection,
-  getDocs,
-  serverTimestamp,
-  increment,
-} from "firebase/firestore";
 
 export type DiscountType = "percent" | "flat";
 export type PlanType =
@@ -42,7 +31,10 @@ export interface Coupon {
   description?: string;
 }
 
-/** Predefined coupon catalog */
+const CUSTOM_COUPONS_LS_KEY = "apna-cricket-custom-coupons";
+const USAGE_LS_KEY = "apna-cricket-coupon-usage";
+
+/** Predefined coupon catalog (same on every phone — deterministic seed). */
 export const PREDEFINED_COUPONS: Array<Partial<Coupon> & { code: string; description: string }> = [
   {
     code: "CRIC10",
@@ -73,31 +65,45 @@ export const PREDEFINED_COUPONS: Array<Partial<Coupon> & { code: string; descrip
   },
 ];
 
-/**
- * Ensure predefined coupons exist in Firebase.
- * Safe to call multiple times.
- */
-export async function ensurePredefinedCoupons(): Promise<void> {
-  if (!db) return;
-  for (const c of PREDEFINED_COUPONS) {
-    try {
-      const ref = doc(db, "coupons", c.code);
-      const existing = await getDoc(ref);
-      if (!existing.exists()) {
-        await setDoc(ref, {
-          ...c,
-          createdAt: Date.now(),
-          updatedAt: serverTimestamp(),
-        });
-      }
-    } catch (err) {
-      console.log("[Coupons] ensure failed:", c.code, err);
-    }
+/** Local-only custom coupon store (referral coupons). */
+function readCustomCoupons(): Record<string, Coupon> {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(localStorage.getItem(CUSTOM_COUPONS_LS_KEY) || "{}");
+  } catch {
+    return {};
   }
 }
 
+function writeCustomCoupons(map: Record<string, Coupon>): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(CUSTOM_COUPONS_LS_KEY, JSON.stringify(map));
+}
+
+/** Per-device usage counters (code → usedCount). */
+function readUsage(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(localStorage.getItem(USAGE_LS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function writeUsage(map: Record<string, number>): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(USAGE_LS_KEY, JSON.stringify(map));
+}
+
 /**
- * Get a coupon from Firebase or predefined list.
+ * No-op for compatibility — predefined coupons are seeded inline above.
+ */
+export async function ensurePredefinedCoupons(): Promise<void> {
+  // Nothing to do — coupons are static.
+}
+
+/**
+ * Get a coupon from predefined catalog or local custom store.
  */
 export async function fetchCoupon(code: string): Promise<Coupon | null> {
   if (!code) return null;
@@ -106,30 +112,15 @@ export async function fetchCoupon(code: string): Promise<Coupon | null> {
   // Check predefined first
   const predefined = PREDEFINED_COUPONS.find((c) => c.code === upper);
   if (predefined) {
-    // Try to fetch latest usedCount from Firebase
-    if (db) {
-      try {
-        const snap = await getDoc(doc(db, "coupons", upper));
-        if (snap.exists()) {
-          return { ...(predefined as Coupon), ...snap.data() } as Coupon;
-        }
-      } catch {
-        // fallthrough
-      }
-    }
-    return predefined as Coupon;
+    const usage = readUsage()[upper] || 0;
+    return { ...(predefined as Coupon), usedCount: usage };
   }
 
-  // Referral coupons live only in Firebase
-  if (db) {
-    try {
-      const snap = await getDoc(doc(db, "coupons", upper));
-      if (snap.exists()) {
-        return { code: upper, ...(snap.data() as Omit<Coupon, "code">) };
-      }
-    } catch {
-      // fallthrough
-    }
+  // Custom (referral) coupons live only in localStorage
+  const custom = readCustomCoupons()[upper];
+  if (custom) {
+    const usage = readUsage()[upper] || 0;
+    return { ...custom, usedCount: usage };
   }
 
   return null;
@@ -164,7 +155,7 @@ export async function validateCoupon(
 }
 
 /**
- * Apply a coupon — increments usedCount in Firebase.
+ * Apply a coupon — increments local usedCount.
  * Returns the discount amount in ₹.
  */
 export async function applyCoupon(
@@ -187,17 +178,10 @@ export async function applyCoupon(
 
   const finalAmount = Math.max(0, amount - discount);
 
-  // Increment usedCount in Firebase
-  if (db) {
-    try {
-      await updateDoc(doc(db, "coupons", coupon.code), {
-        usedCount: increment(1),
-        updatedAt: serverTimestamp(),
-      });
-    } catch (err) {
-      console.log("[Coupons] apply failed to sync:", err);
-    }
-  }
+  // Increment local usedCount
+  const usage = readUsage();
+  usage[coupon.code] = (usage[coupon.code] || 0) + 1;
+  writeUsage(usage);
 
   return {
     success: true,
@@ -225,20 +209,25 @@ export async function getCouponDiscount(
 }
 
 /**
- * List all coupons (admin).
+ * List all coupons (admin) — predefined + local custom.
  */
 export async function listAllCoupons(): Promise<Coupon[]> {
-  if (!db) return PREDEFINED_COUPONS as Coupon[];
-  try {
-    const snap = await getDocs(collection(db, "coupons"));
-    const out: Coupon[] = [];
-    snap.forEach((d) => out.push({ code: d.id, ...(d.data() as Omit<Coupon, "code">) }));
-    // Merge predefined
-    for (const p of PREDEFINED_COUPONS) {
-      if (!out.find((c) => c.code === p.code)) out.push(p as Coupon);
-    }
-    return out;
-  } catch {
-    return PREDEFINED_COUPONS as Coupon[];
+  const out: Coupon[] = [];
+  const usage = readUsage();
+  for (const p of PREDEFINED_COUPONS) {
+    out.push({ ...(p as Coupon), usedCount: usage[p.code] || 0 });
   }
+  for (const c of Object.values(readCustomCoupons())) {
+    out.push({ ...c, usedCount: usage[c.code] || 0 });
+  }
+  return out;
+}
+
+/**
+ * Add a custom coupon (admin / referral system).
+ */
+export async function addCustomCoupon(coupon: Coupon): Promise<void> {
+  const map = readCustomCoupons();
+  map[coupon.code] = coupon;
+  writeCustomCoupons(map);
 }

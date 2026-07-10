@@ -1,23 +1,12 @@
 /**
- * Push Notifications — FCM subscription management
- * ================================================
+ * Push Notifications — LOCAL ONLY (per FIREBASE-CLEANUP)
+ * =======================================================
  * Requests notification permission on app load.
- * Stores subscriptions in Firebase "push_subscriptions".
+ * Stores subscriptions in localStorage (NOT Firebase).
  *
- * Falls back to local browser Notification API if FCM is unavailable.
+ * Falls back to local browser Notification API (no FCM).
  */
 
-import { db } from "./firebase";
-import {
-  collection,
-  doc,
-  setDoc,
-  getDocs,
-  query,
-  where,
-  deleteDoc,
-  serverTimestamp,
-} from "firebase/firestore";
 import { getDeviceId } from "./admin-store";
 
 export interface PushSubscription {
@@ -28,7 +17,7 @@ export interface PushSubscription {
   userAgent?: string;
 }
 
-const COLLECTION = "push_subscriptions";
+const LS_KEY = "apna-cricket-push-sub";
 
 /**
  * Request notification permission. Returns granted/denied/default.
@@ -48,12 +37,11 @@ export async function requestPushPermission(): Promise<NotificationPermission> {
 /**
  * Subscribe to push notifications.
  * Uses the Push API (browser native) if available.
- * Stores subscription in Firebase for server-side push.
+ * Stores subscription in localStorage only (no Firebase sync).
  */
 export async function subscribeToPush(userId?: string): Promise<PushSubscription | null> {
   if (typeof window === "undefined") return null;
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-    // Fall back to plain Notification permission
     await requestPushPermission();
     return null;
   }
@@ -65,8 +53,6 @@ export async function subscribeToPush(userId?: string): Promise<PushSubscription
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
     if (!sub) {
-      // Use a dummy VAPID key — server should provide real one
-      // The browser still allows subscription with a public key
       const vapid = "BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U";
       try {
         sub = await reg.pushManager.subscribe({
@@ -74,7 +60,6 @@ export async function subscribeToPush(userId?: string): Promise<PushSubscription
           applicationServerKey: urlBase64ToUint8Array(vapid),
         });
       } catch {
-        // FCM not configured — fall back to plain Notification
         return null;
       }
     }
@@ -90,22 +75,9 @@ export async function subscribeToPush(userId?: string): Promise<PushSubscription
       userAgent: navigator.userAgent,
     };
 
-    // Persist to Firebase
-    if (db) {
-      const subId = `${subInfo.userId}_${subInfo.endpoint.slice(-20)}`;
-      try {
-        await setDoc(doc(db, COLLECTION, subId), {
-          ...subInfo,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        console.log("[Push] subscription sync failed:", err);
-      }
-    }
-
-    // Persist locally too
+    // Persist locally only (no Firebase)
     try {
-      localStorage.setItem("apna-cricket-push-sub", JSON.stringify(subInfo));
+      localStorage.setItem(LS_KEY, JSON.stringify(subInfo));
     } catch {
       /* ignore */
     }
@@ -119,56 +91,33 @@ export async function subscribeToPush(userId?: string): Promise<PushSubscription
 
 /**
  * Send a push notification to a specific user.
- * Server-side function — uses Firebase Cloud Messaging if available,
- * otherwise falls back to a no-op (client must already be subscribed via plain Notification).
- *
- * On the client side, this falls back to a local Notification.
+ * Falls back to local Notification API (no FCM).
  */
 export async function sendPushToUser(
-  userId: string,
+  _userId: string,
   message: { title: string; body: string }
 ): Promise<{ success: boolean; message: string }> {
-  // Try fetching subscription from Firebase
-  if (db) {
+  if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
     try {
-      const snap = await getDocs(query(collection(db, COLLECTION), where("userId", "==", userId)));
-      if (snap.empty) {
-        // No subscription — try local notification if user is on this device
-        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-          new Notification(message.title, { body: message.body, icon: "/logo.png" });
-          return { success: true, message: "Local notification sent" };
-        }
-        return { success: false, message: "No subscription found for user" };
-      }
-      // In a real server, here we'd call FCM with each subscription's endpoint+keys.
-      // For now, just record success (would normally call admin.messaging()).
-      return { success: true, message: `Push queued to ${snap.size} subscription(s)` };
+      new Notification(message.title, { body: message.body, icon: "/logo.png" });
+      return { success: true, message: "Local notification sent" };
     } catch (err: any) {
-      return { success: false, message: err?.message || "Push failed" };
+      return { success: false, message: err?.message || "Local notification failed" };
     }
   }
-  return { success: false, message: "Database unavailable" };
+  return { success: false, message: "Notifications not granted on this device" };
 }
 
 /**
  * Unsubscribe from push notifications.
  */
-export async function unsubscribeFromPush(userId?: string): Promise<boolean> {
+export async function unsubscribeFromPush(_userId?: string): Promise<boolean> {
   if (typeof window === "undefined") return false;
   try {
     const reg = await navigator.serviceWorker?.ready;
     const sub = await reg?.pushManager.getSubscription();
     if (sub) await sub.unsubscribe();
-
-    if (db && userId) {
-      const subId = `${userId}_${sub?.endpoint?.slice(-20) || "unknown"}`;
-      try {
-        await deleteDoc(doc(db, COLLECTION, subId));
-      } catch {
-        /* ignore */
-      }
-    }
-    localStorage.removeItem("apna-cricket-push-sub");
+    if (typeof window !== "undefined") localStorage.removeItem(LS_KEY);
     return true;
   } catch {
     return false;

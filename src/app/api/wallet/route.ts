@@ -1,13 +1,24 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/firebase";
-import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import {
+  wallets,
+  transactions,
+  getOrCreateWallet,
+  recordTxn,
+} from "@/lib/server-wallet-store";
 
 /**
- * Wallet API
+ * Wallet API — LOCAL ONLY (per FIREBASE-CLEANUP)
+ * ===============================================
+ * Wallets are stored in an in-memory server-side Map (per-instance, cleared
+ * on cold start). Each client also mirrors its own wallet in localStorage.
+ *
  * POST /api/wallet — Get or create wallet
  * POST /api/wallet?action=deposit — Add funds
  * POST /api/wallet?action=withdraw — Withdraw funds
+ * POST /api/wallet?action=cashback — Team-gen cashback (₹0.50/team, max ₹10/day)
  */
+
+const cashbackTrackers = new Map<string, { userId: string; date: string; amount: number }>();
 
 export async function POST(request: Request) {
   try {
@@ -20,37 +31,11 @@ export async function POST(request: Request) {
 
     // ===== GET/CREATE WALLET =====
     if (!action || action === "get") {
-      if (!db) {
-        return NextResponse.json({
-          status: "success",
-          wallet: { userId, depositBalance: 0, bonusBalance: 0, winningBalance: 0, totalBalance: 0 },
-        }, { status: 200 });
-      }
-
-      const walletDoc = await getDoc(doc(db, "wallets", userId));
-      if (!walletDoc.exists()) {
-        // Create new wallet with ₹0 balance
-        const newWallet = {
-          userId,
-          mobile: mobile || "",
-          depositBalance: 0,
-          bonusBalance: 0,
-          winningBalance: 0,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        await setDoc(doc(db, "wallets", userId), { ...newWallet, createdAtTs: serverTimestamp() });
-        return NextResponse.json({
-          status: "success",
-          wallet: { ...newWallet, totalBalance: 0 },
-        }, { status: 200 });
-      }
-
-      const wallet = walletDoc.data();
-      const totalBalance = (wallet.depositBalance || 0) + (wallet.bonusBalance || 0) + (wallet.winningBalance || 0);
+      const w = getOrCreateWallet(userId, mobile || "");
+      const totalBalance = w.depositBalance + w.bonusBalance + w.winningBalance;
       return NextResponse.json({
         status: "success",
-        wallet: { ...wallet, totalBalance },
+        wallet: { ...w, totalBalance },
       }, { status: 200 });
     }
 
@@ -59,30 +44,15 @@ export async function POST(request: Request) {
       if (!amount || amount <= 0) {
         return NextResponse.json({ status: "fail", message: "Invalid amount" }, { status: 200 });
       }
-
-      if (!db) {
-        return NextResponse.json({ status: "fail", message: "Database not available" }, { status: 200 });
-      }
-
-      // Update wallet
-      await updateDoc(doc(db, "wallets", userId), {
-        depositBalance: (await getDoc(doc(db, "wallets", userId))).data()?.depositBalance + Number(amount),
-        updatedAt: Date.now(),
-      });
-
-      // Create transaction
+      const w = getOrCreateWallet(userId, mobile || "");
+      w.depositBalance += Number(amount);
+      w.updatedAt = Date.now();
       const txnId = `TXN_DEP_${Date.now()}_${userId}`;
-      await setDoc(doc(db, "transactions", txnId), {
-        id: txnId,
-        userId,
-        type: "deposit",
-        amount: Number(amount),
-        status: "completed",
-        description: `Deposit via ${method || "UPI"}`,
-        createdAt: Date.now(),
-        completedAt: Date.now(),
+      recordTxn({
+        id: txnId, userId, type: "deposit", amount: Number(amount),
+        status: "completed", description: `Deposit via ${method || "UPI"}`,
+        createdAt: Date.now(), completedAt: Date.now(),
       });
-
       return NextResponse.json({ status: "success", message: "Deposit successful", txnId }, { status: 200 });
     }
 
@@ -91,70 +61,36 @@ export async function POST(request: Request) {
       if (!amount || amount <= 0) {
         return NextResponse.json({ status: "fail", message: "Invalid amount" }, { status: 200 });
       }
-
-      if (!db) {
-        return NextResponse.json({ status: "fail", message: "Database not available" }, { status: 200 });
-      }
-
-      const walletDoc = await getDoc(doc(db, "wallets", userId));
-      if (!walletDoc.exists()) {
+      const w = wallets.get(userId);
+      if (!w) {
         return NextResponse.json({ status: "fail", message: "Wallet not found" }, { status: 200 });
       }
-
-      const wallet = walletDoc.data();
-      const winBalance = wallet.winningBalance || 0;
-      if (winBalance < Number(amount)) {
+      if (w.winningBalance < Number(amount)) {
         return NextResponse.json({ status: "fail", message: "Insufficient winning balance for withdrawal" }, { status: 200 });
       }
-
-      await updateDoc(doc(db, "wallets", userId), {
-        winningBalance: winBalance - Number(amount),
-        updatedAt: Date.now(),
-      });
-
+      w.winningBalance -= Number(amount);
+      w.updatedAt = Date.now();
       const txnId = `TXN_WD_${Date.now()}_${userId}`;
-      await setDoc(doc(db, "transactions", txnId), {
-        id: txnId,
-        userId,
-        type: "withdraw",
-        amount: Number(amount),
-        status: "pending",
-        description: `Withdrawal to ${method || "bank"}`,
+      recordTxn({
+        id: txnId, userId, type: "withdraw", amount: Number(amount),
+        status: "pending", description: `Withdrawal to ${method || "bank"}`,
         createdAt: Date.now(),
       });
-
       return NextResponse.json({ status: "success", message: "Withdrawal requested", txnId }, { status: 200 });
     }
 
     // ===== CASHBACK (Task G3.10) =====
-    // On team generation: 2% cashback to wallet (₹0.50 per team, max ₹10/day)
     if (action === "cashback") {
-      const { matchId, teamCount } = body as {
-        matchId?: string;
-        teamCount?: number;
-      };
+      const { matchId, teamCount } = body as { matchId?: string; teamCount?: number };
       if (!Number.isFinite(teamCount) || teamCount! <= 0) {
         return NextResponse.json({ status: "fail", message: "Invalid teamCount" }, { status: 200 });
       }
-
-      // Cashback: ₹0.50 per team (2% of ₹25 implied), capped at ₹10/day
       const perTeam = 0.5;
       const dailyCap = 10;
       const todayKey = new Date().toISOString().slice(0, 10);
       const dailyTrackerId = `cashback_${userId}_${todayKey}`;
-
-      let alreadyCreditedToday = 0;
-      if (db) {
-        try {
-          const trackerSnap = await getDoc(doc(db, "cashback_trackers", dailyTrackerId));
-          if (trackerSnap.exists()) {
-            alreadyCreditedToday = Number(trackerSnap.data()?.amount || 0);
-          }
-        } catch {
-          /* ignore */
-        }
-      }
-
+      const tracker = cashbackTrackers.get(dailyTrackerId);
+      const alreadyCreditedToday = tracker?.amount || 0;
       const remaining = Math.max(0, dailyCap - alreadyCreditedToday);
       const requested = Number(teamCount) * perTeam;
       const cashbackAmount = Math.min(requested, remaining);
@@ -162,73 +98,27 @@ export async function POST(request: Request) {
         return NextResponse.json({
           status: "success",
           message: "Daily cashback cap reached",
-          cashback: 0,
-          capped: true,
+          cashback: 0, capped: true,
         }, { status: 200 });
       }
-
-      // Credit wallet
-      if (db) {
-        try {
-          const walletSnap = await getDoc(doc(db, "wallets", userId));
-          const currentBonus = walletSnap.exists() ? Number(walletSnap.data()?.bonusBalance || 0) : 0;
-          if (!walletSnap.exists()) {
-            await setDoc(doc(db, "wallets", userId), {
-              userId,
-              depositBalance: 0,
-              bonusBalance: cashbackAmount,
-              winningBalance: 0,
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-              createdAtTs: serverTimestamp(),
-            });
-          } else {
-            await updateDoc(doc(db, "wallets", userId), {
-              bonusBalance: currentBonus + cashbackAmount,
-              updatedAt: Date.now(),
-            });
-          }
-
-          // Update daily tracker
-          await setDoc(doc(db, "cashback_trackers", dailyTrackerId), {
-            userId,
-            date: todayKey,
-            amount: alreadyCreditedToday + cashbackAmount,
-            updatedAt: Date.now(),
-          });
-
-          // Record transaction
-          const txnId = `TXN_CB_${Date.now()}_${userId}`;
-          await setDoc(doc(db, "transactions", txnId), {
-            id: txnId,
-            userId,
-            type: "cashback",
-            amount: cashbackAmount,
-            status: "completed",
-            description: `Cashback for ${teamCount} team(s) generated${matchId ? ` (match ${matchId})` : ""}`,
-            matchId: matchId || null,
-            createdAt: Date.now(),
-            completedAt: Date.now(),
-          });
-
-          return NextResponse.json({
-            status: "success",
-            message: `₹${cashbackAmount} cashback credited`,
-            cashback: cashbackAmount,
-            txnId,
-          }, { status: 200 });
-        } catch (err: any) {
-          console.error("[Wallet API] Cashback failed:", err);
-          return NextResponse.json({ status: "fail", message: err?.message || "Cashback failed" }, { status: 200 });
-        }
-      }
-
-      // No DB — return simulated success
+      const w = getOrCreateWallet(userId, mobile || "");
+      w.bonusBalance += cashbackAmount;
+      w.updatedAt = Date.now();
+      cashbackTrackers.set(dailyTrackerId, {
+        userId, date: todayKey, amount: alreadyCreditedToday + cashbackAmount,
+      });
+      const txnId = `TXN_CB_${Date.now()}_${userId}`;
+      recordTxn({
+        id: txnId, userId, type: "cashback", amount: cashbackAmount,
+        status: "completed",
+        description: `Cashback for ${teamCount} team(s) generated${matchId ? ` (match ${matchId})` : ""}`,
+        matchId: matchId || null,
+        createdAt: Date.now(), completedAt: Date.now(),
+      });
       return NextResponse.json({
         status: "success",
-        message: `₹${cashbackAmount} cashback (simulated)`,
-        cashback: cashbackAmount,
-        txnId: `TXN_CB_SIM_${Date.now()}`,
+        message: `₹${cashbackAmount} cashback credited`,
+        cashback: cashbackAmount, txnId,
       }, { status: 200 });
     }
 

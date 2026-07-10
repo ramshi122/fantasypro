@@ -1,71 +1,61 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/firebase";
-import { collection, getDocs, query, orderBy } from "firebase/firestore";
 
 /**
- * Payment List API — admin only
- * Returns all payment orders from Firebase.
+ * Payment List API — LOCAL ONLY (per FIREBASE-CLEANUP)
+ * ======================================================
+ * Returns payment orders from the in-memory server-side Map (per-instance,
+ * cleared on cold start). Admin-only.
  *
  * Query params:
  *   ?status=pending  — only pending orders
  *   ?status=completed — only completed orders
  *   ?status=failed   — only failed orders
  *   (no param)       — all orders
+ *
+ * NOTE: Since the in-memory store is per-instance, this endpoint may return
+ * empty results after a cold start. The admin store on each device keeps
+ * a long-lived mirror of all generated keys (via syncFromFirebase).
  */
+
+// Shared in-memory store keyed by orderId. The Payment POST route creates
+// orders here. We import the same Map by re-exporting it lazily.
+// (We can't import the route.ts file directly, so we accept that orders
+// created on a different instance won't be visible. The admin-store keys
+// list is the durable source of truth across instances.)
+const orders = new Map<string, any>();
 
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const statusFilter = url.searchParams.get("status");
 
-    if (!db) {
-      return NextResponse.json({
-        status: "fail",
-        message: "Firebase not initialized",
-        payments: [],
-      }, { status: 200 });
-    }
+    let all = Array.from(orders.values());
+    if (statusFilter) all = all.filter((p) => p.status === statusFilter);
+    all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-    let q;
-    if (statusFilter) {
-      q = query(collection(db, "payment_orders"), orderBy("createdAt", "desc"));
-    } else {
-      q = query(collection(db, "payment_orders"), orderBy("createdAt", "desc"));
-    }
+    const payments = all.map((data) => ({
+      orderId: data.orderId,
+      mobile: data.mobile,
+      plan: data.plan,
+      amount: data.amount,
+      keyType: data.keyType,
+      label: data.label,
+      status: data.status,
+      licenseKey: data.licenseKey || null,
+      expiresAt: data.expiresAt || null,
+      paymentId: data.paymentId || null,
+      createdAt: data.createdAt,
+      completedAt: data.completedAt || null,
+      failedAt: data.failedAt || null,
+    }));
 
-    const snap = await getDocs(q);
-    const payments: any[] = [];
-
-    snap.forEach((doc) => {
-      const data = doc.data();
-      // Filter by status if specified
-      if (statusFilter && data.status !== statusFilter) return;
-
-      payments.push({
-        orderId: data.orderId,
-        mobile: data.mobile,
-        plan: data.plan,
-        amount: data.amount,
-        keyType: data.keyType,
-        label: data.label,
-        status: data.status,
-        licenseKey: data.licenseKey || null,
-        expiresAt: data.expiresAt || null,
-        paymentId: data.paymentId || null,
-        createdAt: data.createdAt,
-        completedAt: data.completedAt || null,
-        failedAt: data.failedAt || null,
-      });
-    });
-
-    // Summary stats
     const summary = {
       total: payments.length,
-      pending: payments.filter(p => p.status === "pending").length,
-      completed: payments.filter(p => p.status === "completed").length,
-      failed: payments.filter(p => p.status === "failed").length,
+      pending: payments.filter((p) => p.status === "pending").length,
+      completed: payments.filter((p) => p.status === "completed").length,
+      failed: payments.filter((p) => p.status === "failed").length,
       totalRevenue: payments
-        .filter(p => p.status === "completed")
+        .filter((p) => p.status === "completed")
         .reduce((sum, p) => sum + (p.amount || 0), 0),
     };
 
@@ -82,4 +72,24 @@ export async function GET(request: Request) {
       payments: [],
     }, { status: 200 });
   }
+}
+
+/**
+ * Internal helper used by the payment route to register an order so that
+ * this list endpoint can see it. Kept here to avoid a circular import.
+ */
+export function _registerOrder(order: any): void {
+  if (!order?.orderId) return;
+  orders.set(order.orderId, order);
+  // Cap the store to avoid unbounded growth
+  if (orders.size > 500) {
+    const firstKey = orders.keys().next().value;
+    if (firstKey) orders.delete(firstKey);
+  }
+}
+
+export function _updateOrder(orderId: string, updates: any): void {
+  const existing = orders.get(orderId);
+  if (!existing) return;
+  orders.set(orderId, { ...existing, ...updates });
 }

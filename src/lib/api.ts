@@ -891,32 +891,10 @@ export function saveFantasyToken(
     linkedAt: Date.now(),
   };
   localStorage.setItem(LOCAL_FANTASY_TOKENS_KEY, JSON.stringify(all));
-
-  // ALSO save to Firebase so admin can use for server-side auto-join
-  (async () => {
-    try {
-      const { db } = await import("./firebase");
-      if (!db) return;
-      const { doc, setDoc, serverTimestamp } = await import("firebase/firestore");
-      const { getDeviceId } = await import("./admin-store");
-      const deviceId = getDeviceId();
-
-      await setDoc(doc(db, "fantasy_tokens", `${deviceId}_${app}`), {
-        deviceId,
-        app,
-        token,
-        mobile: extras?.mobile || null,
-        my11circleChallenge: extras?.my11circleChallenge || null,
-        my11circleUserId: extras?.my11circleUserId || null,
-        maxAllowedTeam: extras?.maxAllowedTeam ?? null,
-        savedAt: serverTimestamp(),
-        savedAtMs: Date.now(),
-      }, { merge: true });
-      console.log(`[saveFantasyToken] Saved ${app} token to Firebase for device ${deviceId}`);
-    } catch (err) {
-      console.warn("[saveFantasyToken] Firebase save failed:", err);
-    }
-  })();
+  // NOTE (FIREBASE-CLEANUP): Fantasy tokens are stored ONLY in localStorage.
+  // We do not sync to Firebase — server-side auto-join was removed and the
+  // auto-join cron now uses local storage on each device instead.
+  console.log(`[saveFantasyToken] Saved ${app} token to localStorage`);
 }
 
 export function getFantasyToken(app: FantasyApp): string | null {

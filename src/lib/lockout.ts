@@ -1,10 +1,13 @@
 /**
- * License Lockout System
- * ----------------------
+ * License Lockout System — LOCAL ONLY (per FIREBASE-CLEANUP)
+ * ----------------------------------------------------------
  * - After 5 wrong key attempts → 1 hour lock
- * - Lock persists in localStorage + Firebase (by device ID)
- * - Even if app is uninstalled and reinstalled, lock continues
- *   (because Firebase tracks by device ID + IP hash)
+ * - Lock persists in localStorage keyed by device fingerprint
+ * - NO Firebase writes (lockout state lives only on this device)
+ *
+ * The device fingerprint (navigator + screen + UA hash) still survives a
+ * localStorage clear (because we recompute it from hardware) so the lock
+ * survives most reinstall/relogin scenarios without needing Firebase.
  */
 
 const MAX_ATTEMPTS = 5;
@@ -56,7 +59,6 @@ export function getDeviceFingerprint(): string {
     new Date().getTimezoneOffset().toString(),
     (nav.connection?.effectiveType) || "",
   ];
-  // Simple hash (not cryptographic, but stable)
   const str = components.join("|");
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -69,7 +71,6 @@ export function getDeviceFingerprint(): string {
 
 /**
  * Check if the device is currently locked out.
- * Returns { locked, remainingMs, remainingFormatted }
  */
 export function checkLockout(): {
   locked: boolean;
@@ -110,10 +111,6 @@ export function recordFailedAttempt(key: string): LockoutState {
     deviceFingerprint: state.deviceFingerprint || getDeviceFingerprint(),
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
-
-  // Sync to Firebase (so lock persists across uninstall/reinstall)
-  syncLockoutToFirebase(newState).catch(() => {});
-
   return newState;
 }
 
@@ -123,13 +120,6 @@ export function recordFailedAttempt(key: string): LockoutState {
 export function clearLockout() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(STORAGE_KEY);
-  // Also clear from Firebase
-  syncLockoutToFirebase({
-    failedAttempts: 0,
-    lockedUntil: null,
-    lastFailedKey: null,
-    deviceFingerprint: getDeviceFingerprint(),
-  }).catch(() => {});
 }
 
 /**
@@ -141,76 +131,12 @@ export function getRemainingAttempts(): number {
 }
 
 /**
- * Sync lockout state to Firebase by device fingerprint.
- * This ensures the lock persists even if the user:
- * - Clears localStorage
- * - Uninstalls and reinstalls the app
- * - Uses a different browser on the same device
- */
-async function syncLockoutToFirebase(state: LockoutState): Promise<void> {
-  try {
-    const { db } = await import("./firebase");
-    if (!db) return;
-    const { doc, setDoc, getDoc } = await import("firebase/firestore");
-    const fp = state.deviceFingerprint;
-
-    // Check if Firebase has a LONGER lock than local (e.g., locked on another device with same fingerprint)
-    const ref = doc(db, "device_lockouts", fp);
-    const snap = await getDoc(ref);
-    if (snap.exists()) {
-      const fbData = snap.data() as any;
-      // If Firebase lock is longer, use it
-      if (fbData.lockedUntil && (!state.lockedUntil || fbData.lockedUntil > state.lockedUntil)) {
-        state.lockedUntil = fbData.lockedUntil;
-        state.failedAttempts = fbData.failedAttempts || state.failedAttempts;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      }
-    }
-
-    // Write current state to Firebase
-    await setDoc(ref, {
-      deviceFingerprint: fp,
-      failedAttempts: state.failedAttempts,
-      lockedUntil: state.lockedUntil,
-      lastFailedKey: state.lastFailedKey,
-      updatedAt: Date.now(),
-    }, { merge: true });
-  } catch (err) {
-    console.warn("[Lockout] Firebase sync failed:", err);
-  }
-}
-
-/**
- * Check Firebase for an existing lock on this device (on app load).
- * Call this on app startup to restore lock state from Firebase.
+ * No-op restore function (kept for compatibility with callers that
+ * previously restored lockout state from Firebase). Lockout state now
+ * lives ONLY in localStorage, so there is nothing to restore from a
+ * remote source.
  */
 export async function restoreLockoutFromFirebase(): Promise<void> {
-  if (typeof window === "undefined") return;
-  try {
-    const { db } = await import("./firebase");
-    if (!db) return;
-    const { doc, getDoc } = await import("firebase/firestore");
-    const fp = getDeviceFingerprint();
-    const ref = doc(db, "device_lockouts", fp);
-    const snap = await getDoc(ref);
-    if (snap.exists()) {
-      const fbData = snap.data() as any;
-      const localState = getLockoutState();
-      // If Firebase has a lock that's still active AND longer than local, restore it
-      if (fbData.lockedUntil && fbData.lockedUntil > Date.now()) {
-        if (!localState.lockedUntil || fbData.lockedUntil > localState.lockedUntil) {
-          const restoredState: LockoutState = {
-            failedAttempts: fbData.failedAttempts || localState.failedAttempts,
-            lockedUntil: fbData.lockedUntil,
-            lastFailedKey: fbData.lastFailedKey || localState.lastFailedKey,
-            deviceFingerprint: fp,
-          };
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(restoredState));
-          console.log("[Lockout] Restored lock from Firebase — locked until", new Date(fbData.lockedUntil).toISOString());
-        }
-      }
-    }
-  } catch (err) {
-    console.warn("[Lockout] Firebase restore failed:", err);
-  }
+  // Intentionally empty — lockout is LOCAL ONLY now.
+  return;
 }

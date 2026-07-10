@@ -1,14 +1,36 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/firebase";
-import { doc, setDoc, collection, getDocs, query, where, updateDoc, increment, serverTimestamp } from "firebase/firestore";
 import type { Contest, ContestParticipant } from "@/lib/contest";
 
 /**
- * Contest Join API
- * POST /api/contest/create  — Admin creates contest
- * POST /api/contest/create?action=join — User joins contest
- * POST /api/contest/create?action=leaderboard — Get live leaderboard
+ * Contest Create/Join API — LOCAL ONLY (per FIREBASE-CLEANUP)
+ * ============================================================
+ * Contests + participants + wallets + transactions all live in an
+ * in-memory server-side Map (per-instance, cleared on cold start).
+ *
+ * POST /api/contest/create  — Admin creates contest (action: "create")
+ * POST /api/contest/create  — User joins contest       (action: "join")
+ * POST /api/contest/create  — Leaderboard              (action: "leaderboard")
+ * POST /api/contest/create  — Update scores            (action: "update_scores")
+ * POST /api/contest/create  — Declare winners          (action: "declare_winners")
+ * GET  /api/contest/create  — List all contests
  */
+
+const contests = new Map<string, Contest>();
+const participants = new Map<string, ContestParticipant>(); // key: `${contestId}_${userId}`
+const wallets = new Map<string, { depositBalance: number; bonusBalance: number; winningBalance: number }>();
+const transactions: Array<{
+  id: string; userId: string; type: string; amount: number; status: string;
+  description: string; contestId?: string | null; createdAt: number; completedAt?: number;
+}> = [];
+
+function getWallet(userId: string) {
+  let w = wallets.get(userId);
+  if (!w) {
+    w = { depositBalance: 0, bonusBalance: 0, winningBalance: 0 };
+    wallets.set(userId, w);
+  }
+  return w;
+}
 
 export async function POST(request: Request) {
   try {
@@ -44,10 +66,7 @@ export async function POST(request: Request) {
         createdBy: createdBy || "admin",
         prizeDistribution: prizeDistribution || [],
       };
-
-      if (db) {
-        await setDoc(doc(db, "contests", contestId), { ...contest, createdAtTs: serverTimestamp() });
-      }
+      contests.set(contestId, contest);
 
       return NextResponse.json({ status: "success", contestId, contest }, { status: 200 });
     }
@@ -60,43 +79,32 @@ export async function POST(request: Request) {
         return NextResponse.json({ status: "fail", message: "Missing required fields" }, { status: 200 });
       }
 
-      if (!db) {
-        return NextResponse.json({ status: "fail", message: "Database not available" }, { status: 200 });
-      }
-
-      // 1. Fetch contest
-      const contestDoc = await getDocs(query(collection(db, "contests"), where("id", "==", contestId)));
-      if (contestDoc.empty) {
+      const contest = contests.get(contestId);
+      if (!contest) {
         return NextResponse.json({ status: "fail", message: "Contest not found" }, { status: 200 });
       }
-      const contest = contestDoc.docs[0].data() as Contest;
 
-      // 2. Check status
       if (contest.status === "completed" || contest.status === "cancelled") {
         return NextResponse.json({ status: "fail", message: "Contest is " + contest.status }, { status: 200 });
       }
 
-      // 3. Check slots
       if (contest.joinedCount >= contest.maxSlots) {
         return NextResponse.json({ status: "fail", message: "Contest is full" }, { status: 200 });
       }
 
-      // 4. Check wallet balance (server-side)
-      if (walletBalance < contest.entryFee) {
+      // Use server-side wallet if available, else fall back to client-provided walletBalance
+      const w = getWallet(userId);
+      const balance = w.depositBalance + w.bonusBalance + w.winningBalance;
+      const effectiveBalance = balance > 0 ? balance : Number(walletBalance || 0);
+      if (effectiveBalance < contest.entryFee) {
         return NextResponse.json({ status: "fail", message: "Insufficient wallet balance", code: "INSUFFICIENT_BALANCE" }, { status: 200 });
       }
 
-      // 5. Check duplicate entry (same user, same contest)
-      const existing = await getDocs(query(
-        collection(db, "contest_participants"),
-        where("contestId", "==", contestId),
-        where("userId", "==", userId)
-      ));
-      if (!existing.empty) {
+      const participantId = `${contestId}_${userId}`;
+      if (participants.has(participantId)) {
         return NextResponse.json({ status: "fail", message: "Already joined this contest", code: "DUPLICATE_ENTRY" }, { status: 200 });
       }
 
-      // 6. Add participant
       const participant: ContestParticipant = {
         contestId,
         userId,
@@ -110,133 +118,83 @@ export async function POST(request: Request) {
         points: 0,
         joinedAt: Date.now(),
       };
+      participants.set(participantId, participant);
 
-      const participantId = `${contestId}_${userId}`;
-      await setDoc(doc(db, "contest_participants", participantId), participant);
+      contest.joinedCount += 1;
 
-      // 7. Increment contest joined count
-      await updateDoc(doc(db, "contests", contestId), {
-        joinedCount: increment(1),
-      });
-
-      // 8. Deduct from wallet + create transaction
-      await updateDoc(doc(db, "wallets", userId), {
-        depositBalance: increment(-contest.entryFee),
-        updatedAt: Date.now(),
-      });
-
-      await setDoc(doc(db, "transactions", `TXN_${Date.now()}_${userId}`), {
-        id: `TXN_${Date.now()}_${userId}`,
-        userId,
-        type: "contest_join",
-        amount: contest.entryFee,
-        status: "completed",
-        description: `Joined ${contest.name}`,
-        contestId,
-        createdAt: Date.now(),
-        completedAt: Date.now(),
+      // Deduct from wallet + create transaction
+      if (w.depositBalance >= contest.entryFee) {
+        w.depositBalance -= contest.entryFee;
+      } else {
+        // Best-effort — clear deposit then take from bonus
+        let remaining = contest.entryFee;
+        remaining -= w.depositBalance; w.depositBalance = 0;
+        if (remaining > 0) { const fromBonus = Math.min(w.bonusBalance, remaining); w.bonusBalance -= fromBonus; remaining -= fromBonus; }
+        if (remaining > 0) { w.winningBalance = Math.max(0, w.winningBalance - remaining); }
+      }
+      const txnId = `TXN_${Date.now()}_${userId}`;
+      transactions.unshift({
+        id: txnId, userId, type: "contest_join", amount: contest.entryFee,
+        status: "completed", description: `Joined ${contest.name}`,
+        contestId, createdAt: Date.now(), completedAt: Date.now(),
       });
 
       return NextResponse.json({
         status: "success",
         message: "Contest joined successfully",
         contestId,
-        rank: contest.joinedCount + 1,
+        rank: contest.joinedCount,
       }, { status: 200 });
     }
 
     // ===== GET LEADERBOARD =====
     if (action === "leaderboard") {
       const { contestId } = body;
-      if (!contestId || !db) {
+      if (!contestId) {
         return NextResponse.json({ status: "fail", message: "Contest ID required" }, { status: 200 });
       }
-
-      const participantsSnap = await getDocs(query(
-        collection(db, "contest_participants"),
-        where("contestId", "==", contestId)
-      ));
-
-      const participants: ContestParticipant[] = [];
-      participantsSnap.forEach((doc) => {
-        participants.push(doc.data() as ContestParticipant);
-      });
-
-      // Server-side sorting by points (descending), tie-break by joinedAt (ascending)
-      participants.sort((a, b) => {
+      const parts = Array.from(participants.values()).filter((p) => p.contestId === contestId);
+      parts.sort((a, b) => {
         if (b.points !== a.points) return b.points - a.points;
         return a.joinedAt - b.joinedAt;
       });
-
-      // Assign ranks
-      participants.forEach((p, i) => {
-        p.rank = i + 1;
-      });
-
+      parts.forEach((p, i) => { p.rank = i + 1; });
       return NextResponse.json({
         status: "success",
-        participants,
-        totalCount: participants.length,
+        participants: parts,
+        totalCount: parts.length,
       }, { status: 200 });
     }
 
-    // ===== UPDATE SCORES (Server-side only) =====
+    // ===== UPDATE SCORES =====
     if (action === "update_scores") {
       const { contestId, scores } = body;
-      if (!contestId || !scores || !db) {
+      if (!contestId || !scores) {
         return NextResponse.json({ status: "fail", message: "Missing data" }, { status: 200 });
       }
-
-      // Fetch all participants
-      const participantsSnap = await getDocs(query(
-        collection(db, "contest_participants"),
-        where("contestId", "==", contestId)
-      ));
-
-      const updates: Promise<void>[] = [];
-      const allParticipants: Array<{ id: string; data: ContestParticipant; points: number }> = [];
-
-      participantsSnap.forEach((docSnap) => {
-        const p = docSnap.data() as ContestParticipant;
-        // Calculate team score from player scores
+      const all = Array.from(participants.values()).filter((p) => p.contestId === contestId);
+      for (const p of all) {
         let totalPoints = 0;
-        for (const playerScore of scores) {
-          if (p.teamPlayers.includes(playerScore.playerId)) {
-            let pts = playerScore.points;
-            if (playerScore.playerId === p.captain) pts *= 2;
-            else if (playerScore.playerId === p.viceCaptain) pts *= 1.5;
+        for (const ps of scores) {
+          if (p.teamPlayers.includes(ps.playerId)) {
+            let pts = ps.points;
+            if (ps.playerId === p.captain) pts *= 2;
+            else if (ps.playerId === p.viceCaptain) pts *= 1.5;
             totalPoints += pts;
           }
         }
-        totalPoints = Math.round(totalPoints * 100) / 100;
-        allParticipants.push({ id: docSnap.id, data: p, points: totalPoints });
-      });
-
-      // Sort by points (server-side ranking)
-      allParticipants.sort((a, b) => {
-        if (b.points !== a.points) return b.points - a.points;
-        return a.data.joinedAt - b.data.joinedAt;
-      });
-
-      // Update ranks + points in Firestore
-      for (let i = 0; i < allParticipants.length; i++) {
-        const { id, points } = allParticipants[i];
-        const rank = i + 1;
-        updates.push(
-          updateDoc(doc(db, "contest_participants", id), { points, rank, updatedAt: Date.now() })
-        );
+        p.points = Math.round(totalPoints * 100) / 100;
       }
-
-      await Promise.all(updates);
-
+      all.sort((a, b) => {
+        if (b.points !== a.points) return b.points - a.points;
+        return a.joinedAt - b.joinedAt;
+      });
+      all.forEach((p, i) => { p.rank = i + 1; });
       return NextResponse.json({
         status: "success",
-        message: `Updated ${allParticipants.length} participants`,
-        leaderboard: allParticipants.map((p, i) => ({
-          rank: i + 1,
-          userId: p.data.userId,
-          userName: p.data.userName,
-          points: p.points,
+        message: `Updated ${all.length} participants`,
+        leaderboard: all.map((p) => ({
+          rank: p.rank, userId: p.userId, userName: p.userName, points: p.points,
         })),
       }, { status: 200 });
     }
@@ -244,77 +202,38 @@ export async function POST(request: Request) {
     // ===== DECLARE WINNERS =====
     if (action === "declare_winners") {
       const { contestId } = body;
-      if (!contestId || !db) {
+      if (!contestId) {
         return NextResponse.json({ status: "fail", message: "Contest ID required" }, { status: 200 });
       }
-
-      // Fetch contest
-      const contestDoc = await getDocs(query(collection(db, "contests"), where("id", "==", contestId)));
-      if (contestDoc.empty) {
+      const contest = contests.get(contestId);
+      if (!contest) {
         return NextResponse.json({ status: "fail", message: "Contest not found" }, { status: 200 });
       }
-      const contest = contestDoc.docs[0].data() as Contest;
-
-      // Fetch participants (sorted by rank)
-      const participantsSnap = await getDocs(query(
-        collection(db, "contest_participants"),
-        where("contestId", "==", contestId)
-      ));
-
-      const participants: ContestParticipant[] = [];
-      participantsSnap.forEach((doc) => participants.push(doc.data() as ContestParticipant));
-      participants.sort((a, b) => a.rank - b.rank);
-
-      // Calculate prizes + credit wallets
+      const parts = Array.from(participants.values())
+        .filter((p) => p.contestId === contestId)
+        .sort((a, b) => a.rank - b.rank);
       const { calculatePrize } = await import("@/lib/contest");
-      const prizeUpdates: Promise<void>[] = [];
-
-      for (const p of participants) {
+      let winnerCount = 0;
+      for (const p of parts) {
         const prize = calculatePrize(p.rank, contest);
         if (prize > 0) {
-          // Credit winning to wallet
-          prizeUpdates.push(
-            updateDoc(doc(db, "wallets", p.userId), {
-              winningBalance: increment(prize),
-              updatedAt: Date.now(),
-            })
-          );
-          // Create transaction
-          prizeUpdates.push(
-            setDoc(doc(db, "transactions", `WIN_${Date.now()}_${p.userId}`), {
-              id: `WIN_${Date.now()}_${p.userId}`,
-              userId: p.userId,
-              type: "contest_win",
-              amount: prize,
-              status: "completed",
-              description: `Won Rank #${p.rank} in ${contest.name}`,
-              contestId,
-              createdAt: Date.now(),
-              completedAt: Date.now(),
-            })
-          );
-          // Update participant with prize
-          prizeUpdates.push(
-            updateDoc(doc(db, "contest_participants", `${contestId}_${p.userId}`), {
-              prizeWon: prize,
-            })
-          );
+          const w = getWallet(p.userId);
+          w.winningBalance += prize;
+          transactions.unshift({
+            id: `WIN_${Date.now()}_${p.userId}`, userId: p.userId,
+            type: "contest_win", amount: prize, status: "completed",
+            description: `Won Rank #${p.rank} in ${contest.name}`,
+            contestId, createdAt: Date.now(), completedAt: Date.now(),
+          });
+          (p as any).prizeWon = prize;
+          winnerCount++;
         }
       }
-
-      // Mark contest as completed
-      prizeUpdates.push(
-        updateDoc(doc(db, "contests", contestId), {
-          status: "completed",
-          completedAt: Date.now(),
-        })
-      );
-
-      await Promise.all(prizeUpdates);
-
+      contest.status = "completed";
+      contest.completedAt = Date.now();
       return NextResponse.json({
         status: "success",
-        message: `Winners declared. ${participants.filter(p => calculatePrize(p.rank, contest) > 0).length} winners credited.`,
+        message: `Winners declared. ${winnerCount} winners credited.`,
       }, { status: 200 });
     }
 
@@ -332,25 +251,12 @@ export async function GET(request: Request) {
     const statusFilter = url.searchParams.get("status");
     const typeFilter = url.searchParams.get("type");
 
-    if (!db) {
-      return NextResponse.json({ status: "fail", contests: [] }, { status: 200 });
-    }
+    let contestsArr = Array.from(contests.values());
+    if (statusFilter) contestsArr = contestsArr.filter((c) => c.status === statusFilter);
+    if (typeFilter) contestsArr = contestsArr.filter((c) => c.type === typeFilter);
+    contestsArr.sort((a, b) => b.createdAt - a.createdAt);
 
-    let q = collection(db, "contests");
-    const snap = await getDocs(q);
-
-    let contests: Contest[] = [];
-    snap.forEach((doc) => {
-      const data = doc.data() as Contest;
-      if (statusFilter && data.status !== statusFilter) return;
-      if (typeFilter && data.type !== typeFilter) return;
-      contests.push(data);
-    });
-
-    // Sort by createdAt descending
-    contests.sort((a, b) => b.createdAt - a.createdAt);
-
-    return NextResponse.json({ status: "success", contests }, { status: 200 });
+    return NextResponse.json({ status: "success", contests: contestsArr }, { status: 200 });
   } catch (error) {
     console.error("[Contest API] GET error:", error);
     return NextResponse.json({ status: "fail", contests: [] }, { status: 200 });
