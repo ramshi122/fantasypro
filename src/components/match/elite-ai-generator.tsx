@@ -9,6 +9,8 @@ import {
   Clock,
   Cpu,
   Crown,
+  Eye,
+  EyeOff,
   Layers,
   Loader2,
   Send,
@@ -62,6 +64,7 @@ export function EliteAIGenerator({
   const [result, setResult] = useState<EliteGenerateResult | null>(null);
   const [selectedCount, setSelectedCount] = useState<number>(20);
   const [eliteMode, setEliteMode] = useState<"smart" | "gl" | "advanced" | "combination">("smart");
+  const [showChecksPreview, setShowChecksPreview] = useState(false); // Hide 150+ checks preview by default
 
   const matchId = (match?.matchId ?? match?.id ?? "") as string;
 
@@ -471,29 +474,48 @@ export function EliteAIGenerator({
                 )}
               </div>
 
-              {/* 150+ checks preview */}
+              {/* 150+ checks preview — collapsible with Hide/Show button */}
               <div className="bg-violet-50/50 dark:bg-violet-950/20 rounded-xl p-3">
-                <p className="text-[11px] font-bold text-violet-700 dark:text-violet-300 mb-2 flex items-center gap-1.5">
-                  <Cpu className="w-3 h-3" />
-                  150+ Data Point Analysis (173 Checks)
-                </p>
-                <div className="space-y-2">
-                  {CHECK_GROUPS.map((g) => (
-                    <div key={g.name}>
-                      <p className="text-[9px] font-bold text-violet-600 dark:text-violet-400 uppercase tracking-wide mb-1">
-                        {g.name} ({g.count})
-                      </p>
-                      <div className="grid grid-cols-2 gap-0.5 text-[8px] text-muted-foreground">
-                        {g.items.map((name, i) => (
-                          <div key={i} className="flex items-center gap-0.5 truncate">
-                            <span className="text-violet-500 font-bold flex-shrink-0">{g.startIdx + i}.</span>
-                            <span className="truncate">{name}</span>
+                <button
+                  onClick={() => setShowChecksPreview(!showChecksPreview)}
+                  className="w-full flex items-center justify-between text-[11px] font-bold text-violet-700 dark:text-violet-300 mb-2"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Cpu className="w-3 h-3" />
+                    150+ Data Point Analysis (173 Checks)
+                  </span>
+                  <span className="flex items-center gap-1 text-[10px] bg-violet-200 dark:bg-violet-900 px-2 py-0.5 rounded-full">
+                    {showChecksPreview ? <><EyeOff className="w-3 h-3" /> Hide</> : <><Eye className="w-3 h-3" /> Show</>}
+                  </span>
+                </button>
+                <AnimatePresence>
+                  {showChecksPreview && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="space-y-2">
+                        {CHECK_GROUPS.map((g) => (
+                          <div key={g.name}>
+                            <p className="text-[9px] font-bold text-violet-600 dark:text-violet-400 uppercase tracking-wide mb-1">
+                              {g.name} ({g.count})
+                            </p>
+                            <div className="grid grid-cols-2 gap-0.5 text-[8px] text-muted-foreground">
+                              {g.items.map((name, i) => (
+                                <div key={i} className="flex items-center gap-0.5 truncate">
+                                  <span className="text-violet-500 font-bold flex-shrink-0">{g.startIdx + i}.</span>
+                                  <span className="truncate">{name}</span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         ))}
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             </div>
           )}

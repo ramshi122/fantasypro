@@ -1878,12 +1878,44 @@ export function generateEliteTeams(
 
     // Pick players per role
     const team: MatchPlayer[] = [];
+    let roleFailed = false;
 
     // Pick strategy: safe → top EFV; differential → mix top + low-sel
     for (const role of ["WK", "BAT", "AR", "BOWL"] as const) {
       const need = cfg[role];
-      const poolForRole = byRole[role];
-      if (poolForRole.length < need) break;
+      let poolForRole = byRole[role];
+
+      // DEFENSIVE FALLBACK: If this role pool is too small, borrow from other roles
+      if (poolForRole.length < need) {
+        console.warn(`[EliteAI] Role ${role} has only ${poolForRole.length} players, need ${need} — trying fallback`);
+        // Fallback 1: Borrow from AR pool (all-rounders can fill any role)
+        if (role !== "AR" && byRole.AR.length > poolForRole.length) {
+          const arBorrow = byRole.AR.slice(0, need - poolForRole.length);
+          poolForRole = [...poolForRole, ...arBorrow];
+          console.warn(`[EliteAI] Borrowed ${arBorrow.length} ARs for ${role}`);
+        }
+        // Fallback 2: If still short, borrow from BAT (batters can be flexible)
+        if (poolForRole.length < need && role !== "BAT" && byRole.BAT.length > 0) {
+          const batBorrow = byRole.BAT.slice(0, need - poolForRole.length);
+          poolForRole = [...poolForRole, ...batBorrow];
+          console.warn(`[EliteAI] Borrowed ${batBorrow.length} BATs for ${role}`);
+        }
+        // Fallback 3: If WK is empty, use any player with "keeper" in name
+        if (poolForRole.length === 0 && role === "WK") {
+          const wkByName = effectivePool.filter(p => {
+            const name = (p.name || "").toLowerCase();
+            return name.includes("keeper") || name.includes("wk");
+          });
+          poolForRole = wkByName;
+          console.warn(`[EliteAI] Used name-based WK fallback: ${wkByName.length} found`);
+        }
+        // If still not enough, skip this team
+        if (poolForRole.length < need) {
+          console.error(`[EliteAI] Cannot fill role ${role}: have ${poolForRole.length}, need ${need}`);
+          roleFailed = true;
+          break;
+        }
+      }
 
       // FIX: Deterministic shuffle for maximum diversity between teams
       const shuffled = [...poolForRole];
@@ -1919,7 +1951,7 @@ export function generateEliteTeams(
       }
     }
 
-    if (team.length !== 11) continue;
+    if (roleFailed || team.length !== 11) continue;
 
     // === WIN PROBABILITY-BASED SIDE BALANCE ===
     // Calculate win probability and enforce recommended split (7-4, 6-5, etc.)
@@ -2164,7 +2196,94 @@ export function generateEliteTeams(
   });
 
   // Trim to requested count (in case we generated extra for dedup safety)
-  return rankedTeams.slice(0, teamCount);
+  const finalTeams = rankedTeams.slice(0, teamCount);
+
+  // FALLBACK: If we generated 0 teams (all failed due to role/dedup issues),
+  // try a simple fallback — just pick top 11 players by EFV with 1 WK minimum
+  if (finalTeams.length === 0 && effectivePool.length >= 11) {
+    console.warn("[EliteAI] All teams failed — using emergency fallback generation");
+    const fallbackTeams: EliteRankedTeam[] = [];
+
+    for (let t = 0; t < Math.min(teamCount, 5); t++) {
+      // Simple fallback: pick 1 WK, 4 BAT, 2 AR, 4 BOWL (or whatever's available)
+      const wkPool = byRole.WK.length > 0 ? byRole.WK : effectivePool;
+      const batPool = byRole.BAT.length > 0 ? byRole.BAT : effectivePool;
+      const arPool = byRole.AR.length > 0 ? byRole.AR : effectivePool;
+      const bowlPool = byRole.BOWL.length > 0 ? byRole.BOWL : effectivePool;
+
+      const wk = wkPool[t % wkPool.length] || effectivePool[t];
+      const bats = batPool.slice(t, t + 4);
+      const ars = arPool.slice(t, t + 2);
+      const bowls = bowlPool.slice(t, t + 4);
+      const fallbackTeam = [wk, ...bats, ...ars, ...bowls].slice(0, 11);
+
+      if (fallbackTeam.length < 11) {
+        // Pad with any remaining players
+        const used = new Set(fallbackTeam.map(playerId));
+        for (const p of effectivePool) {
+          if (fallbackTeam.length >= 11) break;
+          if (!used.has(playerId(p))) fallbackTeam.push(p);
+        }
+      }
+
+      if (fallbackTeam.length !== 11) continue;
+
+      const sorted = [...fallbackTeam].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
+      const captain = sorted[0];
+      const viceCaptain = sorted[1] || sorted[0];
+      const baseEFV = fallbackTeam.reduce((s, p) => s + calculatePlayerEFV(p), 0);
+      const teamEFV = baseEFV + calculatePlayerEFV(captain) * 1.0 + calculatePlayerEFV(viceCaptain) * 0.5;
+
+      const teamRow: TeamRow = {
+        _id: `elite_fallback_${t}_${Date.now().toString(36)}`,
+        teamId: `elite_fallback_${t + 1}`,
+        teamNo: t + 1,
+        team_number: t + 1,
+        players: fallbackTeam.map((p) => ({
+          pid: playerId(p),
+          player_fixed_id: p.player_fixed_id,
+          pl_id: p.pl_id,
+          name: p.name,
+          shortName: p.shortName || p.name?.slice(0, 4).toUpperCase() || "",
+          team: p.team_name,
+          team_name: p.team_name,
+          role: roleOf(p),
+          role_num: p.role,
+          player_type: p.player_type,
+          credits: p.credits,
+          selected_by: selPct(p),
+          sel: p.sel,
+          image: p.image,
+          playing: p.playing,
+        })),
+        captain: playerId(captain),
+        viceCaptain: playerId(viceCaptain),
+        vicecaptain: playerId(viceCaptain),
+        c: playerId(captain),
+        vc: playerId(viceCaptain),
+        type: "elite-ai",
+      };
+
+      fallbackTeams.push({
+        rank: t + 1,
+        team: teamRow,
+        efv: teamEFV,
+        aiScore: clamp(Math.round(teamEFV / 11), 0, 100),
+        riskLevel: "medium",
+        strategy: "balanced",
+        reasoning: `Rank ${t + 1} — Fallback team (pool had role gaps). Team EFV: ${teamEFV.toFixed(1)}.`,
+        captainReason: `C: ${playerName(captain)} — top EFV pick`,
+        vcReason: `VC: ${playerName(viceCaptain)} — 2nd top EFV pick`,
+      });
+    }
+
+    if (fallbackTeams.length > 0) {
+      console.log(`[EliteAI] Fallback generated ${fallbackTeams.length} teams`);
+      return fallbackTeams;
+    }
+  }
+
+  return finalTeams;
 }
 
 /* ============== Monte Carlo Simulation ============== */
@@ -2327,37 +2446,59 @@ export async function runEliteAI(
 ): Promise<EliteGenerateResult> {
   const startTime = Date.now();
 
-  // Run 150+ data-point analysis checks with progress
-  const TOTAL_CHECKS = 173; // 150+ data point analysis
-  for (let i = 1; i <= TOTAL_CHECKS; i++) {
-    onProgress?.(i, TOTAL_CHECKS, `Running AI check ${i}/${TOTAL_CHECKS}...`);
-    if (i % 8 === 0) await new Promise((r) => setTimeout(r, 40));
+  // Defensive: validate inputs
+  if (!players || !Array.isArray(players) || players.length === 0) {
+    throw new Error("No players provided to Elite AI");
   }
 
-  const analysis = runEliteAnalysis(players, team1Name, team2Name, lineupAnnounced);
-  onProgress?.(TOTAL_CHECKS, TOTAL_CHECKS, `Analysis complete. Running Monte Carlo simulations...`);
-
-  // === Monte Carlo Simulation (NEW) ===
-  // Run 10,000+ data point simulations to validate teams
-  await new Promise((r) => setTimeout(r, 100));
-  const simulationResults = runMonteCarloSimulation(players, analysis);
-  onProgress?.(TOTAL_CHECKS, TOTAL_CHECKS, `Monte Carlo complete (${simulationResults.dataPoints} data points). Generating ${teamCount} teams...`);
-
-  // Generate N ranked teams
-  await new Promise((r) => setTimeout(r, 100));
-  const rankedTeams = generateEliteTeams(players, team1Name, team2Name, analysis, lineupAnnounced, teamCount, mode);
-
-  // Apply Monte Carlo win probability to each team
-  for (const team of rankedTeams) {
-    team.aiScore = Math.round((team.aiScore + simulationResults.averageWinRate) / 2);
-    team.reasoning = `${team.reasoning} | Monte Carlo: ${simulationResults.dataPoints} data points simulated`;
+  const validPlayers = players.filter(p => p && p.name && Number(p.credits ?? 0) > 0);
+  if (validPlayers.length < 11) {
+    throw new Error(`Need at least 11 valid players (have ${validPlayers.length}). Check if player data loaded correctly.`);
   }
 
-  onProgress?.(TOTAL_CHECKS, TOTAL_CHECKS, `Generated ${rankedTeams.length} ranked teams (AI win rate: ${simulationResults.averageWinRate}%)`);
+  console.log(`[EliteAI] Starting generation: ${validPlayers.length} players, ${teamCount} teams requested, lineup=${lineupAnnounced}`);
 
-  return {
-    analysis,
-    rankedTeams,
-    durationMs: Date.now() - startTime,
-  };
+  try {
+    // Run 150+ data-point analysis checks with progress
+    const TOTAL_CHECKS = 173; // 150+ data point analysis
+    for (let i = 1; i <= TOTAL_CHECKS; i++) {
+      onProgress?.(i, TOTAL_CHECKS, `Running AI check ${i}/${TOTAL_CHECKS}...`);
+      if (i % 8 === 0) await new Promise((r) => setTimeout(r, 40));
+    }
+
+    const analysis = runEliteAnalysis(validPlayers, team1Name, team2Name, lineupAnnounced);
+    onProgress?.(TOTAL_CHECKS, TOTAL_CHECKS, `Analysis complete. Running Monte Carlo simulations...`);
+
+    // === Monte Carlo Simulation ===
+    await new Promise((r) => setTimeout(r, 100));
+    const simulationResults = runMonteCarloSimulation(validPlayers, analysis);
+    onProgress?.(TOTAL_CHECKS, TOTAL_CHECKS, `Monte Carlo complete (${simulationResults.dataPoints} data points). Generating ${teamCount} teams...`);
+
+    // Generate N ranked teams
+    await new Promise((r) => setTimeout(r, 100));
+    const rankedTeams = generateEliteTeams(validPlayers, team1Name, team2Name, analysis, lineupAnnounced, teamCount, mode);
+
+    if (rankedTeams.length === 0) {
+      throw new Error("Team generation failed — all 173 checks completed but no valid teams could be built. This may be due to insufficient role coverage (need 1+ WK, 3+ BAT, 1+ AR, 3+ BOWL). Try refreshing match data.");
+    }
+
+    // Apply Monte Carlo win probability to each team
+    for (const team of rankedTeams) {
+      team.aiScore = Math.round((team.aiScore + simulationResults.averageWinRate) / 2);
+      team.reasoning = `${team.reasoning} | Monte Carlo: ${simulationResults.dataPoints} data points simulated`;
+    }
+
+    onProgress?.(TOTAL_CHECKS, TOTAL_CHECKS, `Generated ${rankedTeams.length} ranked teams (AI win rate: ${simulationResults.averageWinRate}%)`);
+
+    console.log(`[EliteAI] ✅ Generated ${rankedTeams.length} teams in ${Date.now() - startTime}ms`);
+
+    return {
+      analysis,
+      rankedTeams,
+      durationMs: Date.now() - startTime,
+    };
+  } catch (err) {
+    console.error("[EliteAI] ❌ Generation failed:", err);
+    throw err;
+  }
 }

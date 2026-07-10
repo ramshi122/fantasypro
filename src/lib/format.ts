@@ -156,18 +156,29 @@ export function roleLabel(role?: string | number): string {
  * Backend uses numeric `role` field (0=WK, 1=BAT, 2=AR, 3=BOWL) which is more
  * reliable than player_type (which only has "batter"/"pacer"). We try numeric
  * first, then fall back to player_type string.
+ *
+ * FIX: Handle string numbers ("0", "1") and string roles ("WK", "BAT") too.
  */
-export function roleFromPlayerType(playerType?: string, roleNum?: number): string {
-  // Numeric role takes priority
-  if (typeof roleNum === "number") {
-    if (roleNum === 0) return "WK";
-    if (roleNum === 1) return "BAT";
-    if (roleNum === 2) return "AR";
-    if (roleNum === 3) return "BOWL";
+export function roleFromPlayerType(playerType?: string, roleNum?: number | string): string {
+  // Numeric role takes priority — handle both number and string-number
+  const numRole = typeof roleNum === "string" ? Number(roleNum) : roleNum;
+  if (typeof numRole === "number" && !isNaN(numRole)) {
+    if (numRole === 0) return "WK";
+    if (numRole === 1) return "BAT";
+    if (numRole === 2) return "AR";
+    if (numRole === 3) return "BOWL";
+  }
+  // Handle string role directly ("WK", "BAT", "AR", "BOWL")
+  if (typeof roleNum === "string") {
+    const r = roleNum.toUpperCase().trim();
+    if (r === "WK" || r.includes("KEEPER")) return "WK";
+    if (r === "BAT" || r.includes("BATTER") || r.includes("BATSMAN")) return "BAT";
+    if (r === "AR" || r.includes("ALL")) return "AR";
+    if (r === "BOWL" || r.includes("BOWL") || r.includes("PACER") || r.includes("SPINNER")) return "BOWL";
   }
   const p = (playerType || "").toLowerCase();
   if (p.includes("keeper") || p.includes("wk")) return "WK";
-  if (p.includes("pacer") || p.includes("bowler") || p.includes("bowl")) return "BOWL";
+  if (p.includes("pacer") || p.includes("bowler") || p.includes("bowl") || p.includes("spinner")) return "BOWL";
   if (p.includes("all")) return "AR";
   if (p.includes("batter") || p.includes("bat")) return "BAT";
   if (p.includes("keeper")) return "GK";
