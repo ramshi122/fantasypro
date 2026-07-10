@@ -809,8 +809,13 @@ export async function listFantasyTeams(params: {
       authToken: params.authToken,
     }),
   });
-  if (resp.status === "success" && Array.isArray(resp.teams_list)) {
-    return resp.teams_list.map((t) => ({
+
+  // FIX: Original APK reads data.teams_list (nested under data field)
+  // Our rawFetch returns the body as-is, so check both locations
+  const teamsList = (resp as any).teams_list || (resp as any).data?.teams_list || [];
+
+  if (resp.status === "success" && Array.isArray(teamsList) && teamsList.length > 0) {
+    return teamsList.map((t: any) => ({
       teamId: String(t.team_id),
       teamNo: t.team_number,
       team_id: t.team_id,
@@ -818,7 +823,8 @@ export async function listFantasyTeams(params: {
       fantasyApp: params.fantasyApp,
     } as TeamRow));
   }
-  // Backend failed — return empty (don't mix with localStorage)
+
+  // Backend failed or no teams — return empty
   return [];
 }
 
