@@ -163,8 +163,11 @@ function validateTransferParams(params: {
   if (!params.fantasyApp) {
     return { valid: false, error: "Fantasy platform is required", code: "MISSING_FANTASY_APP" };
   }
+  // FIX: If type is "edit" but no team ID, auto-convert to "new" (add) instead of failing.
+  // This happens when list-of-teams returned empty (no existing teams on platform).
   if (params.type === "edit" && !params.id) {
-    return { valid: false, error: "Team ID is required for edit/replace operations", code: "MISSING_TEAM_ID" };
+    console.log("[Transfer][VALIDATE] Edit requested but no team ID — converting to add (new)");
+    params.type = "new";
   }
   return { valid: true };
 }

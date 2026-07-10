@@ -1629,7 +1629,9 @@ export async function bulkTransferToLinkedAccount(
 
   for (let i = 0; i < teams.length; i++) {
     const t = teams[i];
-    const isReplace = params.replaceMode && params.existingTeamIds && i < params.existingTeamIds.length;
+    // FIX: If replaceMode but no existing team ID for this index, fall back to "new"
+    const hasExistingId = params.replaceMode && params.existingTeamIds && i < params.existingTeamIds.length && params.existingTeamIds[i];
+    const isReplace = !!hasExistingId;
     const numericPlayers = t.playerIds.map((id) => Number(id)).filter((n) => !isNaN(n));
     const numericCaptain = Number(t.captainId);
     const numericVC = Number(t.viceCaptainId);
