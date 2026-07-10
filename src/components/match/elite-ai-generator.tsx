@@ -27,6 +27,7 @@ import {
   type EliteAnalysisResult,
   type EliteRankedTeam,
   type EliteGenerateResult,
+  type EliteCheckGroup,
 } from "@/lib/elite-ai";
 import type { MatchInfo, MatchPlayer, TeamRow } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -57,7 +58,7 @@ export function EliteAIGenerator({
   isLicensed,
 }: EliteAIGeneratorProps) {
   const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState({ check: 0, total: 25, message: "" });
+  const [progress, setProgress] = useState({ check: 0, total: 173, message: "" });
   const [result, setResult] = useState<EliteGenerateResult | null>(null);
   const [selectedCount, setSelectedCount] = useState<number>(20);
   const [eliteMode, setEliteMode] = useState<"smart" | "gl" | "advanced" | "combination">("smart");
@@ -74,7 +75,7 @@ export function EliteAIGenerator({
     }
     setRunning(true);
     setResult(null);
-    setProgress({ check: 0, total: 120, message: "Initializing Elite AI..." });
+    setProgress({ check: 0, total: 173, message: "Initializing Elite AI — 150+ Data Point Analysis..." });
 
     try {
       const res = await runEliteAI(
@@ -436,17 +437,18 @@ export function EliteAIGenerator({
                   </div>
                 </div>
 
-                {/* === AI Selection Banner (NEW) === */}
+                {/* === AI Selection Banner (150+ Data Points) === */}
                 <div className="bg-gradient-to-r from-violet-600 via-purple-600 to-fuchsia-600 rounded-2xl p-4 text-white shadow-lg mb-4">
-                  <p className="text-sm font-black flex items-center gap-1.5 mb-2">
-                    <Sparkles className="w-4 h-4" /> AI Selection
+                  <p className="text-sm font-black flex items-center gap-1.5 mb-1">
+                    <Sparkles className="w-4 h-4" /> AI TOP RANK FANTASY ENGINE
                   </p>
+                  <p className="text-[10px] text-white/80 mb-2 font-bold tracking-wide">150+ DATA POINT ANALYSIS</p>
                   <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-                    <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> 10,000+ data points analyzed</span>
+                    <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> 173 AI checks (real data)</span>
                     <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> Monte Carlo simulations</span>
-                    <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> Instant team generation</span>
-                    <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> Discovers hidden value picks</span>
-                    <span className="flex items-center gap-1 col-span-2"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> Data-driven, no bias</span>
+                    <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> 10,000+ data points</span>
+                    <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> No fake data — pool-derived</span>
+                    <span className="flex items-center gap-1 col-span-2"><CheckCircle2 className="w-3 h-3 text-emerald-300" /> Recalculates after Toss · No bench/injured players</span>
                   </div>
                   <div className="mt-3 bg-white/10 rounded-lg p-2 text-center">
                     <p className="text-[9px] text-white/60 uppercase">Average Win Rate</p>
@@ -469,17 +471,26 @@ export function EliteAIGenerator({
                 )}
               </div>
 
-              {/* 120 checks preview */}
+              {/* 150+ checks preview */}
               <div className="bg-violet-50/50 dark:bg-violet-950/20 rounded-xl p-3">
                 <p className="text-[11px] font-bold text-violet-700 dark:text-violet-300 mb-2 flex items-center gap-1.5">
                   <Cpu className="w-3 h-3" />
-                  120 AI Analysis Checks
+                  150+ Data Point Analysis (173 Checks)
                 </p>
-                <div className="grid grid-cols-2 gap-1 text-[9px] text-muted-foreground">
-                  {CHECK_NAMES.map((name, i) => (
-                    <div key={i} className="flex items-center gap-1">
-                      <span className="text-violet-500 font-bold">{i + 1}.</span>
-                      <span>{name}</span>
+                <div className="space-y-2">
+                  {CHECK_GROUPS.map((g) => (
+                    <div key={g.name}>
+                      <p className="text-[9px] font-bold text-violet-600 dark:text-violet-400 uppercase tracking-wide mb-1">
+                        {g.name} ({g.count})
+                      </p>
+                      <div className="grid grid-cols-2 gap-0.5 text-[8px] text-muted-foreground">
+                        {g.items.map((name, i) => (
+                          <div key={i} className="flex items-center gap-0.5 truncate">
+                            <span className="text-violet-500 font-bold flex-shrink-0">{g.startIdx + i}.</span>
+                            <span className="truncate">{name}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -638,43 +649,62 @@ function EliteAIResult({
           className="w-full h-8 text-[11px] border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300"
           onClick={() => setShowAnalysis(!showAnalysis)}
         >
-          {showAnalysis ? "Hide" : "Show"} 120 AI Checks
+          {showAnalysis ? "Hide" : "Show"} 150+ AI Checks
         </Button>
       </div>
 
-      {/* 120 checks (collapsible) */}
+      {/* 150+ checks (collapsible, grouped by category) */}
       <AnimatePresence>
         {showAnalysis && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="space-y-1.5"
+            className="space-y-3"
           >
-            {analysis.checks.map((check) => (
-              <div
-                key={check.id}
-                className={cn(
-                  "rounded-lg p-2 border text-[10px]",
-                  check.status === "excellent" && "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800",
-                  check.status === "good" && "bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800",
-                  check.status === "warning" && "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800",
-                  check.status === "critical" && "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800"
-                )}
-              >
-                <div className="flex items-center justify-between mb-0.5">
-                  <span className="font-bold flex items-center gap-1">
-                    <span className="text-muted-foreground">#{check.id}</span>
-                    {check.name}
-                  </span>
-                  <span className="font-black tabular-nums">{check.score}</span>
+            {CHECK_GROUPS_UI.map((grp) => {
+              const groupChecks = analysis.checks.filter((c) => c.group === grp.key);
+              if (groupChecks.length === 0) return null;
+              const groupAvg = Math.round(groupChecks.reduce((s, c) => s + c.score, 0) / groupChecks.length);
+              return (
+                <div key={grp.key} className="space-y-1.5">
+                  <div className={cn("rounded-lg p-2 border", grp.bgClass)}>
+                    <div className="flex items-center justify-between">
+                      <p className={cn("text-[10px] font-bold uppercase tracking-wide", grp.textClass)}>
+                        {grp.icon} {grp.label} ({groupChecks.length} checks)
+                      </p>
+                      <span className={cn("text-xs font-black tabular-nums", grp.textClass)}>
+                        {groupAvg}/100
+                      </span>
+                    </div>
+                  </div>
+                  {groupChecks.map((check) => (
+                    <div
+                      key={check.id}
+                      className={cn(
+                        "rounded-lg p-2 border text-[10px] ml-3",
+                        check.status === "excellent" && "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800",
+                        check.status === "good" && "bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800",
+                        check.status === "warning" && "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800",
+                        check.status === "critical" && "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800"
+                      )}
+                    >
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="font-bold flex items-center gap-1">
+                          <span className="text-muted-foreground">#{check.id}</span>
+                          {check.name}
+                        </span>
+                        <span className="font-black tabular-nums">{check.score}</span>
+                      </div>
+                      <p className="text-muted-foreground">{check.insight}</p>
+                      {check.recommendation && (
+                        <p className="text-amber-600 dark:text-amber-400 font-semibold mt-0.5">→ {check.recommendation}</p>
+                      )}
+                    </div>
+                  ))}
                 </div>
-                <p className="text-muted-foreground">{check.insight}</p>
-                {check.recommendation && (
-                  <p className="text-amber-600 dark:text-amber-400 font-semibold mt-0.5">→ {check.recommendation}</p>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </motion.div>
         )}
       </AnimatePresence>
@@ -940,32 +970,65 @@ function RankedTeamCard({
   );
 }
 
-/* ============== Check Names (for preview) ============== */
+/* ============== 150+ Check Groups (for preview + result display) ============== */
 
-const CHECK_NAMES = [
-  "Player Pool Depth",
-  "Playing XI Confirmation",
-  "Captain Certainty",
-  "Vice-Captain Certainty",
-  "Credit Distribution",
-  "Selection % Concentration",
-  "Differential Opportunity",
-  "Team Balance (7-4 vs 6-5)",
-  "Role Balance Optimal",
-  "Top-Order BAT Strength",
-  "Death Overs BOWL Strength",
-  "All-Rounder Coverage",
-  "Wicket-Keeper Form",
-  "Player Form Trend",
-  "Venue Suitability",
-  "Toss Impact",
-  "Injury/Bench Risk",
-  "Captain Multiplier Effect",
-  "VC Multiplier Effect",
-  "Team Combination Coverage",
-  "Grand League Suitability",
-  "Small League Suitability",
-  "Risk-Reward Ratio",
-  "Player Combination Uniqueness",
-  "Final AI Confidence Score",
+/** UI styling for each of the 6 check groups */
+const CHECK_GROUPS_UI: Array<{
+  key: EliteCheckGroup;
+  label: string;
+  icon: string;
+  bgClass: string;
+  textClass: string;
+}> = [
+  { key: "match", label: "Match Analysis", icon: "🏟️", bgClass: "bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800", textClass: "text-blue-700 dark:text-blue-300" },
+  { key: "team", label: "Team Analysis", icon: "👥", bgClass: "bg-violet-50 dark:bg-violet-950/30 border-violet-200 dark:border-violet-800", textClass: "text-violet-700 dark:text-violet-300" },
+  { key: "player", label: "Player Analysis", icon: "🏏", bgClass: "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800", textClass: "text-emerald-700 dark:text-emerald-300" },
+  { key: "matchup", label: "Matchup Analysis", icon: "⚔️", bgClass: "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800", textClass: "text-amber-700 dark:text-amber-300" },
+  { key: "ai", label: "AI Analysis", icon: "🤖", bgClass: "bg-fuchsia-50 dark:bg-fuchsia-950/30 border-fuchsia-200 dark:border-fuchsia-800", textClass: "text-fuchsia-700 dark:text-fuchsia-300" },
+  { key: "optimization", label: "Final Optimization", icon: "🎯", bgClass: "bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800", textClass: "text-rose-700 dark:text-rose-300" },
+];
+
+/** Compact preview of the 150+ checks (for the side panel) */
+const CHECK_GROUPS: Array<{
+  name: string;
+  count: number;
+  startIdx: number;
+  items: string[];
+}> = [
+  {
+    name: "Match Analysis",
+    count: 65,
+    startIdx: 1,
+    items: ["Pool Depth", "Playing XI", "Captain Certainty", "VC Certainty", "Credit Distribution", "Selection %", "Differential", "Team Balance", "Role Balance", "Top-Order BAT", "Death BOWL", "AR Coverage", "WK Form", "Form Trend", "Venue", "Toss Impact", "Injury Risk", "C Multiplier", "VC Multiplier", "Combo Coverage", "GL Suitability", "SL Suitability", "Risk-Reward", "Uniqueness", "Confidence", "Win Probability", "Toss Result", "Bat First Prob.", "Chase Prob.", "Pitch Type", "Pitch Freshness", "Grass Coverage", "Crack Analysis", "Bounce Factor", "Pace Assist.", "Spin Assist.", "Swing Assist.", "Seam Movement", "1st Inn Avg", "2nd Inn Avg", "Winning Score", "Chase Success", "Bat-First Success", "Venue Pattern", "Toss Impact", "Toss Decision", "Home Adv.", "Away Perf.", "Match Format", "Tournament", "Match Import.", "Knockout", "Qualification", "Motivation", "Venue Index", "Ground Name", "Dimensions", "Straight Bdy", "Square Bdy", "Outfield", "Weather", "Temperature", "Humidity", "Wind Speed", "Rain Chance"],
+  },
+  {
+    name: "Team Analysis",
+    count: 20,
+    startIdx: 66,
+    items: ["Team Form", "Last 5 Form", "Last 10 Form", "Win %", "Loss %", "Batting Strength", "Bowling Strength", "Spin Strength", "Pace Strength", "Fielding Rating", "Team Balance", "Opening Strength", "Mid-Order Strength", "Finishing", "Death Bowling", "PP Bowling", "Momentum", "Captain Form", "Confidence", "Pressure Perf."],
+  },
+  {
+    name: "Player Analysis",
+    count: 40,
+    startIdx: 86,
+    items: ["Official XI", "Batting Pos.", "Bowling Pos.", "Exp. Overs", "Role Clarity", "Form Rating", "Fitness", "Injury Status", "Workload", "Recent Runs", "Recent Wickets", "Batting Avg", "Bowling Avg", "Strike Rate", "Economy", "Boundary %", "Six %", "Dot Ball %", "Wicket %", "Catch %", "Stumping %", "Run-out %", "Consistency", "Fantasy Avg", "Last 3", "Last 5", "Last 10", "Venue Record", "Opponent Record", "Home Record", "Away Record", "Chase Record", "Bat-First Record", "Spin Record", "Pace Record", "Left-Hand", "Right-Hand", "PP Record", "Mid-Overs Record", "Death Record"],
+  },
+  {
+    name: "Matchup Analysis",
+    count: 20,
+    startIdx: 126,
+    items: ["Head to Head", "Batter vs Bowler", "Bowler vs Batter", "Left vs Right", "Spin Matchup", "Pace Matchup", "Death Matchup", "PP Matchup", "Venue Matchup", "Opp. Weakness", "Opp. Strength", "Opening Matchup", "Finisher Matchup", "Bowl Rotation", "Bat Rotation", "Matchup Win %", "Exp. Balls Faced", "Exp. Deliveries", "Pressure Matchup", "Clutch Perf."],
+  },
+  {
+    name: "AI Analysis",
+    count: 5,
+    startIdx: 146,
+    items: ["AI Exp. Runs", "AI Exp. Wickets", "AI Exp. Catches", "AI Exp. Fantasy", "AI Captain Score"],
+  },
+  {
+    name: "Final Optimization",
+    count: 23,
+    startIdx: 151,
+    items: ["AI Boom Prob.", "AI Failure Prob.", "AI Risk Score", "AI Safe Score", "AI Diff Score", "AI Ownership", "AI GL Score", "AI SL Score", "AI Value Score", "AI Match Winner", "AI Top Performer", "AI Best Bowler", "AI Best Batter", "AI Impact Player", "Player Synergy", "Credit Opt.", "Diff. Opt.", "Safe Core", "Unique Combo", "Captain Opt.", "VC Opt.", "Final AI Conf.", "Final Team Opt."],
+  },
 ];
