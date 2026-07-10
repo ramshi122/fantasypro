@@ -51,6 +51,7 @@ export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGe
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState<SweepProgress | null>(null);
   const [result, setResult] = useState<SweepResult | null>(null);
+  const [openModePage, setOpenModePage] = useState<GenMode | null>(null);
 
   const matchId = (match.matchId ?? match.id ?? "") as string;
   const team1Name = (typeof match.team1 === "string" ? match.team1 : (match.team1?.shortName || match.team1?.name)) as string ||
