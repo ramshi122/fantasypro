@@ -27,6 +27,20 @@ export interface TierFeatures {
   primeTeams: boolean;
   eliteAI: boolean;
 
+  // NEW Premium Features (locked by subscription)
+  autoJoinContest: boolean;        // Auto-Join All Contests
+  autoTransferScheduler: boolean;  // Auto-Transfer on lineup
+  contestTracker: boolean;         // Contest Profit/Loss Tracker
+  multiMatchGenerator: boolean;    // Multi-Match Generator
+  pushNotifications: boolean;      // Firebase Push Notifications
+  whatsappShare: boolean;          // WhatsApp Direct Send
+  multiLanguage: boolean;          // Multi-Language support
+  playerFormDashboard: boolean;    // Player Form Dashboard
+  captainRotation: boolean;        // Smart Captain Rotation
+  teamBackup: boolean;             // Team Backup/Restore
+  cricketLivePage: boolean;        // CREX Cricket Live page
+  serverSideAutoJoin: boolean;     // Server-side auto-join (cron)
+
   // Referral
   referralProgram: boolean;
 
@@ -48,6 +62,10 @@ export function getTierFeatures(tier: Tier | string | null | undefined): TierFea
         dream11Transfer: "3/day", my11CircleTransfer: "locked",
         contestJoin: false, multiPlatform: false,
         expertTeams: false, primeTeams: false, eliteAI: false,
+        autoJoinContest: false, autoTransferScheduler: false, contestTracker: false,
+        multiMatchGenerator: false, pushNotifications: false, whatsappShare: false,
+        multiLanguage: false, playerFormDashboard: false, captainRotation: false,
+        teamBackup: false, cricketLivePage: false, serverSideAutoJoin: false,
         referralProgram: true,
         tierName: "Trial", tierColor: "from-emerald-500 to-green-600",
         tierEmoji: "🆓", tierPrice: "FREE", tierDuration: "Unlimited",
@@ -59,6 +77,10 @@ export function getTierFeatures(tier: Tier | string | null | undefined): TierFea
         dream11Transfer: "unlimited", my11CircleTransfer: "locked",
         contestJoin: true, multiPlatform: false,
         expertTeams: false, primeTeams: false, eliteAI: false,
+        autoJoinContest: true, autoTransferScheduler: false, contestTracker: false,
+        multiMatchGenerator: false, pushNotifications: false, whatsappShare: false,
+        multiLanguage: false, playerFormDashboard: false, captainRotation: false,
+        teamBackup: true, cricketLivePage: true, serverSideAutoJoin: false,
         referralProgram: true,
         tierName: "1 Match", tierColor: "from-amber-500 to-orange-600",
         tierEmoji: "🎟", tierPrice: "₹49", tierDuration: "1 Match",
@@ -70,6 +92,10 @@ export function getTierFeatures(tier: Tier | string | null | undefined): TierFea
         dream11Transfer: "unlimited", my11CircleTransfer: "enabled",
         contestJoin: true, multiPlatform: false,
         expertTeams: false, primeTeams: false, eliteAI: false,
+        autoJoinContest: true, autoTransferScheduler: false, contestTracker: true,
+        multiMatchGenerator: false, pushNotifications: false, whatsappShare: true,
+        multiLanguage: false, playerFormDashboard: false, captainRotation: false,
+        teamBackup: true, cricketLivePage: true, serverSideAutoJoin: false,
         referralProgram: true,
         tierName: "24 Hours", tierColor: "from-rose-500 to-pink-600",
         tierEmoji: "⏰", tierPrice: "₹99", tierDuration: "24 Hours",
@@ -81,6 +107,10 @@ export function getTierFeatures(tier: Tier | string | null | undefined): TierFea
         dream11Transfer: "unlimited", my11CircleTransfer: "enabled",
         contestJoin: true, multiPlatform: false,
         expertTeams: false, primeTeams: false, eliteAI: false,
+        autoJoinContest: true, autoTransferScheduler: false, contestTracker: true,
+        multiMatchGenerator: false, pushNotifications: true, whatsappShare: true,
+        multiLanguage: true, playerFormDashboard: false, captainRotation: false,
+        teamBackup: true, cricketLivePage: true, serverSideAutoJoin: false,
         referralProgram: true,
         tierName: "Weekly", tierColor: "from-sky-500 to-blue-600",
         tierEmoji: "📅", tierPrice: "₹149", tierDuration: "7 Days",
@@ -92,6 +122,10 @@ export function getTierFeatures(tier: Tier | string | null | undefined): TierFea
         dream11Transfer: "unlimited", my11CircleTransfer: "enabled",
         contestJoin: true, multiPlatform: false,
         expertTeams: true, primeTeams: false, eliteAI: false,
+        autoJoinContest: true, autoTransferScheduler: true, contestTracker: true,
+        multiMatchGenerator: true, pushNotifications: true, whatsappShare: true,
+        multiLanguage: true, playerFormDashboard: true, captainRotation: true,
+        teamBackup: true, cricketLivePage: true, serverSideAutoJoin: false,
         referralProgram: true,
         tierName: "Pro", tierColor: "from-sky-500 to-blue-600",
         tierEmoji: "⭐", tierPrice: "₹299", tierDuration: "30 Days",
@@ -103,6 +137,10 @@ export function getTierFeatures(tier: Tier | string | null | undefined): TierFea
         dream11Transfer: "unlimited", my11CircleTransfer: "unlimited",
         contestJoin: true, multiPlatform: true,
         expertTeams: true, primeTeams: true, eliteAI: true,
+        autoJoinContest: true, autoTransferScheduler: true, contestTracker: true,
+        multiMatchGenerator: true, pushNotifications: true, whatsappShare: true,
+        multiLanguage: true, playerFormDashboard: true, captainRotation: true,
+        teamBackup: true, cricketLivePage: true, serverSideAutoJoin: true,
         referralProgram: true,
         tierName: "Elite", tierColor: "from-violet-500 to-purple-600",
         tierEmoji: "👑", tierPrice: "₹999", tierDuration: "90 Days",
@@ -114,6 +152,10 @@ export function getTierFeatures(tier: Tier | string | null | undefined): TierFea
         dream11Transfer: "unlimited", my11CircleTransfer: "unlimited",
         contestJoin: true, multiPlatform: true,
         expertTeams: true, primeTeams: true, eliteAI: true,
+        autoJoinContest: true, autoTransferScheduler: true, contestTracker: true,
+        multiMatchGenerator: true, pushNotifications: true, whatsappShare: true,
+        multiLanguage: true, playerFormDashboard: true, captainRotation: true,
+        teamBackup: true, cricketLivePage: true, serverSideAutoJoin: true,
         referralProgram: true,
         tierName: "Lifetime", tierColor: "from-amber-500 to-yellow-600",
         tierEmoji: "💎", tierPrice: "—", tierDuration: "Forever",
