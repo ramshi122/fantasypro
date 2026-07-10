@@ -731,51 +731,35 @@ export function generateEliteTeams(
       const poolForRole = byRole[role];
       if (poolForRole.length < need) break;
 
+      // FIX: Deterministic shuffle for maximum diversity between teams
+      const shuffled = [...poolForRole];
+      let shufSeed = (rotationOffset * 2654435761 + role.charCodeAt(0) * 7919) % 2147483647;
+      for (let j = shuffled.length - 1; j > 0; j--) {
+        shufSeed = (shufSeed * 1103515245 + 12345) % 2147483647;
+        const k = shufSeed % (j + 1);
+        [shuffled[j], shuffled[k]] = [shuffled[k], shuffled[j]];
+      }
+
       if (cfg.strategy === "safe") {
-        // Pick top EFV players, rotated by offset for variety
-        // FIX: Use larger rotation range + ensure at least 1 different player per team
-        const maxStart = Math.max(1, poolForRole.length - need);
-        const start = (rotationOffset * 2) % maxStart; // shift by 2 per team for more variety
-        const picked = poolForRole.slice(start, start + need);
-        team.push(...picked);
-        // If not enough (due to rotation), fill from start
-        if (team.length < need) {
-          const remaining = need - team.length;
-          team.push(...poolForRole.slice(0, remaining));
-        }
+        // Safe: pick from top half of shuffled pool (high EFV)
+        const topHalf = shuffled.slice(0, Math.max(need, Math.ceil(shuffled.length / 2)));
+        topHalf.sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
+        team.push(...topHalf.slice(0, need));
       } else if (cfg.strategy === "balanced") {
-        // Mix: 50% top EFV + 50% mid EFV (rotated) — FIX: less top, more variety
+        // Balanced: 50% top EFV + 50% from shuffled mid pool
         const topCount = Math.ceil(need * 0.5);
         const midCount = need - topCount;
-        // FIX: shift top picks per team for diversity
-        const startTop = (rotationOffset * 2) % Math.max(1, poolForRole.length - topCount);
-        team.push(...poolForRole.slice(startTop, startTop + topCount));
-        if (team.length < topCount) team.push(...poolForRole.slice(0, topCount - team.length));
-        // FIX: use larger mid pool with rotation
-        const midStart = Math.min(topCount + rotationOffset, poolForRole.length - midCount);
-        const midPool = poolForRole.slice(midStart, midStart + midCount * 4);
-        // Deterministic pick from mid pool — different per team
-        for (let j = 0; j < midCount && midPool.length > 0; j++) {
-          const idx = Math.floor(rng() * midPool.length);
-          team.push(midPool[idx]);
-          midPool.splice(idx, 1);
-        }
+        const topByEFV = [...poolForRole].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)).slice(0, topCount);
+        const midPool = shuffled.filter((p) => !topByEFV.find((t) => playerId(t) === playerId(p)));
+        team.push(...topByEFV, ...midPool.slice(0, midCount));
       } else if (cfg.strategy === "differential") {
-        // Mix: 30% top + 70% low-sel differentials — FIX: more differentials for GL
+        // Differential: 30% top EFV + 70% from shuffled low-sel pool
         const topCount = Math.ceil(need * 0.3);
         const diffCountNeed = need - topCount;
-        const startTop = (rotationOffset * 3) % Math.max(1, poolForRole.length - topCount);
-        team.push(...poolForRole.slice(startTop, startTop + topCount));
-        if (team.length < topCount) team.push(...poolForRole.slice(0, topCount - team.length));
-        // Pick from bottom of pool (low sel%) — rotated per team
-        const reversedPool = poolForRole.slice().reverse();
-        const diffStart = (rotationOffset * 2) % Math.max(1, reversedPool.length - diffCountNeed);
-        const diffPool = reversedPool.slice(diffStart, diffStart + diffCountNeed * 3);
-        for (let j = 0; j < diffCountNeed && diffPool.length > 0; j++) {
-          const idx = Math.floor(rng() * diffPool.length);
-          team.push(diffPool[idx]);
-          diffPool.splice(idx, 1);
-        }
+        const topByEFV = [...poolForRole].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a)).slice(0, topCount);
+        const lowSelPool = [...shuffled].sort((a, b) => selPct(a) - selPct(b));
+        const diff = lowSelPool.filter((p) => !topByEFV.find((t) => playerId(t) === playerId(p))).slice(0, diffCountNeed);
+        team.push(...topByEFV, ...diff);
       } else {
         // grand-league: 30% top + 70% contrarian (rotated)
         const topCount = Math.ceil(need * 0.3);

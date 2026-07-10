@@ -241,46 +241,44 @@ function buildStrategicTeam(
 
     let chosen: RankedPlayer[] = [];
 
+    // FIX: Deterministic shuffle based on rotationOffset for maximum diversity
+    // Previously: slice(start, start+need) only shifted start position
+    // Now: shuffle pool deterministically, then pick top N
+    const shuffled = [...pool];
+    // Deterministic shuffle using rotationOffset as seed
+    let seed = (rotationOffset * 2654435761) % 2147483647;
+    for (let j = shuffled.length - 1; j > 0; j--) {
+      seed = (seed * 1103515245 + 12345) % 2147483647;
+      const k = seed % (j + 1);
+      [shuffled[j], shuffled[k]] = [shuffled[k], shuffled[j]];
+    }
+
     if (type === "safe") {
-      // Safe: top EFV players, rotated by offset
-      const start = rotationOffset % Math.max(1, pool.length - need + 1);
-      chosen = pool.slice(start, start + need);
-      if (chosen.length < need) {
-        // Fill from start if rotation exceeded
-        chosen = [...chosen, ...pool.slice(0, need - chosen.length)];
-      }
+      // Safe: pick from top half of shuffled pool (high EFV players)
+      const topHalf = shuffled.slice(0, Math.max(need, Math.ceil(shuffled.length / 2)));
+      // Sort top half by EFV to keep safe picks high quality
+      topHalf.sort((a, b) => b.efv - a.efv);
+      chosen = topHalf.slice(0, need);
     } else if (type === "balanced") {
-      // Balanced: 60% top + 40% mid (rotated)
+      // Balanced: 60% top EFV + 40% from shuffled mid pool
       const topCount = Math.ceil(need * 0.6);
       const midCount = need - topCount;
-      const startTop = rotationOffset % Math.max(1, pool.length - topCount + 1);
-      const top = pool.slice(startTop, startTop + topCount);
-      const midStart = Math.min(pool.length - midCount, topCount + (rotationOffset % 3));
-      const mid = pool.slice(midStart, midStart + midCount);
-      chosen = [...top, ...mid];
-      // Fill if short
-      if (chosen.length < need) {
-        const used = new Set(chosen.map((c) => c.playerId));
-        const remaining_pool = pool.filter((p) => !used.has(p.playerId));
-        chosen = [...chosen, ...remaining_pool.slice(0, need - chosen.length)];
-      }
+      // Top players by EFV (consistent)
+      const topByEFV = [...pool].sort((a, b) => b.efv - a.efv).slice(0, topCount);
+      // Mid players from shuffled (varied)
+      const midPool = shuffled.filter((p) => !topByEFV.includes(p));
+      const mid = midPool.slice(0, midCount);
+      chosen = [...topByEFV, ...mid];
     } else {
-      // differential: 40% top + 60% low-sel (GL rank 1 target)
-      const topCount = Math.ceil(need * 0.4);
+      // differential: 30% top EFV + 70% from shuffled low-sel pool
+      const topCount = Math.ceil(need * 0.3);
       const diffCount = need - topCount;
-      const startTop = rotationOffset % Math.max(1, pool.length - topCount + 1);
-      const top = pool.slice(startTop, startTop + topCount);
-      // Low-sel players = bottom of pool (reversed)
-      const reversed = [...pool].reverse();
-      const diffStart = rotationOffset % Math.max(1, reversed.length - diffCount + 1);
-      const diff = reversed.slice(diffStart, diffStart + diffCount);
-      chosen = [...top, ...diff];
-      // Fill if short
-      if (chosen.length < need) {
-        const used = new Set(chosen.map((c) => c.playerId));
-        const remaining_pool = pool.filter((p) => !used.has(p.playerId));
-        chosen = [...chosen, ...remaining_pool.slice(0, need - chosen.length)];
-      }
+      // Top players by EFV
+      const topByEFV = [...pool].sort((a, b) => b.efv - a.efv).slice(0, topCount);
+      // Low-sel players from shuffled (varied) — bottom half by sel%
+      const lowSelPool = [...shuffled].sort((a, b) => a.selNum - b.selNum);
+      const diff = lowSelPool.filter((p) => !topByEFV.includes(p)).slice(0, diffCount);
+      chosen = [...topByEFV, ...diff];
     }
 
     // Deduplicate within role
