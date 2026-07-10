@@ -2833,24 +2833,47 @@ function BulkMessageTab() {
 
 function BroadcastTab() {
   const [message, setMessage] = useState("");
+  const [title, setTitle] = useState("");
   const [target, setTarget] = useState<"all" | "active" | "expired">("all");
   const [type, setType] = useState<"info" | "warning" | "success">("info");
   const [loading, setLoading] = useState(false);
+  const [pushMode, setPushMode] = useState(false);
 
   async function send() {
     if (!message.trim()) { toast.error("Enter message"); return; }
     setLoading(true);
     try {
-      const res = await fetch("/api/broadcast", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, target, type }),
-      });
-      const data = await res.json();
-      if (data.status === "success") {
-        toast.success("Broadcast sent");
-        setMessage("");
-      } else toast.error(data.message || "Failed");
+      if (pushMode) {
+        // Push notification via Firebase
+        const res = await fetch("/api/admin/push-notification", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: title || "Apna Cricket Notification",
+            body: message,
+            target,
+            url: "/",
+          }),
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+          toast.success(`Push notification sent — ${data.message}`);
+          setMessage("");
+          setTitle("");
+        } else toast.error(data.message || "Failed");
+      } else {
+        // In-app broadcast (existing)
+        const res = await fetch("/api/broadcast", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, target, type }),
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+          toast.success("Broadcast sent");
+          setMessage("");
+        } else toast.error(data.message || "Failed");
+      }
     } catch (err: any) {
       toast.error(err?.message || "Network error");
     } finally {
@@ -2860,12 +2883,44 @@ function BroadcastTab() {
 
   return (
     <div className="space-y-3 text-slate-200">
-      <h3 className="text-sm font-bold flex items-center gap-1.5"><Bell className="w-4 h-4 text-violet-400" /> In-App Broadcast</h3>
-      <p className="text-[10px] text-slate-400">Send an in-app notification banner to users on next app load.</p>
+      <h3 className="text-sm font-bold flex items-center gap-1.5"><Bell className="w-4 h-4 text-violet-400" /> Broadcast &amp; Push</h3>
+
+      {/* Mode toggle: In-App vs Push */}
+      <div className="flex gap-1 bg-slate-800/50 rounded-lg p-1">
+        <button
+          onClick={() => setPushMode(false)}
+          className={cn("flex-1 h-8 text-[10px] font-bold rounded-md", !pushMode ? "bg-violet-600 text-white" : "text-slate-400")}
+        >
+          📱 In-App Broadcast
+        </button>
+        <button
+          onClick={() => setPushMode(true)}
+          className={cn("flex-1 h-8 text-[10px] font-bold rounded-md", pushMode ? "bg-emerald-600 text-white" : "text-slate-400")}
+        >
+          🔔 Firebase Push
+        </button>
+      </div>
+
+      <p className="text-[10px] text-slate-400">
+        {pushMode
+          ? "Push notification via Firebase — delivered even if app is closed (requires notification permission)"
+          : "In-app notification banner — users see on next app open"}
+      </p>
+
+      {/* Push notification title (only for push mode) */}
+      {pushMode && (
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Notification title (e.g. Lineup Out!)"
+          className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-xs p-2 rounded-lg"
+        />
+      )}
+
       <textarea
         value={message}
         onChange={(e) => setMessage(e.target.value)}
-        placeholder="Broadcast message..."
+        placeholder={pushMode ? "Push notification body..." : "Broadcast message..."}
         rows={3}
         className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-xs p-2 rounded-lg"
       />
@@ -2877,7 +2932,7 @@ function BroadcastTab() {
           </button>
         ))}
         <div className="flex-1" />
-        {(["info", "warning", "success"] as const).map((t) => (
+        {!pushMode && (["info", "warning", "success"] as const).map((t) => (
           <button key={t} onClick={() => setType(t)}
             className={cn("px-2 py-1 rounded text-[10px] font-bold",
               type === t ? (t === "info" ? "bg-sky-600" : t === "warning" ? "bg-amber-600" : "bg-emerald-600") + " text-white" : "bg-slate-800 text-slate-300")}>
@@ -2885,10 +2940,17 @@ function BroadcastTab() {
           </button>
         ))}
       </div>
-      <Button size="sm" className="bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white w-full" disabled={loading} onClick={send}>
+      <Button size="sm" className={cn("text-white w-full", pushMode ? "bg-gradient-to-r from-emerald-600 to-green-600" : "bg-gradient-to-r from-violet-600 to-fuchsia-600")} disabled={loading} onClick={send}>
         {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Send className="w-3 h-3 mr-1" />}
-        Send Broadcast
+        {pushMode ? "Send Push Notification" : "Send Broadcast"}
       </Button>
+
+      {pushMode && (
+        <p className="text-[9px] text-amber-400/70 bg-amber-950/20 rounded-lg p-2">
+          ⚠️ Push notifications require: 1) User granted notification permission 2) App installed as PWA 3) Firebase Cloud Messaging setup.
+          If not, broadcast will be saved and shown on next app open.
+        </p>
+      )}
     </div>
   );
 }
