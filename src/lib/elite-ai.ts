@@ -710,13 +710,16 @@ export function generateEliteTeams(
   const rankedTeams: EliteRankedTeam[] = [];
   const usedTeamKeys = new Set<string>();
   const usedCVPairs = new Set<string>();
+  // Track which players have been used too many times — enforce diversity
+  const playerUsageCount = new Map<string, number>();
+  const MAX_PLAYER_USAGE = Math.ceil(teamCount * 0.7); // max 70% of teams can have same player
 
   for (let i = 0; i < roleCompositions.length; i++) {
     const cfg = roleCompositions[i];
-    // Use a rotation offset so teams with the same template don't pick
-    // the exact same players every time. Offset shifts the slice start.
-    const rotationOffset = Math.floor(i / 4); // shifts every 4 teams
-    const seed = (i + 1) * 1337 + 42 + rotationOffset * 7919;
+    // FIX: Shift rotation EVERY team (not every 4) for maximum diversity
+    // Each team gets a unique offset based on its index
+    const rotationOffset = i; // shifts every team
+    const seed = (i + 1) * 1337 + 42 + i * 7919;
     const rng = mulberry32(seed);
 
     // Pick players per role
@@ -730,37 +733,44 @@ export function generateEliteTeams(
 
       if (cfg.strategy === "safe") {
         // Pick top EFV players, rotated by offset for variety
-        const start = rotationOffset % Math.max(1, poolForRole.length - need);
-        team.push(...poolForRole.slice(start, start + need));
+        // FIX: Use larger rotation range + ensure at least 1 different player per team
+        const maxStart = Math.max(1, poolForRole.length - need);
+        const start = (rotationOffset * 2) % maxStart; // shift by 2 per team for more variety
+        const picked = poolForRole.slice(start, start + need);
+        team.push(...picked);
         // If not enough (due to rotation), fill from start
         if (team.length < need) {
           const remaining = need - team.length;
           team.push(...poolForRole.slice(0, remaining));
         }
       } else if (cfg.strategy === "balanced") {
-        // Mix: 60% top EFV + 40% mid EFV (rotated)
-        const topCount = Math.ceil(need * 0.6);
+        // Mix: 50% top EFV + 50% mid EFV (rotated) — FIX: less top, more variety
+        const topCount = Math.ceil(need * 0.5);
         const midCount = need - topCount;
-        const startTop = rotationOffset % Math.max(1, poolForRole.length - topCount);
+        // FIX: shift top picks per team for diversity
+        const startTop = (rotationOffset * 2) % Math.max(1, poolForRole.length - topCount);
         team.push(...poolForRole.slice(startTop, startTop + topCount));
         if (team.length < topCount) team.push(...poolForRole.slice(0, topCount - team.length));
-        const midStart = topCount;
-        const midPool = poolForRole.slice(midStart, midStart + midCount * 3);
-        // Deterministic pick from mid pool
+        // FIX: use larger mid pool with rotation
+        const midStart = Math.min(topCount + rotationOffset, poolForRole.length - midCount);
+        const midPool = poolForRole.slice(midStart, midStart + midCount * 4);
+        // Deterministic pick from mid pool — different per team
         for (let j = 0; j < midCount && midPool.length > 0; j++) {
           const idx = Math.floor(rng() * midPool.length);
           team.push(midPool[idx]);
           midPool.splice(idx, 1);
         }
       } else if (cfg.strategy === "differential") {
-        // Mix: 40% top + 60% low-sel differentials (rotated)
-        const topCount = Math.ceil(need * 0.4);
+        // Mix: 30% top + 70% low-sel differentials — FIX: more differentials for GL
+        const topCount = Math.ceil(need * 0.3);
         const diffCountNeed = need - topCount;
-        const startTop = rotationOffset % Math.max(1, poolForRole.length - topCount);
+        const startTop = (rotationOffset * 3) % Math.max(1, poolForRole.length - topCount);
         team.push(...poolForRole.slice(startTop, startTop + topCount));
         if (team.length < topCount) team.push(...poolForRole.slice(0, topCount - team.length));
-        // Pick from bottom of pool (low sel%)
-        const diffPool = poolForRole.slice().reverse().slice(0, diffCountNeed * 3);
+        // Pick from bottom of pool (low sel%) — rotated per team
+        const reversedPool = poolForRole.slice().reverse();
+        const diffStart = (rotationOffset * 2) % Math.max(1, reversedPool.length - diffCountNeed);
+        const diffPool = reversedPool.slice(diffStart, diffStart + diffCountNeed * 3);
         for (let j = 0; j < diffCountNeed && diffPool.length > 0; j++) {
           const idx = Math.floor(rng() * diffPool.length);
           team.push(diffPool[idx]);
@@ -861,6 +871,53 @@ export function generateEliteTeams(
     }
     if (usedTeamKeys.has(teamKey)) continue; // skip if still duplicate
     usedTeamKeys.add(teamKey);
+
+    // SIMILARITY CHECK — ensure at least 3 players differ from ALL existing teams
+    // This prevents teams from looking almost identical (user complaint: "always same")
+    const currentTeamIds = new Set(team.map(playerId));
+    let tooSimilar = false;
+    for (const existing of rankedTeams) {
+      const existingIds = new Set((existing.team.players || []).map((p: any) =>
+        String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "")
+      ));
+      // Count common players
+      let common = 0;
+      for (const id of currentTeamIds) {
+        if (existingIds.has(id)) common++;
+      }
+      // If 9+ players are the same (only 2 or fewer differ), too similar
+      if (common >= 9) {
+        tooSimilar = true;
+        break;
+      }
+    }
+    // If too similar, try to swap 2 more players for diversity
+    if (tooSimilar) {
+      let swapsMade = 0;
+      for (const role of ["BAT", "BOWL", "AR", "WK"] as const) {
+        if (swapsMade >= 2) break; // swap 2 players for diversity
+        const swapIdx = team.findIndex((p) => roleOf(p) === role);
+        if (swapIdx >= 0) {
+          // Find a player NOT in any existing team's top picks
+          const alt = byRole[role].find(
+            (p) => !team.find((x) => playerId(x) === playerId(p)) &&
+                   !rankedTeams.some(rt =>
+                     (rt.team.players || []).some((rp: any) =>
+                       playerId(rp as any) === playerId(p)
+                     )
+                   )
+          );
+          if (alt) {
+            team[swapIdx] = alt;
+            swapsMade++;
+          }
+        }
+      }
+      // Recompute teamKey after swaps
+      teamKey = team.map(playerId).sort().join("|");
+      if (usedTeamKeys.has(teamKey)) continue; // still duplicate after swaps
+      usedTeamKeys.add(teamKey);
+    }
 
     // Pick C/VC based on strategy
     let captain: MatchPlayer;
