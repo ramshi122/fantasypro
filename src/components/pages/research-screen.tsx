@@ -5,10 +5,11 @@ import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getMatches, type MatchInfo } from "@/lib/api";
-import { Crown, Sparkles, Telescope, TrendingUp, Trophy, Brain, Target, Zap, ChevronRight, ScanLine, Eye } from "lucide-react";
+import { Crown, Sparkles, Telescope, TrendingUp, Trophy, Brain, Target, Zap, ChevronRight } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { ShopVideoAd } from "@/components/ads/shop-video-ad";
 
 export function ResearchScreen() {
   const [matches, setMatches] = useState<MatchInfo[]>([]);
@@ -103,27 +104,8 @@ export function ResearchScreen() {
         <ChevronRight className="w-5 h-5 text-white/80" />
       </button>
 
-      {/* NEW: AI OCR Fantasy Team Generator */}
-      <button
-        onClick={() => setView("ocr-generator")}
-        className="w-full bg-gradient-to-r from-fuchsia-600 via-purple-600 to-violet-600 rounded-2xl p-4 text-white shadow-lg flex items-center justify-between hover:shadow-xl transition-all relative overflow-hidden"
-      >
-        <div className="absolute -top-2 -right-2 bg-amber-400 text-amber-950 text-[8px] font-black px-2 py-0.5 rounded-full rotate-12">
-          NEW
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-            <ScanLine className="w-5 h-5" />
-          </div>
-          <div className="text-left">
-            <p className="text-sm font-bold flex items-center gap-1.5">
-              <Eye className="w-3.5 h-3.5" /> AI OCR Team Generator
-            </p>
-            <p className="text-[10px] text-white/80">Upload screenshot → Get 10 ranked teams (Elite AI quality)</p>
-          </div>
-        </div>
-        <ChevronRight className="w-5 h-5 text-white/80" />
-      </button>
+      {/* My Shop Video Ad Banner (replaces OCR) */}
+      <ShopVideoAd />
 
       {/* Player Form Dashboard Button */}
       <button

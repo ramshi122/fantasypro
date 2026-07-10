@@ -155,6 +155,40 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
     loadAll();
   }, [loadAll, refreshKey]);
 
+  // === LINEUP POLLING — re-check lineup status every 60 seconds ===
+  // If lineup gets announced while user is on this page, auto-refresh + auto-replace
+  useEffect(() => {
+    if (!matchId) return;
+    let prevLineupAnnounced = lineupAnnounced;
+
+    const pollLineup = async () => {
+      try {
+        const matchDetail = await getMatchDetail(matchId).catch(() => null);
+        if (!matchDetail) return;
+
+        const lineupStatus = (matchDetail as any).lineup_status;
+        const nowAnnounced = Number(lineupStatus) === 1;
+
+        // If lineup just got announced (0 → 1), refresh + auto-replace
+        if (nowAnnounced && !prevLineupAnnounced) {
+          console.log("[LineupPoll] Lineup just announced! Auto-refreshing...");
+          toast.success("✅ Lineup announced! Auto-updating teams...");
+          prevLineupAnnounced = true;
+          // Reload everything (will filter to playing XI + auto-replace)
+          setRefreshKey((k) => k + 1);
+        } else if (nowAnnounced !== prevLineupAnnounced) {
+          prevLineupAnnounced = nowAnnounced;
+        }
+      } catch (err) {
+        // Silent fail — don't spam user with errors
+      }
+    };
+
+    // Poll every 60 seconds
+    const interval = setInterval(pollLineup, 60_000);
+    return () => clearInterval(interval);
+  }, [matchId, lineupAnnounced]);
+
   // Check if user already has a Dream11 token saved
   useEffect(() => {
     const t = getFantasyToken("dream11");
