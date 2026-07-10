@@ -69,42 +69,20 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
     }
   }
 
-  // Save teams to localStorage + notify parent
+  // Save teams — call onGenerated which triggers handleBulkAddTeams in parent
+  // This saves to localStorage AND refreshes main page AND closes modal
   function handleSave() {
     if (generatedTeams.length === 0) { toast.error("No teams to save"); return; }
-
-    try {
-      const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
-      const key = String(matchId);
-      let all: Record<string, TeamRow[]> = {};
-      try { all = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}"); } catch { all = {}; }
-
-      const oldCount = (all[key] || []).length;
-      // WIPE old, save only new
-      all[key] = generatedTeams.map((t, i) => ({
-        ...t,
-        _id: "local_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
-        teamId: "local_" + Math.random().toString(36).slice(2, 10),
-        teamNo: i + 1,
-        team_number: i + 1,
-        vicecaptain: t.viceCaptain,
-        c: t.captain,
-        vc: t.viceCaptain,
-        type: mode,
-        transferStatus: "pending",
-      }));
-      localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(all));
-      setSaved(true);
-      toast.success(`✓ Saved ${generatedTeams.length} teams to My Teams!`);
-    } catch (err) {
-      toast.error("Failed to save teams");
-    }
+    // Call onGenerated → parent's handleBulkAddTeams saves to localStorage + refreshes UI
+    onGenerated(generatedTeams);
+    setSaved(true);
   }
 
-  // Transfer — pass teams to parent which opens transfer modal
+  // Transfer — call onGenerated which saves + opens transfer flow
   function handleTransfer() {
     if (generatedTeams.length === 0) { toast.error("Generate teams first"); return; }
-    if (!saved) { handleSave(); }
+    // onGenerated → handleBulkAddTeams saves teams + refreshes + closes modal
+    // Parent will then open transfer modal
     onGenerated(generatedTeams);
   }
 
