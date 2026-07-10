@@ -98,6 +98,25 @@ export function OCRGenerator() {
       return;
     }
 
+    // Get license key + deviceId from admin-store (localStorage)
+    let licenseKey: string | null = null;
+    let deviceId: string | null = null;
+    try {
+      const lsLicense = localStorage.getItem("apna-cricket-license");
+      if (lsLicense) {
+        const parsed = JSON.parse(lsLicense);
+        licenseKey = parsed.key || parsed.licenseKey || null;
+        deviceId = parsed.deviceId || null;
+      }
+    } catch {
+      // ignore
+    }
+
+    if (!licenseKey || !deviceId) {
+      toast.error("License key required. Activate your license first to use OCR.");
+      return;
+    }
+
     setLoading(true);
     setResult(null);
 
@@ -105,7 +124,7 @@ export function OCRGenerator() {
       const res = await fetch("/api/ocr-generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image }),
+        body: JSON.stringify({ image, licenseKey, deviceId }),
       });
 
       const data: OCRResult = await res.json();

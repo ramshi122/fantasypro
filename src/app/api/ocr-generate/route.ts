@@ -460,7 +460,38 @@ function generateRankedTeams(
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { image } = body;
+    const { image, licenseKey, deviceId } = body;
+
+    // SECURITY: Require valid license key for OCR feature
+    // This prevents unauthorized API usage
+    if (!licenseKey || !deviceId) {
+      return NextResponse.json(
+        { status: "fail", message: "License key and device ID required. Activate your license first.", code: "LICENSE_REQUIRED" },
+        { status: 200 }
+      );
+    }
+
+    // Verify license server-side
+    try {
+      const verifyRes = await fetch(`${new URL(request.url).origin}/api/license/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ licenseKey, deviceId, feature: "ocr_generate" }),
+      });
+      const verifyData = await verifyRes.json();
+      if (!verifyData.valid) {
+        return NextResponse.json(
+          { status: "fail", message: `License verification failed: ${verifyData.message || "invalid key"}`, code: "LICENSE_INVALID" },
+          { status: 200 }
+        );
+      }
+    } catch (verifyErr) {
+      console.error("[OCR] License verify error:", verifyErr);
+      return NextResponse.json(
+        { status: "fail", message: "Could not verify license. Check your connection.", code: "LICENSE_VERIFY_ERROR" },
+        { status: 200 }
+      );
+    }
 
     if (!image) {
       return NextResponse.json(

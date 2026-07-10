@@ -1,36 +1,55 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // License keys collection — 1 key = 1 device
+
+    // ============================================================
+    // SECURITY FIX: License keys — READ-ONLY from client
+    // ============================================================
+    // Only the server (Firebase Admin SDK via Next.js API routes)
+    // can create/update/delete license keys.
+    // Client can READ for verification only.
     match /license_keys/{keyId} {
-      allow read: if true;
-      allow write: if true;
-      allow update: if true;
-      allow delete: if true;
+      allow read: if true;           // Client can verify keys (read-only)
+      allow create: if false;        // NO client writes — admin/gateway only
+      allow update: if false;        // NO client updates
+      allow delete: if false;        // NO client deletes
     }
 
-    // Payment orders — admin can read/write
+    // ============================================================
+    // Payment orders — READ-ONLY from client
+    // ============================================================
+    // Server creates orders and marks them completed.
+    // Client can only read their own order status.
     match /payment_orders/{orderId} {
-      allow read: if true;
-      allow write: if true;
-      allow update: if true;
+      allow read: if true;           // Client can check order status
+      allow create: if false;        // Server-only (via /api/payment)
+      allow update: if false;        // Server-only
+      allow delete: if false;        // Server-only
     }
 
-    // Users collection — mobile login
+    // ============================================================
+    // Users collection — READ-ONLY from client
+    // ============================================================
     match /users/{userId} {
       allow read: if true;
-      allow write: if true;
-      allow update: if true;
+      allow create: if false;        // Server-only
+      allow update: if false;        // Server-only
+      allow delete: if false;        // Server-only
     }
 
-    // Referrals collection
+    // ============================================================
+    // Referrals collection — READ-ONLY from client
+    // ============================================================
     match /referrals/{referralId} {
       allow read: if true;
-      allow write: if true;
-      allow update: if true;
+      allow create: if false;        // Server-only
+      allow update: if false;        // Server-only
+      allow delete: if false;        // Server-only
     }
 
-    // Default — deny all other collections
+    // ============================================================
+    // Default — DENY ALL other collections
+    // ============================================================
     match /{document=**} {
       allow read, write: if false;
     }

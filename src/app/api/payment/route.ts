@@ -149,6 +149,12 @@ export const POST = withSecurity(async (request: Request) => {
         }, { status: 200 });
       }
 
+      // SECURITY FIX: Do NOT trust client-supplied status string!
+      // Previously: client could POST {status:"success"} → free Elite key.
+      // Now: payment status must be verified via payment gateway API OR
+      // admin manual approval. For UPI/manual payments, admin must call
+      // /api/payment with action="admin-approve" + admin session token.
+
       const paymentStatus = status || "pending";
 
       if (paymentStatus === "failed") {
@@ -164,12 +170,65 @@ export const POST = withSecurity(async (request: Request) => {
       if (paymentStatus === "pending") {
         return NextResponse.json({
           status: "fail",
-          message: "Payment not confirmed yet. Complete the UPI payment first, then click confirm.",
+          message: "Payment not confirmed yet. Complete the UPI payment first, then wait for admin approval.",
           code: "PAYMENT_PENDING",
         }, { status: 200 });
       }
 
-      // paymentStatus === "success" → generate key
+      // paymentStatus === "success" — VERIFY before generating key
+      // SECURITY FIX: Require either:
+      //   1. Payment gateway signature verification (Razorpay/Cashfree webhook)
+      //   2. Admin approval (admin session token from /api/admin/login)
+      //   3. Payment gateway order-fetch API verification
+
+      // Check for admin approval token
+      const adminToken = body.adminToken || request.headers.get("x-admin-token");
+      let isAdminApproved = false;
+
+      if (adminToken) {
+        try {
+          const { verifySessionToken } = await import("@/app/api/admin/login/route");
+          isAdminApproved = verifySessionToken(adminToken);
+        } catch {
+          // verifySessionToken not available — deny
+        }
+      }
+
+      // Check for payment gateway signature (Razorpay)
+      const razorpaySignature = body.razorpaySignature;
+      const razorpayPaymentId = body.razorpayPaymentId;
+      const razorpayOrderId = body.razorpayOrderId || orderId;
+      let isGatewayVerified = false;
+
+      if (razorpaySignature && razorpayPaymentId) {
+        // Verify Razorpay signature
+        const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
+        if (RAZORPAY_KEY_SECRET) {
+          try {
+            const crypto = await import("crypto");
+            const expectedSig = crypto
+              .createHmac("sha256", RAZORPAY_KEY_SECRET)
+              .update(`${razorpayOrderId}|${razorpayPaymentId}`)
+              .digest("hex");
+            isGatewayVerified = expectedSig === razorpaySignature;
+          } catch {
+            // Crypto error — deny
+          }
+        }
+      }
+
+      if (!isAdminApproved && !isGatewayVerified) {
+        console.warn("[Payment] REJECTED: No valid admin token or gateway signature");
+        return NextResponse.json({
+          status: "fail",
+          message: "Payment verification failed. Payment must be approved by admin or verified via payment gateway. Do not retry with fake status.",
+          code: "VERIFICATION_REQUIRED",
+        }, { status: 200 });
+      }
+
+      console.log(`[Payment] ✓ Verified (${isAdminApproved ? "admin-approved" : "gateway-verified"}) — generating key for order ${orderId}`);
+
+      // Generate license key
       const licenseKey = generateKey();
       const expiresAt = getExpiry(orderData.keyType);
       orderData.status = "completed";
@@ -177,10 +236,9 @@ export const POST = withSecurity(async (request: Request) => {
       orderData.licenseKey = licenseKey;
       orderData.expiresAt = expiresAt;
       orderData.completedAt = Date.now();
+      orderData.verifiedBy = isAdminApproved ? "admin" : "gateway";
 
-      // Sync the new license key to Firebase (single-doc set) so that any
-      // device can verify it later via fetchKeyFromFirestore. The admin-store
-      // on the originating device will pick it up on its next sync.
+      // Sync the new license key to Firebase
       try {
         const { syncKeyToFirestore } = await import("@/lib/firebase-license");
         await syncKeyToFirestore({

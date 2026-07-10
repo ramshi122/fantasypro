@@ -259,7 +259,7 @@ function lsSet<T>(key: string, value: T): void {
 /* ---------- Store ---------- */
 
 const DEFAULT_SETTINGS: AdminSettings = {
-  adminPassword: "8950888988",
+  adminPassword: "", // SECURITY FIX: No longer stored client-side — verified via /api/admin/login
   apiUrl: "https://tgsoftware-api.online",
   firebaseConfig: JSON.stringify({
     apiKey: "AIzaSyDbaFKRqrD976syNij_fSSuIBSPRtR9vbo",
@@ -288,62 +288,18 @@ function getInitialData() {
   const now = Date.now();
   const day = 86400000;
 
-  // Generate 500+ ready-to-use license keys at startup
+  // SECURITY FIX: NO demo keys in client bundle!
+  // All license keys must come from Firebase (license_keys collection) or
+  // be issued by admin after payment verification.
+  // Previously had CRICB-ELITE-DEMO-KEY1 + 500 generated keys = instant free Elite.
   const seedKeys: LicenseKey[] = [];
 
-  // 5 demo keys — ALL VALID (so user can test with any of them)
-  seedKeys.push(
-    { key: "CRICB-DEMO-TEST-KEY1", type: "monthly", status: "active", createdAt: now - 5 * day, expiresAt: now + 25 * day, deviceIds: ["dev_001"], userName: "Demo User 1", lastVerified: now - 3600000, verifications: 12 },
-    { key: "CRICB-DEMO-TEST-KEY2", type: "weekly", status: "active", createdAt: now - 10 * day, expiresAt: now + 7 * day, deviceIds: ["dev_002"], userName: "Demo User 2", lastVerified: now - 2 * day, verifications: 5 },
-    { key: "CRICB-DEMO-TEST-KEY3", type: "lifetime", status: "active", createdAt: now - 30 * day, expiresAt: null, deviceIds: ["dev_003"], userName: "Premium User", lastVerified: now - 7200000, verifications: 45 },
-    { key: "CRICB-DEMO-TEST-KEY4", type: "trial", status: "active", createdAt: now - 8 * day, expiresAt: now + 1 * day, deviceIds: [], verifications: 0 },
-    { key: "CRICB-DEMO-TEST-KEY5", type: "monthly", status: "active", createdAt: now - 15 * day, expiresAt: now + 15 * day, deviceIds: ["dev_004"], userName: "Demo User 5", verifications: 3 },
-    { key: "CRICB-ELITE-DEMO-KEY1", type: "elite", status: "active", createdAt: now - 5 * day, expiresAt: now + 85 * day, deviceIds: [], userName: "Elite Demo User", verifications: 0 },
-  );
+  // SECURITY FIX: NO seeded demo devices/users
+  const seedDevices: Device[] = [];
 
-  // Generate 500 ready-to-use keys (mix of types)
-  const types: KeyType[] = ["trial", "weekly", "monthly", "monthly", "monthly", "elite", "lifetime"];
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  for (let i = 0; i < 500; i++) {
-    let seg1 = "", seg2 = "", seg3 = "";
-    for (let j = 0; j < 4; j++) {
-      seg1 += chars[Math.floor(Math.random() * chars.length)];
-      seg2 += chars[Math.floor(Math.random() * chars.length)];
-      seg3 += chars[Math.floor(Math.random() * chars.length)];
-    }
-    const type = types[i % types.length];
-    seedKeys.push({
-      key: `CRICB-${seg1}-${seg2}-${seg3}`,
-      type,
-      status: "active",
-      createdAt: now - Math.floor(Math.random() * 30) * day,
-      expiresAt: getExpiryForType(type),
-      deviceIds: [],
-      verifications: 0,
-    });
-  }
+  const seedUsers: User[] = [];
 
-  const seedDevices: Device[] = [
-    { deviceId: "dev_001", userName: "Demo User 1", licenseKey: "CRICB-DEMO-TEST-KEY1", lastLogin: now - 3600000, status: "allowed" },
-    { deviceId: "dev_002", userName: "Demo User 2", licenseKey: "CRICB-DEMO-TEST-KEY2", lastLogin: now - 2 * day, status: "allowed" },
-    { deviceId: "dev_003", userName: "Premium User", licenseKey: "CRICB-DEMO-TEST-KEY3", lastLogin: now - 7200000, status: "allowed" },
-    { deviceId: "dev_004", userName: "Demo User 5", licenseKey: "CRICB-DEMO-TEST-KEY5", lastLogin: now - 5 * day, status: "allowed" },
-  ];
-
-  const seedUsers: User[] = [
-    { id: "u1", name: "Demo User 1", device: "dev_001", license: "CRICB-DEMO-TEST-KEY1", lastActive: now - 3600000, banned: false },
-    { id: "u2", name: "Demo User 2", device: "dev_002", license: "CRICB-DEMO-TEST-KEY2", lastActive: now - 2 * day, banned: false },
-    { id: "u3", name: "Premium User", device: "dev_003", license: "CRICB-DEMO-TEST-KEY3", lastActive: now - 7200000, banned: false },
-    { id: "u4", name: "Demo User 5", device: "dev_004", license: "CRICB-DEMO-TEST-KEY5", lastActive: now - 5 * day, banned: false },
-  ];
-
-  const seedLogs: ActivityLog[] = [
-    { id: uid(), timestamp: now - 3600000, type: "key_verification", message: "Key CRICB-DEMO-TEST-KEY1 verified on dev_001" },
-    { id: uid(), timestamp: now - 7200000, type: "login_attempt", message: "Successful login from dev_003" },
-    { id: uid(), timestamp: now - 10800000, type: "team_generation", message: "10 teams generated for match 118078" },
-    { id: uid(), timestamp: now - 86400000, type: "admin_action", message: "Admin suspended key CRICB-DEMO-TEST-KEY5" },
-    { id: uid(), timestamp: now - 172800000, type: "error", message: "Failed transfer: invalid auth token" },
-  ];
+  const seedLogs: ActivityLog[] = [];
 
   return { keys: seedKeys, devices: seedDevices, users: seedUsers, logs: seedLogs };
 }
@@ -398,15 +354,32 @@ export const useAdmin = create<AdminState>()((set, get) => ({
       lastSyncedAt: null,
       isSubscribed: false,
 
-      login: (_username, password) => {
-        // Password-only auth — no username required
-        if (password === get().settings.adminPassword) {
-          set({ isAdminAuthenticated: true, adminUsername: "admin" });
-          get().addLog("admin_action", "Admin logged in");
-          return true;
+      login: async (_username, password) => {
+        // SECURITY FIX: Server-side password verification
+        // Password is NO LONGER checked client-side (was hardcoded in bundle).
+        try {
+          const res = await fetch("/api/admin/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password }),
+          });
+          const data = await res.json();
+          if (data.success && data.token) {
+            // Store token in sessionStorage (not localStorage) — clears on tab close
+            if (typeof window !== "undefined") {
+              sessionStorage.setItem("apna-admin-session", data.token);
+            }
+            set({ isAdminAuthenticated: true, adminUsername: "admin" });
+            get().addLog("admin_action", "Admin logged in (server-verified)");
+            return true;
+          }
+          get().addLog("login_attempt", "Failed admin login attempt");
+          return false;
+        } catch (err) {
+          console.error("[AdminLogin] Error:", err);
+          get().addLog("login_attempt", "Admin login network error");
+          return false;
         }
-        get().addLog("login_attempt", "Failed admin login attempt");
-        return false;
       },
 
       logout: () => {
