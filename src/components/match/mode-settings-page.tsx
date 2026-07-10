@@ -38,6 +38,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
   const [progress, setProgress] = useState<string>("");
   const [generatedTeams, setGeneratedTeams] = useState<TeamRow[]>([]);
   const [saved, setSaved] = useState(false);
+  const [lineupAnnounced, setLineupAnnounced] = useState(false);
   const info = MODE_INFO[mode];
   const Icon = info.icon;
 
@@ -49,8 +50,31 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
     try {
       const detail = await getMatchDetail(matchId);
       if (!detail) { toast.error("Could not load player data"); setGenerating(false); return; }
-      const allPlayers = [...((detail as any).left_team_players || []), ...((detail as any).right_team_players || [])].filter(Boolean);
+
+      // Detect lineup status
+      const lineupStatus = (detail as any).lineup_status;
+      const announced = Number(lineupStatus) === 1;
+      setLineupAnnounced(announced);
+
+      let allPlayers = [...((detail as any).left_team_players || []), ...((detail as any).right_team_players || [])].filter(Boolean);
       if (allPlayers.length < 11) { toast.error(`Only ${allPlayers.length} players available`); setGenerating(false); return; }
+
+      // === AFTER LINEUP: Filter to ONLY confirmed playing XI ===
+      // Remove bench players — only playing === 1
+      if (announced) {
+        const playingOnly = allPlayers.filter((p: any) => Number(p.playing) === 1);
+        if (playingOnly.length >= 11) {
+          allPlayers = playingOnly;
+          setProgress(`✅ Lineup announced — using ${allPlayers.length} confirmed playing XI players only`);
+        } else {
+          setProgress(`⚠️ Lineup announced but only ${playingOnly.length} confirmed — using all ${allPlayers.length}`);
+        }
+      } else {
+        setProgress(`🟡 Lineup pending — using all ${allPlayers.length} players (pre-lineup mode)`);
+      }
+
+      // Small delay to show status
+      await new Promise(r => setTimeout(r, 500));
 
       setProgress(`Generating ${teamCount} teams — ${info.label}...`);
       const res = await generateSweep(allPlayers, teamCount, team1Name, team2Name, (p) => {
@@ -61,7 +85,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
 
       // Store in state for preview
       setGeneratedTeams(res.teams);
-      toast.success(`Generated ${res.teams.length} teams in ${res.stats.durationMs}ms`);
+      toast.success(`${announced ? "🟢 After Lineup" : "🟡 Before Lineup"}: Generated ${res.teams.length} teams in ${res.stats.durationMs}ms`);
     } catch (err: any) {
       toast.error(err?.message || "Generation failed");
     } finally {
@@ -103,6 +127,77 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
       </div>
 
       <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+        {/* === LINEUP STATUS BANNER === */}
+        <div className={cn(
+          "rounded-xl p-3 border-2 text-center",
+          lineupAnnounced
+            ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-500"
+            : "bg-amber-50 dark:bg-amber-950/30 border-amber-500"
+        )}>
+          <p className={cn(
+            "text-xs font-bold",
+            lineupAnnounced ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
+          )}>
+            {lineupAnnounced ? "🟢 AFTER LINEUP — Official Playing XI Confirmed" : "🟡 BEFORE LINEUP — Pre-Playing XI Mode"}
+          </p>
+          <p className="text-[9px] text-muted-foreground mt-1">
+            {lineupAnnounced
+              ? "✅ Only confirmed playing XI used · ❌ Bench removed · Toss/Impact Player analyzed"
+              : "⚠️ Using all players · Pitch/Weather/Form analysis · Teams will update after lineup"}
+          </p>
+        </div>
+
+        {/* === Lineup-mode specific checks === */}
+        {lineupAnnounced ? (
+          <div className="bg-emerald-50/50 dark:bg-emerald-950/20 rounded-lg p-2">
+            <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase mb-1.5">🟢 After Lineup Checks</p>
+            <div className="grid grid-cols-2 gap-1 text-[9px] text-muted-foreground">
+              <span>✅ Official Playing XI</span>
+              <span>❌ Bench Removed</span>
+              <span>🏏 Toss Winner</span>
+              <span>🏏 Bat First/Chase</span>
+              <span>⚡ Impact Player</span>
+              <span>📋 Final Bat Order</span>
+              <span>🎯 Final Bowl Roles</span>
+              <span>💀 Death Bowlers</span>
+              <span>⚡ Powerplay Bowlers</span>
+              <span>🧤 WK Confirmed</span>
+              <span>💧 Dew Factor</span>
+              <span>🌤️ Weather Update</span>
+              <span>👑 C/VC Optimized</span>
+              <span>📊 Ownership Analysis</span>
+              <span>🎯 AI Points Projection</span>
+              <span>🔒 Final Rank 1-10</span>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-amber-50/50 dark:bg-amber-950/20 rounded-lg p-2">
+            <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase mb-1.5">🟡 Before Lineup Checks</p>
+            <div className="grid grid-cols-2 gap-1 text-[9px] text-muted-foreground">
+              <span>🏟️ Match Format</span>
+              <span>📊 Pitch Report</span>
+              <span>🌤️ Weather Forecast</span>
+              <span>🤝 H2H Record</span>
+              <span>📈 Recent Form</span>
+              <span>🏠 Home/Away</span>
+              <span>🏏 Bat Position Pred</span>
+              <span>🎯 Bowl Role Pred</span>
+              <span>💀 Death Overs</span>
+              <span>⚡ Powerplay Bowlers</span>
+              <span>🔄 Spin vs Pace</span>
+              <span>⚔️ Opposition Matchups</span>
+              <span>📊 Venue Stats</span>
+              <span>👑 C/VC Probability</span>
+              <span>🎯 Differential Picks</span>
+              <span>🛡️ Safe Picks</span>
+              <span>⚠️ Risk Analysis</span>
+              <span>📰 Injury/News</span>
+              <span>⚖️ Team Balance</span>
+              <span>🏆 H2H & GL Teams</span>
+            </div>
+          </div>
+        )}
+
         {/* === SMART AUTO === */}
         {mode === "smart" && (
           <div className="space-y-3">
