@@ -639,7 +639,8 @@ export function generateEliteTeams(
   team2Name: string,
   analysis: EliteAnalysisResult,
   lineupAnnounced: boolean = false,
-  count: number = 10
+  count: number = 10,
+  mode?: "smart" | "gl" | "advanced" | "combination"
 ): EliteRankedTeam[] {
   const startTime = Date.now();
 
@@ -1021,7 +1022,8 @@ export async function runEliteAI(
   team2Name: string,
   lineupAnnounced: boolean = false,
   onProgress?: (check: number, total: number, message: string) => void,
-  teamCount: number = 10
+  teamCount: number = 10,
+  mode?: "smart" | "gl" | "advanced" | "combination"
 ): Promise<EliteGenerateResult> {
   const startTime = Date.now();
 
@@ -1037,7 +1039,7 @@ export async function runEliteAI(
 
   // Generate N ranked teams
   await new Promise((r) => setTimeout(r, 100));
-  const rankedTeams = generateEliteTeams(players, team1Name, team2Name, analysis, lineupAnnounced, teamCount);
+  const rankedTeams = generateEliteTeams(players, team1Name, team2Name, analysis, lineupAnnounced, teamCount, mode);
 
   onProgress?.(25, 25, `Generated ${rankedTeams.length} ranked teams`);
 

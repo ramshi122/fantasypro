@@ -14,6 +14,7 @@ import {
   Send,
   Shield,
   Sparkles,
+  Target,
   TrendingUp,
   Trophy,
   X,
@@ -82,7 +83,8 @@ export function EliteAIGenerator({
         team2Name || "T2",
         lineupAnnounced,
         (check, total, message) => setProgress({ check, total, message }),
-        selectedCount
+        selectedCount,
+        eliteMode,
       );
 
       if (!res || !res.rankedTeams || res.rankedTeams.length === 0) {
@@ -242,6 +244,196 @@ export function EliteAIGenerator({
                   <p className="text-[9px] text-muted-foreground mt-1">
                     Strategy split: ~25% Safe · ~30% Balanced · ~25% Differential · ~20% Grand-League
                   </p>
+                </div>
+
+                {/* === Generation Mode Selector (NEW) === */}
+                <div className="mb-4 text-left">
+                  <label className="text-[11px] font-bold text-foreground mb-2 block flex items-center gap-1">
+                    <Zap className="w-3 h-3 text-amber-500" />
+                    Generation Mode
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { id: "smart", label: "Smart Auto", icon: Zap, color: "from-violet-500 to-purple-600", desc: "H2H & Small League", default: true },
+                      { id: "gl", label: "Grand League", icon: Target, color: "from-rose-500 to-pink-600", desc: "High-risk GL teams" },
+                      { id: "advanced", label: "Advanced Auto", icon: Brain, color: "from-sky-500 to-blue-600", desc: "Deep AI research" },
+                      { id: "combination", label: "Combination Auto", icon: Layers, color: "from-emerald-500 to-teal-600", desc: "Max diversity" },
+                    ].map((m) => {
+                      const Icon = m.icon;
+                      return (
+                        <button
+                          key={m.id}
+                          onClick={() => setEliteMode(m.id as any)}
+                          className={cn(
+                            "p-2 rounded-xl border-2 text-left transition-all",
+                            eliteMode === m.id
+                              ? "border-amber-500 bg-amber-50 dark:bg-amber-950/30 shadow-md"
+                              : "border-slate-200 dark:border-slate-700 bg-white dark:bg-card hover:border-amber-300"
+                          )}
+                        >
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <div className={cn("w-6 h-6 rounded-lg bg-gradient-to-br flex items-center justify-center", m.color)}>
+                              <Icon className="w-3 h-3 text-white" />
+                            </div>
+                            <span className="text-[11px] font-bold text-foreground">{m.label}</span>
+                            {m.default && <span className="text-[8px] bg-emerald-500 text-white px-1 rounded">✓</span>}
+                          </div>
+                          <p className="text-[9px] text-muted-foreground">{m.desc}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* === Mode-specific Settings (NEW) === */}
+                <div className="mb-4 bg-white/60 dark:bg-card/60 rounded-xl p-3 border border-amber-200 dark:border-amber-900/30 text-left">
+                  {eliteMode === "smart" && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold text-violet-600 dark:text-violet-400 uppercase">⚡ Smart Auto Settings</p>
+                      <div className="grid grid-cols-2 gap-1.5 text-[9px]">
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Form Analysis</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Pitch Report</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Weather</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Venue Record</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> H2H</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Safe Captain</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Safe VC</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Credit Balance</label>
+                      </div>
+                      <div className="mt-2">
+                        <label className="text-[9px] text-muted-foreground">Risk Level</label>
+                        <select className="w-full h-7 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1">
+                          <option>Safe</option><option>Balanced</option><option>Aggressive</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                  {eliteMode === "gl" && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold text-rose-600 dark:text-rose-400 uppercase">🎯 Grand League Strategy</p>
+                      <div className="grid grid-cols-2 gap-1.5 text-[9px]">
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> High Differentials</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Unique Captain</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Unique VC</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Ownership Fade</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Contrarian Picks</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> High Ceiling</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" /> Boom/Bust</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Low Selected</label>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        <div>
+                          <label className="text-[9px] text-muted-foreground">Differential %</label>
+                          <input type="range" min="20" max="80" defaultValue="50" className="w-full h-1 accent-rose-500" />
+                        </div>
+                        <div>
+                          <label className="text-[9px] text-muted-foreground">Risk Slider</label>
+                          <input type="range" min="0" max="100" defaultValue="70" className="w-full h-1 accent-rose-500" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {eliteMode === "advanced" && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold text-sky-600 dark:text-sky-400 uppercase">🧠 Advanced AI Research</p>
+                      <div className="grid grid-cols-2 gap-1.5 text-[9px]">
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Batting Order</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Bowling Role</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Death Overs</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Powerplay Bowler</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Impact Player</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Recent Form</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Matchup Analysis</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Venue Suitability</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Fantasy Projection</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Expected Points</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Safe Floor</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Ceiling Score</label>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        <div>
+                          <label className="text-[9px] text-muted-foreground">Auto Captain</label>
+                          <select className="w-full h-7 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1">
+                            <option>AI Best</option><option>Safe</option><option>Differential</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[9px] text-muted-foreground">Auto VC</label>
+                          <select className="w-full h-7 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1">
+                            <option>AI Best</option><option>Safe</option><option>Differential</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {eliteMode === "combination" && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase">📦 Combination Auto — Max Diversity</p>
+                      <div className="grid grid-cols-2 gap-1.5 text-[9px]">
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Rotate Captain</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Rotate VC</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Rotate WK</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Rotate Bowlers</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Rotate AR</label>
+                        <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Rotate Differential</label>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        <div>
+                          <label className="text-[9px] text-muted-foreground">Max Player Exposure</label>
+                          <input type="range" min="30" max="100" defaultValue="70" className="w-full h-1 accent-emerald-500" />
+                        </div>
+                        <div>
+                          <label className="text-[9px] text-muted-foreground">Min Player Exposure</label>
+                          <input type="range" min="0" max="50" defaultValue="10" className="w-full h-1 accent-emerald-500" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* === Elite AI Extra Options (always visible) === */}
+                <div className="mb-4 bg-amber-50 dark:bg-amber-950/20 rounded-xl p-3 border border-amber-300 dark:border-amber-800/50 text-left">
+                  <p className="text-[10px] font-bold text-amber-700 dark:text-amber-400 uppercase mb-2 flex items-center gap-1">
+                    <Crown className="w-3 h-3" /> Elite AI Extra Options
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[9px] text-muted-foreground">AI Confidence</label>
+                      <select className="w-full h-7 text-[10px] rounded border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 px-1">
+                        <option>70%</option><option>80%</option><option selected>90%</option><option>95%</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] text-muted-foreground">Risk Mode</label>
+                      <select className="w-full h-7 text-[10px] rounded border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 px-1">
+                        <option>Ultra Safe</option><option>Safe</option><option selected>Balanced</option><option>Aggressive</option><option>Extreme GL</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] text-muted-foreground">Team Style</label>
+                      <select className="w-full h-7 text-[10px] rounded border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 px-1">
+                        <option>H2H</option><option>Small League</option><option selected>Grand League</option><option>Mega GL</option><option>Winner Take All</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] text-muted-foreground">Stack Type</label>
+                      <select className="w-full h-7 text-[10px] rounded border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 px-1">
+                        <option>Batting Stack</option><option>Bowling Stack</option><option selected>Team Stack</option><option>Mixed Stack</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] text-muted-foreground">Captain Engine</label>
+                      <select className="w-full h-7 text-[10px] rounded border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 px-1">
+                        <option>Safe Captain</option><option>Differential Captain</option><option selected>AI Best Captain</option><option>Manual Captain</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] text-muted-foreground">VC Engine</label>
+                      <select className="w-full h-7 text-[10px] rounded border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 px-1">
+                        <option>Safe VC</option><option>Differential VC</option><option selected>AI Best VC</option><option>Manual VC</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
 
                 <Button
