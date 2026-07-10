@@ -166,11 +166,27 @@ export function FreeContestsModal({
       toast.error("Account not linked");
       return;
     }
-    const teamIds = (contest.notJoinedTeamIds || []).slice(0, contest.availableSlots || 0);
+
+    // ✅ SHUFFLE teams before joining — mixed order, not 1,2,3,4,5...
+    // User request: "15 team undu join 10 team need 1 to 15 mixed 10 team join auto"
+    const allAvailable = contest.notJoinedTeamIds || [];
+    const slots = contest.availableSlots || 0;
+    const numToJoin = Math.min(slots, allAvailable.length);
+
+    // Fisher-Yates shuffle for mixed selection
+    const shuffled = [...allAvailable];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const teamIds = shuffled.slice(0, numToJoin);
+
     if (teamIds.length === 0) {
       toast.error("No teams available to join");
       return;
     }
+
+    console.log(`[Contest][Join] Shuffled ${allAvailable.length} teams, joining ${teamIds.length} mixed: [${teamIds.join(",")}]`);
 
     setJoiningContest(contest.contestId);
     setPhase("joining");
