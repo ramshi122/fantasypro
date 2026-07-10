@@ -303,6 +303,8 @@ export async function POST(request: Request) {
       // Also accept camelCase variants (from BulkTransferItem)
       captainId,
       viceCaptainId,
+      // Also accept "vicecaptain" (original APK format, no underscore)
+      vicecaptain,
       players,
       fantasyApp,
       sportIndex,
@@ -316,9 +318,9 @@ export async function POST(request: Request) {
       skipPreVerify,  // Allow skipping pre-verification for speed
     } = body;
 
-    // Normalize captain/vice_captain — accept both snake_case and camelCase
+    // Normalize captain/vice_captain — accept all field name variants
     const captainVal = captain ?? captainId;
-    const viceCaptainVal = vice_captain ?? viceCaptainId;
+    const viceCaptainVal = vice_captain ?? viceCaptainId ?? vicecaptain;
 
     const app = fantasyApp || "dream11";
     const sport = typeof sportIndex === "number" ? sportIndex : 0;
@@ -432,6 +434,7 @@ export async function POST(request: Request) {
       matchId: matchId,
       captain: finalCaptain,
       vice_captain: finalViceCaptain,
+      vicecaptain: finalViceCaptain, // Original APK format (no underscore)
       players: numericPlayerIds,
       fantasyApp: app,
       authToken: preparedToken,

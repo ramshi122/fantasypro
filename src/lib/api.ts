@@ -1646,6 +1646,7 @@ export async function bulkTransferToLinkedAccount(
       matchId: params.matchId,
       captain: isNaN(numericCaptain) ? t.captainId : numericCaptain,
       vice_captain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
+      vicecaptain: isNaN(numericVC) ? t.viceCaptainId : numericVC, // Original APK format
       players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
       fantasyApp: params.fantasyApp,
       authToken: params.authToken,
