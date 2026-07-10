@@ -198,14 +198,41 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   }
 
   async function handleDeleteTeam(teamId: string) {
-    setStep("saving");
     try {
-      await editTeam(token!, { matchId, teamId, team: {}, type: "delete" });
-      toast.success("Team deleted");
-      setRefreshKey((k) => k + 1);
+      // Direct localStorage manipulation for reliable delete
+      const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
+      const key = String(matchId);
+      let all: Record<string, TeamRow[]> = {};
+      try { all = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}"); } catch { all = {}; }
+
+      const list = all[key] || [];
+      const newList = list.filter((t) =>
+        (t._id ?? t.teamId ?? "") !== teamId
+      );
+
+      console.log(`[DeleteTeam] Before: ${list.length}, After: ${newList.length}, Deleted: ${teamId}`);
+
+      // Renumber teams
+      newList.forEach((t, i) => {
+        t.teamNo = i + 1;
+        t.team_number = i + 1;
+      });
+
+      all[key] = newList;
+      localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(all));
+
+      // IMMEDIATELY update state
+      setExistingTeams([...newList]);
+
+      // Force reload
+      setTimeout(() => {
+        setRefreshKey((k) => k + 1);
+      }, 50);
+
+      toast.success(`Team deleted (${newList.length} remaining)`);
     } catch (err: any) {
+      console.error("[DeleteTeam] Error:", err);
       toast.error(err?.message || "Failed to delete team");
-      setStep("ready");
     }
   }
 
