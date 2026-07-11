@@ -130,8 +130,15 @@ export function CricbuzzResearch() {
   const m11Linked = !!getFantasyToken("my11circle");
 
   /**
-   * Transfer generated teams to Dream11 or My11Circle.
-   * Generates direct transfer links via /api/transfer.
+   * Save generated teams to localStorage so they can be transferred
+   * from the match page (where backend player IDs are available).
+   *
+   * NOTE: Cricbuzz player IDs (e.g. "12345" from cricbuzz.com) do NOT
+   * match the backend's player_fixed_id format (from tgsoftware-api.online).
+   * Direct transfer from Research page fails because of this ID mismatch.
+   *
+   * FIX: Save teams to localStorage + redirect user to match page where
+   * the proper backend IDs are loaded and transfer works correctly.
    */
   async function handleTransfer(app: FantasyApp) {
     if (!license.requireLicense()) return;
@@ -144,70 +151,86 @@ export function CricbuzzResearch() {
       return;
     }
 
-    // Check if app is linked
-    const token = getFantasyToken(app);
-    if (!token) {
-      toast.error(`Please link your ${app === "dream11" ? "Dream11" : "My11Circle"} account first via the match page`);
-      return;
-    }
-
     setTransferring(app);
     setTransferLinks([]);
     setShowTransferSection(true);
 
     try {
-      const results: Array<{ teamNo: number; link?: string; success: boolean }> = [];
+      // Save teams to localStorage in the same format as the match page
+      const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
+      const matchKey = String(selectedMatch.id);
 
-      for (let i = 0; i < generated.length; i++) {
-        const team = generated[i];
-        const playerIds = team.players.map((p) => p.id);
-
-        // Call /api/transfer to generate direct transfer link
-        const res = await fetch("/api/transfer", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            matchId: selectedMatch.id,
-            platform: app,
-            authToken: token,
-            teams: [{
-              teamNo: i + 1,
-              players: team.players.map((p) => ({
-                pid: p.id,
-                name: p.name,
-                team: p.team,
-                role: p.roleShort,
-              })),
-              captain: team.captainId,
-              viceCaptain: team.viceCaptainId,
-              vicecaptain: team.viceCaptainId,
-              c: team.captainId,
-              vc: team.viceCaptainId,
-            }],
-          }),
-        });
-
-        const data = await res.json();
-
-        if (data.status === "success" && data.transferLinks?.[0]?.link) {
-          results.push({ teamNo: i + 1, link: data.transferLinks[0].link, success: true });
-        } else if (data.status === "success") {
-          // Transfer succeeded but no link (linked account mode)
-          results.push({ teamNo: i + 1, success: true });
-        } else {
-          results.push({ teamNo: i + 1, success: false });
-        }
-
-        // Small delay between transfers
-        if (i < generated.length - 1) await new Promise((r) => setTimeout(r, 300));
+      let allTeams: Record<string, any[]> = {};
+      try {
+        allTeams = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}");
+      } catch {
+        allTeams = {};
       }
 
+      // Wipe old teams for this match, save new ones
+      const newTeams = generated.map((team, i) => ({
+        _id: `cricbuzz_${Date.now()}_${i}`,
+        teamId: `cricbuzz_${i + 1}`,
+        teamNo: i + 1,
+        team_number: i + 1,
+        players: team.players.map((p) => ({
+          pid: p.id,
+          player_fixed_id: p.id,
+          name: p.name,
+          shortName: p.name.split(" ").pop()?.toUpperCase() || p.name.slice(0, 4).toUpperCase(),
+          team: p.team,
+          team_name: p.team,
+          role: p.roleShort,
+          credits: 8.5, // default credit
+          selected_by: 0,
+          playing: 1,
+        })),
+        captain: team.captainId,
+        viceCaptain: team.viceCaptainId,
+        vicecaptain: team.viceCaptainId,
+        c: team.captainId,
+        vc: team.viceCaptainId,
+        type: "cricbuzz-research",
+        transferStatus: "pending",
+      }));
+
+      allTeams[matchKey] = newTeams;
+      localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(allTeams));
+
+      // Mark all as "saved" (not transferred yet — user needs to go to match page)
+      const results = newTeams.map((t) => ({
+        teamNo: t.teamNo,
+        success: true,
+        saved: true,
+      }));
+
       setTransferLinks(results);
-      const successCount = results.filter((r) => r.success).length;
-      toast.success(`${successCount}/${generated.length} teams transferred to ${app === "dream11" ? "Dream11" : "My11Circle"}!`);
+
+      const appName = app === "dream11" ? "Dream11" : "My11Circle";
+      toast.success(`✅ ${newTeams.length} teams saved! Opening match page to transfer to ${appName}...`);
+
+      // Find the match in the app's match list and open it
+      // The match page will load the proper backend player IDs and enable transfer
+      setTimeout(() => {
+        // Try to open the match detail page
+        const { useApp } = require("@/lib/store");
+        const appState = useApp.getState();
+        // Create a minimal MatchInfo object from the Cricbuzz match
+        const matchInfo = {
+          matchId: selectedMatch.id,
+          id: selectedMatch.id,
+          name: selectedMatch.title,
+          team1: selectedMatch.title.split(" vs ")[0] || "T1",
+          team2: selectedMatch.title.split(" vs ")[1] || "T2",
+          series: selectedMatch.series,
+          sport: "cricket",
+          startTime: new Date().toISOString(),
+        };
+        appState.openMatch(matchInfo);
+      }, 1500);
     } catch (err: any) {
       console.error("[Transfer] Error:", err);
-      toast.error(err?.message || "Transfer failed");
+      toast.error(err?.message || "Failed to save teams");
     } finally {
       setTransferring(null);
     }
@@ -685,82 +708,59 @@ export function CricbuzzResearch() {
                 {generated.length} Teams Generated
               </p>
 
-              {/* Transfer Buttons — Dream11 + My11Circle */}
+              {/* Transfer Buttons — Save & Go to Match Page */}
               <div className="bg-gradient-to-r from-violet-500 to-purple-600 rounded-2xl p-3 text-white">
-                <p className="text-xs font-bold mb-2 flex items-center gap-1.5">
+                <p className="text-xs font-bold mb-1 flex items-center gap-1.5">
                   <Send className="w-3.5 h-3.5" />
                   Transfer Teams to Fantasy Platform
                 </p>
+                <p className="text-[9px] text-white/70 mb-2">
+                  Teams will be saved & match page opens for transfer (Dream11/My11Circle)
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   <Button
-                    className={cn(
-                      "h-10 font-bold text-xs",
-                      d11Linked
-                        ? "bg-red-600 hover:bg-red-700 text-white"
-                        : "bg-white/20 text-white/60"
-                    )}
+                    className="h-10 bg-red-600 hover:bg-red-700 text-white font-bold text-xs"
                     disabled={transferring !== null}
                     onClick={() => handleTransfer("dream11")}
                   >
                     {transferring === "dream11" ? (
-                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Transferring...</>
+                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Saving...</>
                     ) : (
                       <><Send className="w-3.5 h-3.5 mr-1" /> Dream11</>
                     )}
                   </Button>
                   <Button
-                    className={cn(
-                      "h-10 font-bold text-xs",
-                      m11Linked
-                        ? "bg-sky-600 hover:bg-sky-700 text-white"
-                        : "bg-white/20 text-white/60"
-                    )}
+                    className="h-10 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs"
                     disabled={transferring !== null}
                     onClick={() => handleTransfer("my11circle")}
                   >
                     {transferring === "my11circle" ? (
-                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Transferring...</>
+                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Saving...</>
                     ) : (
                       <><Send className="w-3.5 h-3.5 mr-1" /> My11Circle</>
                     )}
                   </Button>
                 </div>
-                {!d11Linked && !m11Linked && (
-                  <p className="text-[9px] text-white/80 mt-2 text-center">
-                    ⚠️ Link your Dream11/My11Circle account first via the match page
-                  </p>
-                )}
               </div>
 
-              {/* Transfer Results */}
+              {/* Transfer Results — Teams Saved */}
               {showTransferSection && transferLinks.length > 0 && (
                 <div className="bg-white dark:bg-card rounded-xl p-3 border border-emerald-200 dark:border-emerald-800">
-                  <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mb-2">
-                    ✅ Transfer Results ({transferLinks.filter((r) => r.success).length}/{transferLinks.length})
+                  <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mb-1">
+                    ✅ {transferLinks.length} Teams Saved!
                   </p>
-                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                  <p className="text-[10px] text-muted-foreground mb-2">
+                    Opening match page... Transfer to Dream11/My11Circle from there.
+                  </p>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
                     {transferLinks.map((result, i) => (
                       <div
                         key={i}
-                        className={cn(
-                          "flex items-center justify-between p-2 rounded-lg text-xs",
-                          result.success ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-red-50 dark:bg-red-950/30"
-                        )}
+                        className="flex items-center justify-between p-1.5 rounded-lg text-xs bg-emerald-50 dark:bg-emerald-950/30"
                       >
                         <span className="font-bold">
-                          Team #{result.teamNo}
-                          {result.success ? " ✅" : " ❌"}
+                          Team #{result.teamNo} ✅ Saved
                         </span>
-                        {result.link && (
-                          <a
-                            href={result.link}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] bg-blue-500 text-white px-2 py-1 rounded font-bold flex items-center gap-1"
-                          >
-                            <ExternalLink className="w-3 h-3" /> Open
-                          </a>
-                        )}
                       </div>
                     ))}
                   </div>
