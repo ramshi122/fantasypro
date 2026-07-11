@@ -26,8 +26,14 @@ export function ResearchScreen() {
       try {
         const ms = await getMatches("cricket");
         if (!active) return;
+        // Filter: only show matches from July 11 onwards (upcoming)
+        const cutoff = new Date("2025-07-11T00:00:00").getTime();
+        const filtered = ms.filter((m: any) => {
+          const t = new Date(m.startTime || m.match_time || 0).getTime();
+          return t >= cutoff || t === 0; // keep matches with no time too
+        });
         // Sort by start time — upcoming first
-        const sorted = ms.sort((a, b) => {
+        const sorted = filtered.sort((a, b) => {
           const aTime = new Date(a.startTime || (a as any).match_time || 0).getTime();
           const bTime = new Date(b.startTime || (b as any).match_time || 0).getTime();
           return aTime - bTime;
