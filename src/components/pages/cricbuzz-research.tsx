@@ -15,19 +15,18 @@ import {
   ChevronDown,
   ChevronUp,
   Lock,
-  Send,
-  ExternalLink,
-  Loader2,
+  Copy,
+  ClipboardPaste,
+  CheckCircle2,
+  FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { saveFantasyToken, getFantasyToken, type FantasyApp } from "@/lib/api";
-import { useLicense } from "@/lib/use-license";
 
 /**
- * Cricbuzz Research — Live Match Scraper
- * ========================================
+ * Manu & Mayur & Singh & Village Research — Live Match Scraper
+ * ==============================================================
  *
  * Ported from cricket-ai-assistant repo.
  * Scrapes Cricbuzz for:
@@ -40,7 +39,8 @@ import { useLicense } from "@/lib/use-license";
  *   - Player pool with FIX/C/VC selection
  *   - Team generation (1-100 teams)
  *   - DT Sadhyatha (probability ranking)
- *   - Hack Sheet (insider intel)
+ *   - Cheat Sheet (insider intel)
+ *   - Copy-Paste teams (bulk copy)
  *   - Live score
  */
 
@@ -120,119 +120,138 @@ export function CricbuzzResearch() {
   const [teamCount, setTeamCount] = useState<number>(8);
   const [liveScore, setLiveScore] = useState<LiveScore | null>(null);
   const [scoreLoading, setScoreLoading] = useState(false);
-  const [transferring, setTransferring] = useState<FantasyApp | null>(null);
-  const [transferLinks, setTransferLinks] = useState<Array<{ teamNo: number; link?: string; success: boolean }>>([]);
-  const [showTransferSection, setShowTransferSection] = useState(false);
-  const license = useLicense();
-
-  // Check if fantasy apps are linked
-  const d11Linked = !!getFantasyToken("dream11");
-  const m11Linked = !!getFantasyToken("my11circle");
+  const [showCheatSheet, setShowCheatSheet] = useState(true);
 
   /**
-   * Save generated teams to localStorage so they can be transferred
-   * from the match page (where backend player IDs are available).
-   *
-   * NOTE: Cricbuzz player IDs (e.g. "12345" from cricbuzz.com) do NOT
-   * match the backend's player_fixed_id format (from tgsoftware-api.online).
-   * Direct transfer from Research page fails because of this ID mismatch.
-   *
-   * FIX: Save teams to localStorage + redirect user to match page where
-   * the proper backend IDs are loaded and transfer works correctly.
+   * Copy all generated teams to clipboard (bulk copy).
+   * Format: readable text with team number, players, C/VC.
    */
-  async function handleTransfer(app: FantasyApp) {
-    if (!license.requireLicense()) return;
+  async function handleCopyTeams() {
     if (generated.length === 0) {
       toast.error("Generate teams first");
       return;
     }
-    if (!selectedMatch) {
-      toast.error("Select a match first");
-      return;
-    }
-
-    setTransferring(app);
-    setTransferLinks([]);
-    setShowTransferSection(true);
 
     try {
-      // Save teams to localStorage in the same format as the match page
-      const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
-      const matchKey = String(selectedMatch.id);
+      let text = `🏏 ${generated.length} Teams — ${selectedMatch?.title || "Match"}\n`;
+      text += `Generated: ${new Date().toLocaleString()}\n`;
+      text += `═══════════════════════════════\n\n`;
 
-      let allTeams: Record<string, any[]> = {};
-      try {
-        allTeams = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}");
-      } catch {
-        allTeams = {};
+      generated.forEach((team, i) => {
+        text += `TEAM ${i + 1} (${strategy})\n`;
+        text += `───────────────────────────────\n`;
+
+        // Group by role
+        const wk = team.players.filter((p) => p.roleShort === "WK");
+        const bat = team.players.filter((p) => p.roleShort === "BAT");
+        const ar = team.players.filter((p) => p.roleShort === "AR");
+        const bowl = team.players.filter((p) => p.roleShort === "BOWL");
+
+        if (wk.length > 0) text += `WK: ${wk.map((p) => p.name).join(", ")}\n`;
+        if (bat.length > 0) text += `BAT: ${bat.map((p) => p.name).join(", ")}\n`;
+        if (ar.length > 0) text += `AR: ${ar.map((p) => p.name).join(", ")}\n`;
+        if (bowl.length > 0) text += `BOWL: ${bowl.map((p) => p.name).join(", ")}\n`;
+
+        const captain = team.players.find((p) => p.id === team.captainId);
+        const viceCaptain = team.players.find((p) => p.id === team.viceCaptainId);
+        text += `Captain: ${captain?.name || "?"}\n`;
+        text += `Vice-Captain: ${viceCaptain?.name || "?"}\n`;
+        text += `\n`;
+      });
+
+      // Copy to clipboard
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
       }
 
-      // Wipe old teams for this match, save new ones
-      const newTeams = generated.map((team, i) => ({
-        _id: `cricbuzz_${Date.now()}_${i}`,
-        teamId: `cricbuzz_${i + 1}`,
-        teamNo: i + 1,
-        team_number: i + 1,
-        players: team.players.map((p) => ({
-          pid: p.id,
-          player_fixed_id: p.id,
-          name: p.name,
-          shortName: p.name.split(" ").pop()?.toUpperCase() || p.name.slice(0, 4).toUpperCase(),
-          team: p.team,
-          team_name: p.team,
-          role: p.roleShort,
-          credits: 8.5, // default credit
-          selected_by: 0,
-          playing: 1,
-        })),
-        captain: team.captainId,
-        viceCaptain: team.viceCaptainId,
-        vicecaptain: team.viceCaptainId,
-        c: team.captainId,
-        vc: team.viceCaptainId,
-        type: "cricbuzz-research",
-        transferStatus: "pending",
-      }));
-
-      allTeams[matchKey] = newTeams;
-      localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(allTeams));
-
-      // Mark all as "saved" (not transferred yet — user needs to go to match page)
-      const results = newTeams.map((t) => ({
-        teamNo: t.teamNo,
-        success: true,
-        saved: true,
-      }));
-
-      setTransferLinks(results);
-
-      const appName = app === "dream11" ? "Dream11" : "My11Circle";
-      toast.success(`✅ ${newTeams.length} teams saved! Opening match page to transfer to ${appName}...`);
-
-      // Find the match in the app's match list and open it
-      // The match page will load the proper backend player IDs and enable transfer
-      setTimeout(() => {
-        // Try to open the match detail page
-        const { useApp } = require("@/lib/store");
-        const appState = useApp.getState();
-        // Create a minimal MatchInfo object from the Cricbuzz match
-        const matchInfo = {
-          matchId: selectedMatch.id,
-          id: selectedMatch.id,
-          name: selectedMatch.title,
-          team1: selectedMatch.title.split(" vs ")[0] || "T1",
-          team2: selectedMatch.title.split(" vs ")[1] || "T2",
-          series: selectedMatch.series,
-          sport: "cricket",
-          startTime: new Date().toISOString(),
-        };
-        appState.openMatch(matchInfo);
-      }, 1500);
+      toast.success(`✅ ${generated.length} teams copied to clipboard!`);
     } catch (err: any) {
-      console.error("[Transfer] Error:", err);
-      toast.error(err?.message || "Failed to save teams");
-    } finally {
-      setTransferring(null);
+      console.error("[Copy] Error:", err);
+      toast.error("Failed to copy teams");
+    }
+  }
+
+  /**
+   * Paste teams from clipboard.
+   * Parses team text and loads into generated state.
+   */
+  async function handlePasteTeams() {
+    try {
+      let text = "";
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        text = await navigator.clipboard.readText();
+      }
+
+      if (!text) {
+        toast.error("Clipboard is empty");
+        return;
+      }
+
+      // Parse teams from text
+      const lines = text.split("\n");
+      const teams: GeneratedTeam[] = [];
+      let currentTeam: Partial<GeneratedTeam> | null = null;
+      let currentPlayers: SquadPlayer[] = [];
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("TEAM ")) {
+          if (currentTeam && currentPlayers.length === 11) {
+            teams.push(currentTeam as GeneratedTeam);
+          }
+          currentTeam = { players: [], captainId: "", viceCaptainId: "" };
+          currentPlayers = [];
+        } else if (trimmed.startsWith("WK:") || trimmed.startsWith("BAT:") || trimmed.startsWith("AR:") || trimmed.startsWith("BOWL:")) {
+          const role = trimmed.split(":")[0] as "WK" | "BAT" | "AR" | "BOWL";
+          const names = trimmed.slice(trimmed.indexOf(":") + 1).split(",").map((n) => n.trim()).filter(Boolean);
+          for (const name of names) {
+            currentPlayers.push({
+              id: `pasted_${currentPlayers.length}_${Date.now()}`,
+              name,
+              team: "TBD",
+              role: role,
+              roleShort: role,
+              playingStatus: "XI",
+              isConfirmedLineup: true,
+              source: "pasted",
+            });
+          }
+        } else if (trimmed.startsWith("Captain:")) {
+          const capName = trimmed.slice(8).trim();
+          const cap = currentPlayers.find((p) => p.name === capName);
+          if (cap && currentTeam) currentTeam.captainId = cap.id;
+        } else if (trimmed.startsWith("Vice-Captain:")) {
+          const vcName = trimmed.slice(13).trim();
+          const vc = currentPlayers.find((p) => p.name === vcName);
+          if (vc && currentTeam) currentTeam.viceCaptainId = vc.id;
+        }
+      }
+
+      // Add last team
+      if (currentTeam && currentPlayers.length === 11) {
+        currentTeam.players = currentPlayers;
+        teams.push(currentTeam as GeneratedTeam);
+      }
+
+      if (teams.length === 0) {
+        toast.error("No valid teams found in clipboard");
+        return;
+      }
+
+      setGenerated(teams);
+      toast.success(`✅ Pasted ${teams.length} teams from clipboard!`);
+    } catch (err: any) {
+      console.error("[Paste] Error:", err);
+      toast.error("Failed to paste teams");
     }
   }
 
@@ -379,15 +398,39 @@ export function CricbuzzResearch() {
 
   return (
     <div className="space-y-3">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 rounded-2xl p-4 text-white shadow-lg">
-        <div className="flex items-center gap-2 mb-1">
-          <Search className="w-5 h-5" />
-          <h2 className="text-base font-bold">Cricbuzz Live Research</h2>
+      {/* Header — 3D Style Name */}
+      <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-violet-700 rounded-2xl p-4 text-white shadow-xl relative overflow-hidden">
+        {/* 3D decorative background */}
+        <div className="absolute -top-8 -right-8 w-32 h-32 bg-white/10 rounded-full blur-2xl" />
+        <div className="absolute -bottom-8 -left-8 w-32 h-32 bg-amber-400/20 rounded-full blur-2xl" />
+
+        <div className="relative">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg">
+              <Search className="w-5 h-5 text-white" />
+            </div>
+            {/* 3D Style Name */}
+            <div>
+              <h2 className="text-base font-black tracking-tight"
+                  style={{
+                    textShadow: "0 1px 0 #ccc, 0 2px 0 #c9c9c9, 0 3px 0 #bbb, 0 4px 0 #b9b9b9, 0 5px 0 #aaa, 0 6px 1px rgba(0,0,0,.1), 0 0 5px rgba(0,0,0,.1), 0 1px 3px rgba(0,0,0,.3), 0 3px 5px rgba(0,0,0,.2), 0 5px 10px rgba(0,0,0,.25), 0 10px 10px rgba(0,0,0,.2), 0 20px 20px rgba(0,0,0,.15)",
+                  }}
+              >
+                <span className="text-amber-300">Manu</span>
+                <span className="text-white"> & </span>
+                <span className="text-cyan-300">Mayur</span>
+                <span className="text-white"> & </span>
+                <span className="text-emerald-300">Singh</span>
+                <span className="text-white"> & </span>
+                <span className="text-rose-300">Village</span>
+              </h2>
+              <p className="text-[10px] text-white/70 font-bold tracking-wider uppercase">Research</p>
+            </div>
+          </div>
+          <p className="text-[10px] text-white/80">
+            Live match research · Verified lineups · Player analysis · No fake data
+          </p>
         </div>
-        <p className="text-[10px] text-white/80">
-          Scrape live matches, squads & scores from Cricbuzz. Verified lineup only — no fake data.
-        </p>
       </div>
 
       {/* Match Search */}
@@ -395,7 +438,7 @@ export function CricbuzzResearch() {
         <div className="flex items-center justify-between">
           <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
             <Trophy className="w-3.5 h-3.5 text-cyan-500" />
-            Upcoming Matches — Live from Cricbuzz
+            Upcoming Matches — Live
           </p>
           {matches.length > 0 && (
             <div className="flex gap-1">
@@ -708,64 +751,33 @@ export function CricbuzzResearch() {
                 {generated.length} Teams Generated
               </p>
 
-              {/* Transfer Buttons — Save & Go to Match Page */}
+              {/* Copy-Paste Teams — Bulk Copy */}
               <div className="bg-gradient-to-r from-violet-500 to-purple-600 rounded-2xl p-3 text-white">
                 <p className="text-xs font-bold mb-1 flex items-center gap-1.5">
-                  <Send className="w-3.5 h-3.5" />
-                  Transfer Teams to Fantasy Platform
+                  <Copy className="w-3.5 h-3.5" />
+                  Bulk Copy-Paste Teams
                 </p>
                 <p className="text-[9px] text-white/70 mb-2">
-                  Teams will be saved & match page opens for transfer (Dream11/My11Circle)
+                  Copy all teams to clipboard · Paste teams from clipboard
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   <Button
-                    className="h-10 bg-red-600 hover:bg-red-700 text-white font-bold text-xs"
-                    disabled={transferring !== null}
-                    onClick={() => handleTransfer("dream11")}
+                    className="h-10 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs"
+                    onClick={handleCopyTeams}
                   >
-                    {transferring === "dream11" ? (
-                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Saving...</>
-                    ) : (
-                      <><Send className="w-3.5 h-3.5 mr-1" /> Dream11</>
-                    )}
+                    <Copy className="w-3.5 h-3.5 mr-1" /> Copy All
                   </Button>
                   <Button
                     className="h-10 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs"
-                    disabled={transferring !== null}
-                    onClick={() => handleTransfer("my11circle")}
+                    onClick={handlePasteTeams}
                   >
-                    {transferring === "my11circle" ? (
-                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Saving...</>
-                    ) : (
-                      <><Send className="w-3.5 h-3.5 mr-1" /> My11Circle</>
-                    )}
+                    <ClipboardPaste className="w-3.5 h-3.5 mr-1" /> Paste
                   </Button>
                 </div>
               </div>
 
-              {/* Transfer Results — Teams Saved */}
-              {showTransferSection && transferLinks.length > 0 && (
-                <div className="bg-white dark:bg-card rounded-xl p-3 border border-emerald-200 dark:border-emerald-800">
-                  <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mb-1">
-                    ✅ {transferLinks.length} Teams Saved!
-                  </p>
-                  <p className="text-[10px] text-muted-foreground mb-2">
-                    Opening match page... Transfer to Dream11/My11Circle from there.
-                  </p>
-                  <div className="space-y-1 max-h-32 overflow-y-auto">
-                    {transferLinks.map((result, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center justify-between p-1.5 rounded-lg text-xs bg-emerald-50 dark:bg-emerald-950/30"
-                      >
-                        <span className="font-bold">
-                          Team #{result.teamNo} ✅ Saved
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {/* Cheat Sheet — Insider Intel */}
+              <CheatSheet players={players} teams={teams} generated={generated} strategy={strategy} />
 
               {generated.map((team, i) => (
                 <div key={i} className="bg-white dark:bg-card rounded-xl border-2 border-cyan-200 dark:border-cyan-800 overflow-hidden">
@@ -935,6 +947,179 @@ function SlotCol({ title, max, items, klass }: { title: string; max: number; ite
           {items[i] ? short(items[i].name) : "..."}
         </div>
       ))}
+    </div>
+  );
+}
+
+/* ============== Cheat Sheet — Insider Intel ============== */
+
+function CheatSheet({
+  players,
+  teams,
+  generated,
+  strategy,
+}: {
+  players: SquadPlayer[];
+  teams: { t1: string; t2: string };
+  generated: GeneratedTeam[];
+  strategy: string;
+}) {
+  const [show, setShow] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  // Build cheat sheet data
+  const liveOnly = players.filter((p) => p.isConfirmedLineup);
+  const keepers = liveOnly.filter((p) => p.wicketKeeper || p.roleShort === "WK");
+  const captains = liveOnly.filter((p) => p.captain);
+  const t1Top = liveOnly.filter((p) => p.team === teams.t1).slice(0, 11);
+  const t2Top = liveOnly.filter((p) => p.team === teams.t2).slice(0, 11);
+
+  // Top captain picks (from generated teams)
+  const captainCounts: Record<string, number> = {};
+  generated.forEach((team) => {
+    const cap = team.players.find((p) => p.id === team.captainId);
+    if (cap) captainCounts[cap.name] = (captainCounts[cap.name] || 0) + 1;
+  });
+  const topCaptains = Object.entries(captainCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
+  // Top VC picks
+  const vcCounts: Record<string, number> = {};
+  generated.forEach((team) => {
+    const vc = team.players.find((p) => p.id === team.viceCaptainId);
+    if (vc) vcCounts[vc.name] = (vcCounts[vc.name] || 0) + 1;
+  });
+  const topVCs = Object.entries(vcCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
+  // Most selected players
+  const playerCounts: Record<string, number> = {};
+  generated.forEach((team) => {
+    team.players.forEach((p) => {
+      playerCounts[p.name] = (playerCounts[p.name] || 0) + 1;
+    });
+  });
+  const topPicks = Object.entries(playerCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 11);
+
+  function handleCopyCheatSheet() {
+    let text = `📋 CHEAT SHEET — ${teams.t1} vs ${teams.t2}\n`;
+    text += `═══════════════════════════════\n\n`;
+
+    text += `🏆 TOP CAPTAIN PICKS:\n`;
+    topCaptains.forEach(([name, count], i) => {
+      text += `  ${i + 1}. ${name} (${count}/${generated.length} teams)\n`;
+    });
+
+    text += `\n⭐ TOP VICE-CAPTAIN PICKS:\n`;
+    topVCs.forEach(([name, count], i) => {
+      text += `  ${i + 1}. ${name} (${count}/${generated.length} teams)\n`;
+    });
+
+    text += `\n🔒 MUST PICKS (in all teams):\n`;
+    topPicks.forEach(([name, count]) => {
+      if (count === generated.length) text += `  ✅ ${name} (100%)\n`;
+    });
+
+    text += `\n🧤 WICKETKEEPERS:\n  ${keepers.map((p) => p.name).join(", ") || "None"}\n`;
+    text += `\n👑 CAPTAINS (from lineup):\n  ${captains.map((p) => p.name).join(", ") || "None"}\n`;
+    text += `\n🏏 ${teams.t1} XI:\n  ${t1Top.map((p) => p.name).join(", ") || "None"}\n`;
+    text += `\n🏏 ${teams.t2} XI:\n  ${t2Top.map((p) => p.name).join(", ") || "None"}\n`;
+
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+    }
+    setCopied(true);
+    toast.success("📋 Cheat sheet copied!");
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="bg-white dark:bg-card rounded-2xl p-3 border-2 border-pink-200 dark:border-pink-800">
+      <button
+        className="w-full flex items-center justify-between text-xs font-bold text-foreground mb-2"
+        onClick={() => setShow(!show)}
+      >
+        <span className="flex items-center gap-1.5">
+          <FileText className="w-3.5 h-3.5 text-pink-500" />
+          📋 Cheat Sheet — Insider Intel
+        </span>
+        <span className="text-[10px] bg-pink-100 dark:bg-pink-900 px-2 py-0.5 rounded text-pink-600">
+          {show ? "Hide" : "Show"}
+        </span>
+      </button>
+
+      {show && (
+        <div className="space-y-2">
+          {/* Copy button */}
+          <Button
+            size="sm"
+            className="w-full h-8 bg-pink-500 hover:bg-pink-600 text-white text-[10px] font-bold"
+            onClick={handleCopyCheatSheet}
+          >
+            {copied ? <><CheckCircle2 className="w-3 h-3 mr-1" /> Copied!</> : <><Copy className="w-3 h-3 mr-1" /> Copy Cheat Sheet</>}
+          </Button>
+
+          {/* Top Captains */}
+          {topCaptains.length > 0 && (
+            <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-2 border-l-4 border-amber-400">
+              <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mb-1">🏆 TOP CAPTAINS</p>
+              {topCaptains.map(([name, count], i) => (
+                <div key={i} className="flex justify-between text-[10px] py-0.5">
+                  <span className="font-bold">{i + 1}. {name}</span>
+                  <span className="text-amber-600">{count}/{generated.length}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Top VCs */}
+          {topVCs.length > 0 && (
+            <div className="bg-cyan-50 dark:bg-cyan-950/30 rounded-lg p-2 border-l-4 border-cyan-400">
+              <p className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400 mb-1">⭐ TOP VICE-CAPTAINS</p>
+              {topVCs.map(([name, count], i) => (
+                <div key={i} className="flex justify-between text-[10px] py-0.5">
+                  <span className="font-bold">{i + 1}. {name}</span>
+                  <span className="text-cyan-600">{count}/{generated.length}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Must Picks */}
+          {topPicks.filter(([_, c]) => c === generated.length).length > 0 && (
+            <div className="bg-emerald-50 dark:bg-emerald-950/30 rounded-lg p-2 border-l-4 border-emerald-400">
+              <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 mb-1">🔒 MUST PICKS (100%)</p>
+              {topPicks.filter(([_, c]) => c === generated.length).map(([name], i) => (
+                <div key={i} className="text-[10px] py-0.5 font-bold">✅ {name}</div>
+              ))}
+            </div>
+          )}
+
+          {/* Keepers */}
+          {keepers.length > 0 && (
+            <div className="bg-violet-50 dark:bg-violet-950/30 rounded-lg p-2 border-l-4 border-violet-400">
+              <p className="text-[10px] font-bold text-violet-600 dark:text-violet-400 mb-1">🧤 KEEPERS</p>
+              <p className="text-[10px]">{keepers.map((p) => p.name).join(", ")}</p>
+            </div>
+          )}
+
+          {/* Team XI */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-orange-50 dark:bg-orange-950/30 rounded-lg p-2 border-l-4 border-orange-400">
+              <p className="text-[9px] font-bold text-orange-600 dark:text-orange-400 mb-1">🏏 {teams.t1} XI</p>
+              <p className="text-[9px] leading-tight">{t1Top.slice(0, 6).map((p) => p.name).join(", ")}{t1Top.length > 6 ? "..." : ""}</p>
+            </div>
+            <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-2 border-l-4 border-red-400">
+              <p className="text-[9px] font-bold text-red-600 dark:text-red-400 mb-1">🏏 {teams.t2} XI</p>
+              <p className="text-[9px] leading-tight">{t2Top.slice(0, 6).map((p) => p.name).join(", ")}{t2Top.length > 6 ? "..." : ""}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
