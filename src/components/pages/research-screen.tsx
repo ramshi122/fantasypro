@@ -10,6 +10,7 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { ShopVideoAd } from "@/components/ads/shop-video-ad";
+import { CricbuzzResearch } from "@/components/pages/cricbuzz-research";
 
 export function ResearchScreen() {
   const [matches, setMatches] = useState<MatchInfo[]>([]);
@@ -171,13 +172,15 @@ export function ResearchScreen() {
         </div>
       </div>
 
+      {/* Cricbuzz Live Research — Full scraper from cricket-ai-assistant */}
+      <CricbuzzResearch />
+
       {/* Upcoming Matches for Research */}
       <div>
         <p className="text-xs font-bold text-foreground mb-2 flex items-center gap-1.5">
           <Zap className="w-3.5 h-3.5 text-violet-500" />
           Upcoming Matches — Tap to Research
         </p>
-
         {loading ? (
           <div className="space-y-2">
             {Array.from({ length: 3 }).map((_, i) => (
