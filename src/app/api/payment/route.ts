@@ -25,12 +25,13 @@ import { withSecurity } from "@/lib/security-wrapper";
  */
 
 const PLAN_CONFIG: Record<string, { amount: number; keyType: string; label: string }> = {
-  "1-match":   { amount: 49,   keyType: "match_basic", label: "1 Match Access (6h)" },
-  "24-hour":   { amount: 99,   keyType: "match_full",  label: "24 Hour Access" },
-  "weekly":    { amount: 149,  keyType: "weekly",      label: "Weekly (7 Days)" },
-  "pro":       { amount: 299,  keyType: "monthly",     label: "Pro (30 Days)" },
-  "elite":     { amount: 999,  keyType: "elite",       label: "Elite (90 Days)" },
-  "lifetime":  { amount: 4999, keyType: "lifetime",    label: "Lifetime" },
+  "1-match":     { amount: 49,   keyType: "match_basic",  label: "1 Match Access (6h)" },
+  "24-hour":     { amount: 99,   keyType: "match_full",   label: "24 Hour Access" },
+  "weekly":      { amount: 149,  keyType: "weekly",       label: "Weekly (7 Days)" },
+  "pro":         { amount: 299,  keyType: "monthly",      label: "Pro (30 Days)" },
+  "semi-annual": { amount: 499,  keyType: "half_yearly",  label: "Semi-Annual (180 Days)" },
+  "elite":       { amount: 999,  keyType: "elite",        label: "Elite (90 Days)" },
+  "lifetime":    { amount: 4999, keyType: "lifetime",     label: "Lifetime" },
 };
 
 interface PaymentOrder {
@@ -67,6 +68,7 @@ function getExpiry(keyType: string): number | null {
     case "match_full": return now + 1 * day;
     case "weekly": return now + 7 * day;
     case "monthly": return now + 30 * day;
+    case "half_yearly": return now + 180 * day;
     case "elite": return now + 90 * day;
     case "lifetime": return null;
     default: return now + 1 * day;

@@ -85,6 +85,16 @@ const TIER_FEATURES: Record<string, {
     eliteAI: false,
     multiPlatform: false,
   },
+  half_yearly: {
+    teamGenLimit: 100,
+    dream11: "unlimited",
+    my11circle: "unlimited",
+    contestJoin: true,
+    expertTeams: true,
+    primeTeams: true,
+    eliteAI: false,
+    multiPlatform: true,
+  },
   elite: {
     teamGenLimit: 500,
     dream11: "unlimited",

@@ -141,6 +141,22 @@ export function getTierFeatures(tier: Tier | string | null | undefined): TierFea
         tierEmoji: "⭐", tierPrice: "₹299", tierDuration: "30 Days",
       };
 
+    case "half_yearly":
+      return {
+        teamGeneration: true, teamGenerationLimit: 100,
+        dream11Transfer: "unlimited", my11CircleTransfer: "unlimited",
+        contestJoin: true, multiPlatform: true,
+        expertTeams: true, primeTeams: true, eliteAI: false,
+        autoJoinContest: true, autoTransferScheduler: true, contestTracker: true,
+        multiMatchGenerator: true, pushNotifications: true, whatsappShare: true,
+        multiLanguage: true, playerFormDashboard: true, captainRotation: true,
+        teamBackup: true, cricketLivePage: true, serverSideAutoJoin: false,
+        multiAccountDream11: true, multiAccountMy11Circle: true, bulkCopyPaste: true,
+        referralProgram: true,
+        tierName: "Semi-Annual", tierColor: "from-indigo-500 to-violet-600",
+        tierEmoji: "🔮", tierPrice: "₹499", tierDuration: "180 Days",
+      };
+
     case "elite":
       return {
         teamGeneration: true, teamGenerationLimit: 500,

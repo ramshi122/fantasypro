@@ -37,7 +37,7 @@ import { create } from "zustand";
 //   monthly     — 30 days (Pro — ₹299)
 //   elite       — 90 days (Elite — ₹999)
 //   lifetime    — forever (full access)
-export type KeyType = "trial" | "match_basic" | "match_full" | "weekly" | "monthly" | "elite" | "lifetime";
+export type KeyType = "trial" | "match_basic" | "match_full" | "weekly" | "monthly" | "half_yearly" | "elite" | "lifetime";
 export type KeyStatus = "active" | "used" | "expired" | "suspended";
 
 export interface LicenseKey {
@@ -220,13 +220,14 @@ export function getExpiryForType(type: KeyType): number | null {
   const day = 86400000;
   const hour = 3600000;
   switch (type) {
-    case "trial": return now + 1 * day;        // 1 day free
-    case "match_basic": return now + 6 * hour; // 1 match = 6 hours
-    case "match_full": return now + 1 * day;   // 24 hour active
-    case "weekly": return now + 7 * day;       // 7 days
-    case "monthly": return now + 30 * day;     // 30 days (Pro ₹299)
-    case "elite": return now + 90 * day;       // 90 days (Elite ₹999)
-    case "lifetime": return null;              // forever
+    case "trial": return now + 1 * day;          // 1 day free
+    case "match_basic": return now + 6 * hour;   // 1 match = 6 hours
+    case "match_full": return now + 1 * day;     // 24 hour active
+    case "weekly": return now + 7 * day;         // 7 days
+    case "monthly": return now + 30 * day;       // 30 days (Pro ₹299)
+    case "half_yearly": return now + 180 * day;  // 180 days (Semi-Annual ₹499)
+    case "elite": return now + 90 * day;         // 90 days (Elite ₹999)
+    case "lifetime": return null;                // forever
   }
 }
 
