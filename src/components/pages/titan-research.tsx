@@ -778,7 +778,9 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
 
   const filteredMatches = useMemo(() => {
     if (!matchesData) return [];
-    const all = [...matchesData.live, ...matchesData.upcoming];
+    const live = matchesData.live || [];
+    const upcoming = matchesData.upcoming || [];
+    const all = [...live, ...upcoming];
     const q = matchSearch.trim().toLowerCase();
     if (!q) return all;
     return all.filter(
