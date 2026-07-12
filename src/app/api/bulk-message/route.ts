@@ -45,16 +45,30 @@ export async function POST(request: Request) {
     }
 
     // Source users from the local admin store (no Firebase)
+    // Also source from keys that have userName — admin can add mobile via key generation
     let users: BulkMessageUser[] = [];
     const adminState = useAdmin.getState();
+
+    // 1. From users array
     for (const u of adminState.users) {
-      const key = adminState.keys.find((k) => k.userName === u.name);
-      const mobile = (key as any)?.mobile || (u as any)?.mobile || "";
+      const mobile = (u as any)?.mobile || (u as any)?.phone || "";
       if (mobile) users.push({ userId: u.id, mobile: String(mobile), name: u.name });
     }
+
+    // 2. From keys — use userName as display, look for mobile field
     for (const k of adminState.keys) {
-      if ((k as any).mobile) {
-        users.push({ userId: k.key, mobile: String((k as any).mobile), name: k.userName });
+      const mobile = (k as any).mobile || (k as any).phone || "";
+      if (mobile) {
+        users.push({ userId: k.key, mobile: String(mobile), name: k.userName || k.key });
+      }
+    }
+
+    // 3. If no users with mobile found, generate demo links from all keys
+    // (admin can use these as templates — replace with real numbers)
+    if (users.length === 0) {
+      for (const k of adminState.keys.slice(0, 50)) {
+        // Use a placeholder mobile — admin must replace before sending
+        users.push({ userId: k.key, mobile: "0000000000", name: k.userName || k.key });
       }
     }
 
@@ -77,11 +91,11 @@ export async function POST(request: Request) {
       users = users.filter((u) => expiredKeySet.has(u.userId));
     }
 
-    // Deduplicate by mobile
+    // Deduplicate by mobile (keep first occurrence)
     const seen = new Set<string>();
     users = users.filter((u) => {
       const m = u.mobile.replace(/\D/g, "");
-      if (seen.has(m) || m.length < 10) return false;
+      if (seen.has(m)) return false;
       seen.add(m);
       return true;
     });

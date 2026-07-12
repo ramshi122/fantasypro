@@ -2796,6 +2796,11 @@ function BulkMessageTab() {
       {result && (
         <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
           <p className="text-[10px] font-bold text-emerald-400 mb-2">✓ {result.recipientCount} links generated ({result.channel})</p>
+          {result.recipientCount > 0 && result.links?.[0]?.mobile === "0000000000" && (
+            <p className="text-[10px] text-amber-400 mb-2 bg-amber-900/30 p-2 rounded">
+              ⚠️ No real mobile numbers found. Add mobile numbers to user profiles or keys to generate real WhatsApp links. These are template links — replace 0000000000 with actual numbers.
+            </p>
+          )}
           <div className="space-y-1 max-h-60 overflow-y-auto">
             {result.links.slice(0, 50).map((l: any, i: number) => (
               <a key={i} href={l.url} target="_blank" rel="noopener noreferrer"
