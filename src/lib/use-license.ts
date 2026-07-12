@@ -225,6 +225,8 @@ export function useLicense() {
 
   // Periodic expiry check — every 30 seconds (using SERVER TIME)
   // This ensures expiry happens at the EXACT same moment on all devices
+  // ALSO: Re-verifies license against Firestore every 60s to catch
+  // suspended/banned status changes made by admin in real-time.
   useEffect(() => {
     if (!licenseState.verified) return;
 
@@ -236,7 +238,30 @@ export function useLicense() {
       checkExpiry();
     }, 30_000); // 30 seconds — ensures expiry within 30s of actual expiry time
 
-    return () => clearInterval(interval);
+    // Re-verify against Firestore every 60 seconds to catch admin suspensions/bans
+    const verifyInterval = setInterval(async () => {
+      if (!licenseState.key) return;
+      try {
+        const result = await admin.verifyLicense(licenseState.key || "", licenseState.deviceId);
+        if (!result.valid) {
+          console.log("[useLicense] Periodic re-verify failed — license may be suspended/banned");
+          clearLicense();
+          setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
+          setIsExpired(true);
+          // Force page reload to show license lock screen
+          if (typeof window !== "undefined") {
+            window.location.reload();
+          }
+        }
+      } catch {
+        // Network error — don't clear license on network failure
+      }
+    }, 60_000); // 60 seconds — catch admin suspensions within 1 minute
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(verifyInterval);
+    };
   }, [licenseState.verified, checkExpiry]);
 
   const activate = useCallback(async (key: string): Promise<{ success: boolean; message: string }> => {

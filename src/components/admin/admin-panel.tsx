@@ -68,6 +68,15 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
     // subscribeToFirebase is now a no-op (no real-time listeners) — kept for
     // UI compatibility.
     admin.subscribeToFirebase();
+
+    // ===== REAL-TIME SYNC: Refresh from Firebase every 10 seconds =====
+    // This ensures ALL admin tabs/pages show the latest key status (suspended,
+    // banned, activated, deleted) without requiring manual refresh.
+    const syncInterval = setInterval(() => {
+      admin.syncFromFirebase();
+    }, 10_000); // 10 seconds — near real-time
+
+    return () => clearInterval(syncInterval);
   }, [open, admin.isAdminAuthenticated]);
 
   // Login gate
