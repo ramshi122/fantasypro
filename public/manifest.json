@@ -4,8 +4,8 @@
   "description": "AI Fantasy Team Generator",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#7C3AED",
-  "theme_color": "#7C3AED",
+  "background_color": "#050810",
+  "theme_color": "#050810",
   "orientation": "portrait",
   "categories": ["sports", "entertainment", "games"],
   "icons": [

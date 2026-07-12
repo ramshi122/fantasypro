@@ -3,28 +3,48 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ============================================================
-    // SECURITY FIX: License keys — READ-ONLY from client
+    // SECURITY: admin_data — SERVER-ONLY writes
     // ============================================================
-    // Only the server (Firebase Admin SDK via Next.js API routes)
-    // can create/update/delete license keys.
+    // Client can READ for real-time sync (onSnapshot).
+    // Client CANNOT write — all writes go through server API routes
+    // using Firebase Admin SDK.
+    match /admin_data/{docId} {
+      allow read: if true;            // Real-time sync reads
+      allow create: if false;         // SERVER-ONLY
+      allow update: if false;         // SERVER-ONLY
+      allow delete: if false;         // SERVER-ONLY
+    }
+
+    // ============================================================
+    // SECURITY: license_keys — SERVER-ONLY writes
+    // ============================================================
     // Client can READ for verification only.
+    // Client CANNOT create/update/delete — prevents key injection.
     match /license_keys/{keyId} {
-      allow read: if true;           // Client can verify keys (read-only)
-      allow create: if false;        // NO client writes — admin/gateway only
-      allow update: if false;        // NO client updates
-      allow delete: if false;        // NO client deletes
+      allow read: if true;            // Verification reads
+      allow create: if false;         // SERVER-ONLY (admin API)
+      allow update: if false;         // SERVER-ONLY
+      allow delete: if false;         // SERVER-ONLY
+    }
+
+    // ============================================================
+    // SECURITY: admin_generated_keys — SERVER-ONLY writes
+    // ============================================================
+    match /admin_generated_keys/{keyId} {
+      allow read: if true;            // Cross-device discovery
+      allow create: if false;         // SERVER-ONLY
+      allow update: if false;         // SERVER-ONLY
+      allow delete: if false;         // SERVER-ONLY
     }
 
     // ============================================================
     // Payment orders — READ-ONLY from client
     // ============================================================
-    // Server creates orders and marks them completed.
-    // Client can only read their own order status.
     match /payment_orders/{orderId} {
-      allow read: if true;           // Client can check order status
-      allow create: if false;        // Server-only (via /api/payment)
-      allow update: if false;        // Server-only
-      allow delete: if false;        // Server-only
+      allow read: if true;
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
     }
 
     // ============================================================
@@ -32,9 +52,9 @@ service cloud.firestore {
     // ============================================================
     match /users/{userId} {
       allow read: if true;
-      allow create: if false;        // Server-only
-      allow update: if false;        // Server-only
-      allow delete: if false;        // Server-only
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
     }
 
     // ============================================================
@@ -42,9 +62,9 @@ service cloud.firestore {
     // ============================================================
     match /referrals/{referralId} {
       allow read: if true;
-      allow create: if false;        // Server-only
-      allow update: if false;        // Server-only
-      allow delete: if false;        // Server-only
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
     }
 
     // ============================================================

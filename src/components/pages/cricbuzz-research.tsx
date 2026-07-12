@@ -23,6 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { HackEngine } from "@/components/pages/hack-engine";
 
 /**
  * Manu & Mayur & Singh & Village Research — Live Match Scraper
@@ -539,6 +540,11 @@ export function CricbuzzResearch() {
       {/* Match Prediction — 150+ Data Point Analysis */}
       {players.length > 0 && (
         <MatchPrediction players={players} teams={teams} selectedMatch={selectedMatch} />
+      )}
+
+      {/* 🧠 Hack Engine — 10 AI Algorithms (Elite/Lifetime only) */}
+      {players.length > 0 && (
+        <HackEngine players={players} teams={teams} />
       )}
 
       {/* Strategy */}

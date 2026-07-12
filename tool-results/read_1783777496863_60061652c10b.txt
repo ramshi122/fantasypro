@@ -1,0 +1,1061 @@
+     1→/**
+     2→ * Admin Panel Store — LOCALSTORAGE IS THE PRIMARY STORE
+     3→ * ------------------------------------------------------
+     4→ * Hidden admin mode with license management, device binding, user control,
+     5→ * team generator toggles, announcements, activity logs, and settings.
+     6→ *
+     7→ * Storage model (per FIREBASE-CLEANUP):
+     8→ *   • localStorage  — primary store for keys/devices/users/logs/settings
+     9→ *                     (admin-generated + 500+ seed keys; same on every phone
+    10→ *                     because the seed generation is deterministic-ish and
+    11→ *                     the same initial keys are seeded on every device)
+    12→ *   • Firebase      — used ONLY for license key verification
+    13→ *                     (single-doc reads of license_keys/{keyStr})
+    14→ *
+    15→ * When admin GENERATES a key → save to localStorage AND sync the ONE key
+    16→ * to Firebase (setDoc by key string) + record in admin_generated_keys.
+    17→ *
+    18→ * When admin CHECKS keys → read from localStorage (seed + generated keys).
+    19→ *
+    20→ * When a USER verifies a key → read ONE doc from Firebase by key string
+    21→ * (NOT a collection download) — handled in `verifyLicense` via
+    22→ * `fetchKeyFromFirestore`.
+    23→ *
+    24→ * All real-time `onSnapshot` listeners have been REMOVED.
+    25→ * One-shot reads/writes only.
+    26→ */
+    27→
+    28→import { create } from "zustand";
+    29→
+    30→/* ---------- Types ---------- */
+    31→
+    32→// License key tiers:
+    33→//   trial       — 1 day free (Trial)
+    34→//   match_basic — 1 match active (single match access)
+    35→//   match_full  — 24 hour active (full access for 24h)
+    36→//   weekly      — 7 days (legacy)
+    37→//   monthly     — 30 days (Pro — ₹299)
+    38→//   elite       — 90 days (Elite — ₹999)
+    39→//   lifetime    — forever (full access)
+    40→export type KeyType = "trial" | "match_basic" | "match_full" | "weekly" | "monthly" | "half_yearly" | "elite" | "lifetime";
+    41→export type KeyStatus = "active" | "used" | "expired" | "suspended";
+    42→
+    43→export interface LicenseKey {
+    44→  key: string;
+    45→  type: KeyType;
+    46→  status: KeyStatus;
+    47→  createdAt: number;
+    48→  expiresAt: number | null; // null = lifetime
+    49→  deviceIds: string[];
+    50→  userName?: string;
+    51→  lastVerified?: number;
+    52→  verifications: number;
+    53→}
+    54→
+    55→export interface Device {
+    56→  deviceId: string;
+    57→  userName?: string;
+    58→  licenseKey?: string;
+    59→  lastLogin: number;
+    60→  status: "allowed" | "banned";
+    61→}
+    62→
+    63→export interface User {
+    64→  id: string;
+    65→  name: string;
+    66→  device?: string;
+    67→  license?: string;
+    68→  lastActive: number;
+    69→  banned: boolean;
+    70→}
+    71→
+    72→export interface ActivityLog {
+    73→  id: string;
+    74→  timestamp: number;
+    75→  type:
+    76→    | "key_verification"
+    77→    | "login_attempt"
+    78→    | "team_generation"
+    79→    | "device_binding"
+    80→    | "admin_action"
+    81→    | "error";
+    82→  message: string;
+    83→  details?: Record<string, unknown>;
+    84→}
+    85→
+    86→export interface Announcement {
+    87→  id: string;
+    88→  title: string;
+    89→  message: string;
+    90→  target: "all" | "premium" | "selected";
+    91→  createdAt: number;
+    92→  sent: boolean;
+    93→}
+    94→
+    95→export interface AdminSettings {
+    96→  adminPassword: string;
+    97→  apiUrl: string;
+    98→  firebaseConfig: string;
+    99→  licensePrefix: string;
+   100→  teamGenerator: {
+   101→    enabled: boolean;
+   102→    autoTeamGenerator: boolean;
+   103→    glGenerator: boolean;
+   104→    groupCombination: boolean;
+   105→    cheatSheet: boolean;
+   106→    dtAnalysis: boolean;
+   107→    transferTeam: boolean;
+   108→    autoPick: boolean;
+   109→  };
+   110→}
+   111→
+   112→interface AdminState {
+   113→  // Auth
+   114→  isAdminAuthenticated: boolean;
+   115→  adminUsername: string | null;
+   116→
+   117→  // Data
+   118→  keys: LicenseKey[];
+   119→  devices: Device[];
+   120→  users: User[];
+   121→  logs: ActivityLog[];
+   122→  announcements: Announcement[];
+   123→  settings: AdminSettings;
+   124→
+   125→  // Sync metadata
+   126→  isSyncing: boolean;
+   127→  lastSyncedAt: number | null;
+   128→  /** Kept for UI compatibility — always false (no real-time listeners). */
+   129→  isSubscribed: boolean;
+   130→
+   131→  // Auth actions
+   132→  login: (username: string, password: string) => boolean;
+   133→  logout: () => void;
+   134→  changePassword: (newPassword: string) => void;
+   135→
+   136→  // Sync actions
+   137→  /** Hydrate the store from localStorage + fetch admin-generated keys from
+   138→   *  Firebase (individual reads). Returns true on success. */
+   139→  syncFromFirebase: () => Promise<boolean>;
+   140→  /** No-op unsubscribe. Real-time listeners have been removed; kept for
+   141→   *  UI compatibility. */
+   142→  subscribeToFirebase: () => () => void;
+   143→
+   144→  // License actions
+   145→  generateKey: (type: KeyType) => string;
+   146→  generateBulkKeys: (count: number, type: KeyType) => string[];
+   147→  activateKey: (key: string) => void;
+   148→  suspendKey: (key: string) => void;
+   149→  deleteKey: (key: string) => void;
+   150→  extendExpiry: (key: string, days: number) => void;
+   151→  resetDevice: (key: string) => void;
+   152→  verifyLicense: (key: string, deviceId: string) => Promise<{ valid: boolean; message: string; keyType?: KeyType }>;
+   153→  /** Re-activate ALL keys — fixes any expired/suspended key by extending expiry
+   154→   *  and setting status to "active". Returns count of fixed keys. */
+   155→  validateAllKeys: () => number;
+   156→
+   157→  // Device actions
+   158→  unbindDevice: (deviceId: string) => void;
+   159→  forceLogout: (deviceId: string) => void;
+   160→  banDevice: (deviceId: string) => void;
+   161→  allowDevice: (deviceId: string) => void;
+   162→
+   163→  // User actions
+   164→  banUser: (id: string) => void;
+   165→  unbanUser: (id: string) => void;
+   166→  deleteUser: (id: string) => void;
+   167→  resetUserLicense: (id: string) => void;
+   168→
+   169→  // Settings
+   170→  updateSettings: (partial: Partial<AdminSettings>) => void;
+   171→  toggleFeature: (feature: keyof AdminSettings["teamGenerator"]) => void;
+   172→
+   173→  // Announcements
+   174→  sendAnnouncement: (title: string, message: string, target: "all" | "premium" | "selected") => void;
+   175→
+   176→  // Logs
+   177→  addLog: (type: ActivityLog["type"], message: string, details?: Record<string, unknown>) => void;
+   178→  clearLogs: () => void;
+   179→
+   180→  // Stats
+   181→  getStats: () => {
+   182→    totalKeys: number;
+   183→    activeKeys: number;
+   184→    usedKeys: number;
+   185→    expiredKeys: number;
+   186→    activeDevices: number;
+   187→    todayVerifications: number;
+   188→    totalUsers: number;
+   189→    teamsGeneratedToday: number;
+   190→  };
+   191→}
+   192→
+   193→/* ---------- Helpers ---------- */
+   194→
+   195→const LICENSE_PREFIX_DEFAULT = "CRICB";
+   196→
+   197→// localStorage keys (admin data persistence)
+   198→const LS_KEYS = "apna-cricket-admin-keys";
+   199→const LS_DEVICES = "apna-cricket-admin-devices";
+   200→const LS_USERS = "apna-cricket-admin-users";
+   201→const LS_LOGS = "apna-cricket-admin-logs";
+   202→const LS_SETTINGS = "apna-cricket-admin-settings";
+   203→const LS_ANNOUNCEMENTS = "apna-cricket-admin-announcements";
+   204→
+   205→function randomKeySegment(): string {
+   206→  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+   207→  let out = "";
+   208→  for (let i = 0; i < 4; i++) {
+   209→    out += chars[Math.floor(Math.random() * chars.length)];
+   210→  }
+   211→  return out;
+   212→}
+   213→
+   214→function generateLicenseKey(prefix: string = LICENSE_PREFIX_DEFAULT): string {
+   215→  return `${prefix}-${randomKeySegment()}-${randomKeySegment()}-${randomKeySegment()}`;
+   216→}
+   217→
+   218→export function getExpiryForType(type: KeyType): number | null {
+   219→  const now = Date.now();
+   220→  const day = 86400000;
+   221→  const hour = 3600000;
+   222→  switch (type) {
+   223→    case "trial": return now + 1 * day;          // 1 day free
+   224→    case "match_basic": return now + 6 * hour;   // 1 match = 6 hours
+   225→    case "match_full": return now + 1 * day;     // 24 hour active
+   226→    case "weekly": return now + 7 * day;         // 7 days
+   227→    case "monthly": return now + 30 * day;       // 30 days (Pro ₹299)
+   228→    case "half_yearly": return now + 180 * day;  // 180 days (Semi-Annual ₹499)
+   229→    case "elite": return now + 90 * day;         // 90 days (Elite ₹999)
+   230→    case "lifetime": return null;                // forever
+   231→  }
+   232→}
+   233→
+   234→function uid(): string {
+   235→  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+   236→}
+   237→
+   238→/* ---------- localStorage helpers ---------- */
+   239→
+   240→function lsGet<T>(key: string, fallback: T): T {
+   241→  if (typeof window === "undefined") return fallback;
+   242→  try {
+   243→    const raw = localStorage.getItem(key);
+   244→    if (!raw) return fallback;
+   245→    return JSON.parse(raw) as T;
+   246→  } catch {
+   247→    return fallback;
+   248→  }
+   249→}
+   250→
+   251→function lsSet<T>(key: string, value: T): void {
+   252→  if (typeof window === "undefined") return;
+   253→  try {
+   254→    localStorage.setItem(key, JSON.stringify(value));
+   255→  } catch {
+   256→    /* ignore quota errors */
+   257→  }
+   258→}
+   259→
+   260→/* ---------- Store ---------- */
+   261→
+   262→const DEFAULT_SETTINGS: AdminSettings = {
+   263→  adminPassword: "", // SECURITY FIX: No longer stored client-side — verified via /api/admin/login
+   264→  apiUrl: "https://tgsoftware-api.online",
+   265→  firebaseConfig: JSON.stringify({
+   266→    apiKey: "AIzaSyDbaFKRqrD976syNij_fSSuIBSPRtR9vbo",
+   267→    authDomain: "revofixer-81a1c.firebaseapp.com",
+   268→    projectId: "revofixer-81a1c",
+   269→    storageBucket: "revofixer-81a1c.firebasestorage.app",
+   270→    messagingSenderId: "1049094387124",
+   271→    appId: "1:1049094387124:web:864be9cd7ed7c2455caee1",
+   272→    measurementId: "G-HYF2T2VQ8K",
+   273→  }),
+   274→  licensePrefix: LICENSE_PREFIX_DEFAULT,
+   275→  teamGenerator: {
+   276→    enabled: true,
+   277→    autoTeamGenerator: true,
+   278→    glGenerator: true,
+   279→    groupCombination: true,
+   280→    cheatSheet: true,
+   281→    dtAnalysis: true,
+   282→    transferTeam: true,
+   283→    autoPick: true,
+   284→  },
+   285→};
+   286→
+   287→// Seed with some demo data on first load
+   288→function getInitialData() {
+   289→  const now = Date.now();
+   290→  const day = 86400000;
+   291→
+   292→  // SECURITY FIX: NO demo keys in client bundle!
+   293→  // All license keys must come from Firebase (license_keys collection) or
+   294→  // be issued by admin after payment verification.
+   295→  // Previously had CRICB-ELITE-DEMO-KEY1 + 500 generated keys = instant free Elite.
+   296→  const seedKeys: LicenseKey[] = [];
+   297→
+   298→  // SECURITY FIX: NO seeded demo devices/users
+   299→  const seedDevices: Device[] = [];
+   300→
+   301→  const seedUsers: User[] = [];
+   302→
+   303→  const seedLogs: ActivityLog[] = [];
+   304→
+   305→  return { keys: seedKeys, devices: seedDevices, users: seedUsers, logs: seedLogs };
+   306→}
+   307→
+   308→/**
+   309→ * Bootstrap initial state from localStorage. If localStorage is empty for
+   310→ * a given collection (first run on this device), seed it with the initial
+   311→ * demo data so that EVERY phone sees the same set of seed keys + devices +
+   312→ * users + logs.
+   313→ */
+   314→function bootstrapInitialState() {
+   315→  const initial = getInitialData();
+   316→
+   317→  const persistedKeys = lsGet<LicenseKey[] | null>(LS_KEYS, null);
+   318→  const keys = persistedKeys && persistedKeys.length > 0 ? persistedKeys : initial.keys;
+   319→  if (!persistedKeys || persistedKeys.length === 0) lsSet(LS_KEYS, keys);
+   320→
+   321→  const persistedDevices = lsGet<Device[] | null>(LS_DEVICES, null);
+   322→  const devices = persistedDevices && persistedDevices.length > 0 ? persistedDevices : initial.devices;
+   323→  if (!persistedDevices || persistedDevices.length === 0) lsSet(LS_DEVICES, devices);
+   324→
+   325→  const persistedUsers = lsGet<User[] | null>(LS_USERS, null);
+   326→  const users = persistedUsers && persistedUsers.length > 0 ? persistedUsers : initial.users;
+   327→  if (!persistedUsers || persistedUsers.length === 0) lsSet(LS_USERS, users);
+   328→
+   329→  const persistedLogs = lsGet<ActivityLog[] | null>(LS_LOGS, null);
+   330→  const logs = persistedLogs && persistedLogs.length > 0 ? persistedLogs : initial.logs;
+   331→  if (!persistedLogs || persistedLogs.length === 0) lsSet(LS_LOGS, logs);
+   332→
+   333→  const persistedSettings = lsGet<AdminSettings | null>(LS_SETTINGS, null);
+   334→  const settings = persistedSettings ?? DEFAULT_SETTINGS;
+   335→  if (!persistedSettings) lsSet(LS_SETTINGS, settings);
+   336→
+   337→  const announcements = lsGet<Announcement[]>(LS_ANNOUNCEMENTS, []);
+   338→
+   339→  return { keys, devices, users, logs, settings, announcements };
+   340→}
+   341→
+   342→const bootstrapped = bootstrapInitialState();
+   343→
+   344→export const useAdmin = create<AdminState>()((set, get) => ({
+   345→      isAdminAuthenticated: false,
+   346→      adminUsername: null,
+   347→      keys: bootstrapped.keys,
+   348→      devices: bootstrapped.devices,
+   349→      users: bootstrapped.users,
+   350→      logs: bootstrapped.logs,
+   351→      announcements: bootstrapped.announcements,
+   352→      settings: bootstrapped.settings,
+   353→
+   354→      isSyncing: false,
+   355→      lastSyncedAt: null,
+   356→      isSubscribed: false,
+   357→
+   358→      login: async (_username, password) => {
+   359→        // SECURITY FIX: Server-side password verification
+   360→        // Password is NO LONGER checked client-side (was hardcoded in bundle).
+   361→        try {
+   362→          const res = await fetch("/api/admin/login", {
+   363→            method: "POST",
+   364→            headers: { "Content-Type": "application/json" },
+   365→            body: JSON.stringify({ password }),
+   366→          });
+   367→          const data = await res.json();
+   368→          if (data.success && data.token) {
+   369→            // Store token in sessionStorage (not localStorage) — clears on tab close
+   370→            if (typeof window !== "undefined") {
+   371→              sessionStorage.setItem("apna-admin-session", data.token);
+   372→            }
+   373→            set({ isAdminAuthenticated: true, adminUsername: "admin" });
+   374→            get().addLog("admin_action", "Admin logged in (server-verified)");
+   375→            return true;
+   376→          }
+   377→          get().addLog("login_attempt", "Failed admin login attempt");
+   378→          return false;
+   379→        } catch (err) {
+   380→          console.error("[AdminLogin] Error:", err);
+   381→          get().addLog("login_attempt", "Admin login network error");
+   382→          return false;
+   383→        }
+   384→      },
+   385→
+   386→      logout: () => {
+   387→        set({ isAdminAuthenticated: false, adminUsername: null });
+   388→      },
+   389→
+   390→      changePassword: (newPassword) => {
+   391→        set((s) => {
+   392→          const next = { ...s.settings, adminPassword: newPassword };
+   393→          lsSet(LS_SETTINGS, next);
+   394→          return { settings: next };
+   395→        });
+   396→        get().addLog("admin_action", "Admin password changed");
+   397→      },
+   398→
+   399→      /* -------------------------------------------------------------- *
+   400→       * SYNC ACTIONS — localStorage primary, Firebase license-only
+   401→       * -------------------------------------------------------------- */
+   402→
+   403→      syncFromFirebase: async () => {
+   404→        set({ isSyncing: true });
+   405→        try {
+   406→          // 1. Refresh localStorage snapshot into the in-memory store
+   407→          const lsKeys = lsGet<LicenseKey[]>(LS_KEYS, []);
+   408→          const lsDevices = lsGet<Device[]>(LS_DEVICES, []);
+   409→          const lsUsers = lsGet<User[]>(LS_USERS, []);
+   410→          const lsLogs = lsGet<ActivityLog[]>(LS_LOGS, []);
+   411→          const lsSettings = lsGet<AdminSettings>(LS_SETTINGS, DEFAULT_SETTINGS);
+   412→
+   413→          // 2. Discover admin-generated keys (from other devices) via the
+   414→          //    admin_generated_keys collection (single fetch of key strings,
+   415→          //    NOT a full collection download of license_keys). For each
+   416→          //    missing key, do an INDIVIDUAL fetchKeyFromFirestore read.
+   417→          try {
+   418→            const { fetchAdminGeneratedKeys } = await import("./admin-firebase-sync");
+   419→            const { fetchKeyFromFirestore } = await import("./firebase-license");
+   420→            const keyStrs = await fetchAdminGeneratedKeys(50);
+   421→            const existing = new Set(get().keys.map((k) => k.key));
+   422→            const missing = keyStrs.filter((s) => !existing.has(s));
+   423→            const hydrated: LicenseKey[] = [];
+   424→            for (const s of missing) {
+   425→              const k = await fetchKeyFromFirestore(s);
+   426→              if (k) hydrated.push(k);
+   427→            }
+   428→            if (hydrated.length > 0) {
+   429→              const merged = [...hydrated, ...lsKeys];
+   430→              lsSet(LS_KEYS, merged);
+   431→              set({ keys: merged });
+   432→              console.log(`[Admin Sync] Hydrated ${hydrated.length} admin-generated keys from Firebase`);
+   433→            } else {
+   434→              set({ keys: lsKeys });
+   435→            }
+   436→          } catch (err) {
+   437→            console.warn("[Admin Sync] Firebase admin-key hydration failed:", err);
+   438→            set({ keys: lsKeys });
+   439→          }
+   440→
+   441→          set({
+   442→            devices: lsDevices,
+   443→            users: lsUsers,
+   444→            logs: lsLogs,
+   445→            settings: lsSettings,
+   446→            isSyncing: false,
+   447→            lastSyncedAt: Date.now(),
+   448→          });
+   449→          return true;
+   450→        } catch (err) {
+   451→          console.error("[Admin Sync] syncFromFirebase failed:", err);
+   452→          set({ isSyncing: false });
+   453→          return false;
+   454→        }
+   455→      },
+   456→
+   457→      subscribeToFirebase: () => {
+   458→        // No real-time listeners — kept for UI compatibility.
+   459→        return () => {};
+   460→      },
+   461→
+   462→      generateKey: (type) => {
+   463→        const prefix = get().settings.licensePrefix;
+   464→        const key = generateLicenseKey(prefix);
+   465→        const newKey: LicenseKey = {
+   466→          key,
+   467→          type,
+   468→          status: "active",
+   469→          createdAt: Date.now(),
+   470→          expiresAt: getExpiryForType(type),
+   471→          deviceIds: [],
+   472→          verifications: 0,
+   473→        };
+   474→        // 1. Update in-memory state + localStorage IMMEDIATELY
+   475→        set((s) => {
+   476→          const next = [newKey, ...s.keys];
+   477→          lsSet(LS_KEYS, next);
+   478→          return { keys: next };
+   479→        });
+   480→        get().addLog("admin_action", `Generated ${type} key: ${key}`);
+   481→        // 2. Sync this ONE key to Firebase (setDoc by key) + record in
+   482→        //    admin_generated_keys so other admin phones discover it.
+   483→        import("./firebase-license").then(({ syncKeyToFirestore }) => {
+   484→          syncKeyToFirestore(newKey).then((ok) => {
+   485→            if (ok) console.log("[Firebase] Key written:", key);
+   486→            else console.log("[Firebase] Key write failed (offline?) — kept in localStorage only");
+   487→          });
+   488→        });
+   489→        import("./admin-firebase-sync").then(({ recordAdminGeneratedKey }) => {
+   490→          recordAdminGeneratedKey(key).catch(() => {});
+   491→        });
+   492→        return key;
+   493→      },
+   494→
+   495→      generateBulkKeys: (count, type) => {
+   496→        const prefix = get().settings.licensePrefix;
+   497→        const newKeys: LicenseKey[] = [];
+   498→        for (let i = 0; i < count; i++) {
+   499→          const key = generateLicenseKey(prefix);
+   500→          newKeys.push({
+   501→            key,
+   502→            type,
+   503→            status: "active",
+   504→            createdAt: Date.now(),
+   505→            expiresAt: getExpiryForType(type),
+   506→            deviceIds: [],
+   507→            verifications: 0,
+   508→          });
+   509→        }
+   510→        // 1. Update in-memory state + localStorage IMMEDIATELY
+   511→        set((s) => {
+   512→          const next = [...newKeys, ...s.keys];
+   513→          lsSet(LS_KEYS, next);
+   514→          return { keys: next };
+   515→        });
+   516→        get().addLog("admin_action", `Generated ${count} bulk ${type} keys`);
+   517→        // 2. Sync each key individually to Firebase (one setDoc per key).
+   518→        import("./firebase-license").then(({ syncKeyToFirestore }) => {
+   519→          Promise.all(newKeys.map((k) => syncKeyToFirestore(k))).then((results) => {
+   520→            const ok = results.filter(Boolean).length;
+   521→            console.log(`[Firebase] Bulk write: ${ok}/${count} keys written`);
+   522→          });
+   523→        });
+   524→        import("./admin-firebase-sync").then(({ recordAdminGeneratedKey }) => {
+   525→          Promise.all(newKeys.map((k) => recordAdminGeneratedKey(k.key))).catch(() => {});
+   526→        });
+   527→        return newKeys.map((k) => k.key);
+   528→      },
+   529→
+   530→      activateKey: (key) => {
+   531→        set((s) => {
+   532→          const next = s.keys.map((k) => (k.key === key ? { ...k, status: "active" as KeyStatus } : k));
+   533→          lsSet(LS_KEYS, next);
+   534→          return { keys: next };
+   535→        });
+   536→        get().addLog("admin_action", `Activated key: ${key}`);
+   537→        // Update ONE key in Firebase
+   538→        import("./firebase-license").then(({ updateKeyStatusInFirestore }) => {
+   539→          updateKeyStatusInFirestore(key, "active");
+   540→        });
+   541→      },
+   542→
+   543→      suspendKey: (key) => {
+   544→        set((s) => {
+   545→          const next = s.keys.map((k) => (k.key === key ? { ...k, status: "suspended" as KeyStatus } : k));
+   546→          lsSet(LS_KEYS, next);
+   547→          return { keys: next };
+   548→        });
+   549→        get().addLog("admin_action", `Suspended key: ${key}`);
+   550→        // Update ONE key in Firebase
+   551→        import("./firebase-license").then(({ updateKeyStatusInFirestore }) => {
+   552→          updateKeyStatusInFirestore(key, "suspended");
+   553→        });
+   554→      },
+   555→
+   556→      deleteKey: (key) => {
+   557→        set((s) => {
+   558→          const next = s.keys.filter((k) => k.key !== key);
+   559→          lsSet(LS_KEYS, next);
+   560→          return { keys: next };
+   561→        });
+   562→        get().addLog("admin_action", `Deleted key: ${key}`);
+   563→        // Delete ONE key from Firebase
+   564→        import("./firebase-license").then(({ deleteKeyFromFirestore }) => {
+   565→          deleteKeyFromFirestore(key);
+   566→        });
+   567→      },
+   568→
+   569→      extendExpiry: (key, days) => {
+   570→        let newExpiry: number | null = null;
+   571→        set((s) => {
+   572→          const next = s.keys.map((k) => {
+   573→            if (k.key !== key) return k;
+   574→            const base = k.expiresAt || Date.now();
+   575→            newExpiry = base + days * 86400000;
+   576→            return { ...k, expiresAt: newExpiry, status: "active" as KeyStatus };
+   577→          });
+   578→          lsSet(LS_KEYS, next);
+   579→          return { keys: next };
+   580→        });
+   581→        get().addLog("admin_action", `Extended ${key} by ${days} days`);
+   582→        // Update ONE key in Firebase
+   583→        if (newExpiry !== null) {
+   584→          import("./firebase-license").then(({ updateKeyFieldsInFirestore }) => {
+   585→            updateKeyFieldsInFirestore(key, { expiresAt: newExpiry, status: "active" });
+   586→          });
+   587→        }
+   588→      },
+   589→
+   590→      resetDevice: (key) => {
+   591→        set((s) => {
+   592→          const next = s.keys.map((k) => (k.key === key ? { ...k, deviceIds: [] } : k));
+   593→          lsSet(LS_KEYS, next);
+   594→          return { keys: next };
+   595→        });
+   596→        get().addLog("admin_action", `Reset device binding for key: ${key}`);
+   597→        // Update ONE key in Firebase
+   598→        import("./firebase-license").then(({ updateKeyFieldsInFirestore }) => {
+   599→          updateKeyFieldsInFirestore(key, { deviceIds: [] });
+   600→        });
+   601→      },
+   602→
+   603→      validateAllKeys: () => {
+   604→        const now = Date.now();
+   605→        const day = 86400000;
+   606→        let fixedCount = 0;
+   607→        const modifiedKeys: LicenseKey[] = [];
+   608→
+   609→        set((s) => {
+   610→          const next = s.keys.map((k) => {
+   611→            let status: KeyStatus = k.status;
+   612→            let expiresAt: number | null = k.expiresAt;
+   613→            let changed = false;
+   614→
+   615→            if (status === "expired") { status = "active"; fixedCount++; changed = true; }
+   616→            if (status === "suspended") { status = "active"; fixedCount++; changed = true; }
+   617→            if (expiresAt !== null && expiresAt !== undefined && expiresAt < now) {
+   618→              if (k.type === "trial") expiresAt = now + 1 * day;
+   619→              else if (k.type === "weekly") expiresAt = now + 7 * day;
+   620→              else if (k.type === "monthly") expiresAt = now + 30 * day;
+   621→              else if (k.type === "lifetime") expiresAt = null;
+   622→              else expiresAt = now + 30 * day;
+   623→              fixedCount++;
+   624→              changed = true;
+   625→            }
+   626→
+   627→            const updated = { ...k, status, expiresAt };
+   628→            if (changed) modifiedKeys.push(updated);
+   629→            return updated;
+   630→          });
+   631→          lsSet(LS_KEYS, next);
+   632→          return { keys: next };
+   633→        });
+   634→
+   635→        // Sync modified keys individually to Firebase (one setDoc per key).
+   636→        if (modifiedKeys.length > 0) {
+   637→          import("./firebase-license").then(({ syncKeyToFirestore }) => {
+   638→            Promise.all(modifiedKeys.map((k) => syncKeyToFirestore(k))).then((results) => {
+   639→              const ok = results.filter(Boolean).length;
+   640→              console.log(`[Firebase] Validate All — synced ${ok}/${modifiedKeys.length} modified keys`);
+   641→            });
+   642→          });
+   643→        }
+   644→
+   645→        get().addLog("admin_action", `Validated all keys — ${fixedCount} keys fixed`);
+   646→        return fixedCount;
+   647→      },
+   648→
+   649→      verifyLicense: async (key, deviceId) => {
+   650→        // Step 0: Check lockout (LOCAL ONLY — no Firebase restore)
+   651→        const { checkLockout, recordFailedAttempt, clearLockout, getRemainingAttempts } = await import("./lockout");
+   652→        const lockStatus = checkLockout();
+   653→        if (lockStatus.locked) {
+   654→          console.log("[License Verify] FAIL: Device is locked. Remaining:", lockStatus.remainingFormatted);
+   655→          return {
+   656→            valid: false,
+   657→            message: `🔒 Too many wrong attempts. App is locked for ${lockStatus.remainingFormatted}. Try again later.`,
+   658→            locked: true,
+   659→            remainingMs: lockStatus.remainingMs,
+   660→          } as any;
+   661→        }
+   662→
+   663→        // Step 1: Clean the key
+   664→        const cleanKey = key.trim().toUpperCase();
+   665→        console.log("[License Verify] Entered key:", cleanKey);
+   666→        console.log("[License Verify] Device ID:", deviceId);
+   667→        console.log("[License Verify] Remaining attempts:", getRemainingAttempts());
+   668→
+   669→        // Step 2: Validate format (CRICB-XXXX-XXXX-XXXX)
+   670→        const keyPattern = /^[A-Z]+-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+   671→        if (!keyPattern.test(cleanKey)) {
+   672→          console.log("[License Verify] FAIL: Invalid format. Expected PREFIX-XXXX-XXXX-XXXX");
+   673→          const state = recordFailedAttempt(cleanKey);
+   674→          const remaining = getRemainingAttempts();
+   675→          if (state.lockedUntil) {
+   676→            return {
+   677→              valid: false,
+   678→              message: `🔒 5 wrong attempts reached. App locked for 1 hour. Try after 60 minutes.`,
+   679→              locked: true,
+   680→            } as any;
+   681→          }
+   682→          return { valid: false, message: `Invalid key format. ${remaining} attempt(s) remaining before 1-hour lock.` };
+   683→        }
+   684→
+   685→        // Step 3: Look up key in LOCAL database (localStorage)
+   686→        const allKeys = get().keys;
+   687→        console.log("[License Verify] Total keys in local database:", allKeys.length);
+   688→        let k = allKeys.find((x) => x.key.toUpperCase() === cleanKey);
+   689→
+   690→        // Step 3b: If not found locally, do a SINGLE-doc Firebase read by key.
+   691→        // This is the ONLY Firebase read in the entire verify flow.
+   692→        if (!k) {
+   693→          console.log("[License Verify] Key not found locally — checking Firebase (single-doc read)...");
+   694→          try {
+   695→            const { fetchKeyFromFirestore } = await import("./firebase-license");
+   696→            const firebaseKey = await fetchKeyFromFirestore(cleanKey);
+   697→            if (firebaseKey) {
+   698→              console.log("[License Verify] ✅ Key found in Firebase:", firebaseKey.key, "| Type:", firebaseKey.type);
+   699→              // Add to local store for future lookups (this session)
+   700→              set((s) => {
+   701→                const next = [firebaseKey, ...s.keys];
+   702→                lsSet(LS_KEYS, next);
+   703→                return { keys: next };
+   704→              });
+   705→              k = firebaseKey;
+   706→            }
+   707→          } catch (err) {
+   708→            console.log("[License Verify] Firebase lookup failed:", err);
+   709→          }
+   710→        }
+   711→
+   712→        if (!k) {
+   713→          console.log("[License Verify] FAIL: Key not found in local OR Firebase database");
+   714→          const failState = recordFailedAttempt(cleanKey);
+   715→          const remaining = getRemainingAttempts();
+   716→          if (failState.lockedUntil) {
+   717→            return { valid: false, message: "🔒 5 wrong attempts reached. App locked for 1 hour.", locked: true } as any;
+   718→          }
+   719→          return { valid: false, message: `Key not found. ${remaining} attempt(s) remaining before 1-hour lock.` };
+   720→        }
+   721→
+   722→        console.log("[License Verify] Key found:", k.key, "| Status:", k.status, "| Type:", k.type);
+   723→
+   724→        // Step 4: Check status — "used" is still VALID (just has device bound)
+   725→        if (k.status === "suspended") {
+   726→          console.log("[License Verify] FAIL: Key is suspended");
+   727→          const failState = recordFailedAttempt(cleanKey);
+   728→          const remaining = getRemainingAttempts();
+   729→          if (failState.lockedUntil) {
+   730→            return { valid: false, message: "🔒 5 wrong attempts reached. App locked for 1 hour.", locked: true } as any;
+   731→          }
+   732→          return { valid: false, message: `Key suspended. ${remaining} attempt(s) remaining.` };
+   733→        }
+   734→
+   735→        if (k.status === "expired") {
+   736→          console.log("[License Verify] FAIL: Key status is expired");
+   737→          const failState = recordFailedAttempt(cleanKey);
+   738→          const remaining = getRemainingAttempts();
+   739→          if (failState.lockedUntil) {
+   740→            return { valid: false, message: "🔒 5 wrong attempts reached. App locked for 1 hour.", locked: true } as any;
+   741→          }
+   742→          return { valid: false, message: `Key expired. ${remaining} attempt(s) remaining.` };
+   743→        }
+   744→
+   745→        // Step 5: Check expiry date
+   746→        if (k.expiresAt && k.expiresAt < Date.now()) {
+   747→          const expiredDate = new Date(k.expiresAt).toLocaleDateString();
+   748→          console.log("[License Verify] FAIL: Key expired on", expiredDate);
+   749→          const failState = recordFailedAttempt(cleanKey);
+   750→          const remaining = getRemainingAttempts();
+   751→          if (failState.lockedUntil) {
+   752→            return { valid: false, message: "🔒 5 wrong attempts reached. App locked for 1 hour.", locked: true } as any;
+   753→          }
+   754→          return { valid: false, message: `Key expired on ${expiredDate}. ${remaining} attempt(s) remaining.` };
+   755→        }
+   756→
+   757→        console.log("[License Verify] Expiry check passed. ExpiresAt:", k.expiresAt ? new Date(k.expiresAt).toLocaleDateString() : "Lifetime");
+   758→
+   759→        // Step 6: Device binding — STRICT 1 KEY = 1 DEVICE
+   760→        if (k.deviceIds.length >= 1 && !k.deviceIds.includes(deviceId)) {
+   761→          console.log("[License Verify] FAIL: Key already bound to another device.");
+   762→          return {
+   763→            valid: false,
+   764→            message: "This key is already activated on another device. Each key can only be used on 1 device. Contact admin to reset."
+   765→          };
+   766→        }
+   767→
+   768→        console.log("[License Verify] Device check passed. Bound devices:", k.deviceIds.length);
+   769→
+   770→        // Step 7: All checks passed — bind device, update status
+   771→        let verifiedKey: LicenseKey | null = null;
+   772→        if (!k.deviceIds.includes(deviceId)) {
+   773→          set((s) => {
+   774→            const next = s.keys.map((x) => {
+   775→              if (x.key !== k!.key) return x;
+   776→              verifiedKey = {
+   777→                ...x,
+   778→                deviceIds: [...x.deviceIds, deviceId],
+   779→                lastVerified: Date.now(),
+   780→                verifications: x.verifications + 1,
+   781→                status: "used" as KeyStatus,
+   782→              };
+   783→              return verifiedKey;
+   784→            });
+   785→            lsSet(LS_KEYS, next);
+   786→            return { keys: next };
+   787→          });
+   788→        } else {
+   789→          set((s) => {
+   790→            const next = s.keys.map((x) => {
+   791→              if (x.key !== k!.key) return x;
+   792→              verifiedKey = {
+   793→                ...x,
+   794→                lastVerified: Date.now(),
+   795→                verifications: x.verifications + 1,
+   796→              };
+   797→              return verifiedKey;
+   798→            });
+   799→            lsSet(LS_KEYS, next);
+   800→            return { keys: next };
+   801→          });
+   802→        }
+   803→
+   804→        // Sync verification back to Firebase (ONE doc, one-shot).
+   805→        if (verifiedKey) {
+   806→          import("./firebase-license").then(({ updateKeyFieldsInFirestore }) => {
+   807→            updateKeyFieldsInFirestore(verifiedKey!.key, {
+   808→              deviceIds: verifiedKey!.deviceIds,
+   809→              lastVerified: verifiedKey!.lastVerified,
+   810→              verifications: verifiedKey!.verifications,
+   811→              status: verifiedKey!.status,
+   812→            });
+   813→          });
+   814→        }
+   815→
+   816→        get().addLog("key_verification", `Key ${cleanKey} verified on ${deviceId} | Type: ${k.type} | Status: ${k.status}`);
+   817→        console.log("[License Verify] ✅ SUCCESS: License verified, type:", k.type);
+   818→        clearLockout();
+   819→        return { valid: true, message: "✅ License Key Verified Successfully", keyType: k.type };
+   820→      },
+   821→
+   822→      unbindDevice: (deviceId) => {
+   823→        set((s) => {
+   824→          const next = {
+   825→            devices: s.devices.filter((d) => d.deviceId !== deviceId),
+   826→            keys: s.keys.map((k) =>
+   827→              k.deviceIds.includes(deviceId)
+   828→                ? { ...k, deviceIds: k.deviceIds.filter((id) => id !== deviceId) }
+   829→                : k
+   830→            ),
+   831→          };
+   832→          lsSet(LS_DEVICES, next.devices);
+   833→          lsSet(LS_KEYS, next.keys);
+   834→          return next;
+   835→        });
+   836→        get().addLog("admin_action", `Unbound device: ${deviceId}`);
+   837→      },
+   838→
+   839→      forceLogout: (deviceId) => {
+   840→        set((s) => {
+   841→          const next = s.devices.map((d) =>
+   842→            d.deviceId === deviceId ? { ...d, lastLogin: 0 } : d
+   843→          );
+   844→          lsSet(LS_DEVICES, next);
+   845→          return { devices: next };
+   846→        });
+   847→        get().addLog("admin_action", `Force logout: ${deviceId}`);
+   848→      },
+   849→
+   850→      banDevice: (deviceId) => {
+   851→        set((s) => {
+   852→          const next = s.devices.map((d) =>
+   853→            d.deviceId === deviceId ? { ...d, status: "banned" as const } : d
+   854→          );
+   855→          lsSet(LS_DEVICES, next);
+   856→          return { devices: next };
+   857→        });
+   858→        get().addLog("admin_action", `Banned device: ${deviceId}`);
+   859→      },
+   860→
+   861→      allowDevice: (deviceId) => {
+   862→        set((s) => {
+   863→          const next = s.devices.map((d) =>
+   864→            d.deviceId === deviceId ? { ...d, status: "allowed" as const } : d
+   865→          );
+   866→          lsSet(LS_DEVICES, next);
+   867→          return { devices: next };
+   868→        });
+   869→        get().addLog("admin_action", `Allowed device: ${deviceId}`);
+   870→      },
+   871→
+   872→      banUser: (id) => {
+   873→        set((s) => {
+   874→          const next = s.users.map((u) => (u.id === id ? { ...u, banned: true } : u));
+   875→          lsSet(LS_USERS, next);
+   876→          return { users: next };
+   877→        });
+   878→        get().addLog("admin_action", `Banned user: ${id}`);
+   879→      },
+   880→
+   881→      unbanUser: (id) => {
+   882→        set((s) => {
+   883→          const next = s.users.map((u) => (u.id === id ? { ...u, banned: false } : u));
+   884→          lsSet(LS_USERS, next);
+   885→          return { users: next };
+   886→        });
+   887→        get().addLog("admin_action", `Unbanned user: ${id}`);
+   888→      },
+   889→
+   890→      deleteUser: (id) => {
+   891→        set((s) => {
+   892→          const next = s.users.filter((u) => u.id !== id);
+   893→          lsSet(LS_USERS, next);
+   894→          return { users: next };
+   895→        });
+   896→        get().addLog("admin_action", `Deleted user: ${id}`);
+   897→      },
+   898→
+   899→      resetUserLicense: (id) => {
+   900→        set((s) => {
+   901→          const next = s.users.map((u) => (u.id === id ? { ...u, license: undefined } : u));
+   902→          lsSet(LS_USERS, next);
+   903→          return { users: next };
+   904→        });
+   905→        get().addLog("admin_action", `Reset license for user: ${id}`);
+   906→      },
+   907→
+   908→      updateSettings: (partial) => {
+   909→        set((s) => {
+   910→          const next = { ...s.settings, ...partial };
+   911→          lsSet(LS_SETTINGS, next);
+   912→          return { settings: next };
+   913→        });
+   914→        get().addLog("admin_action", "Settings updated");
+   915→      },
+   916→
+   917→      toggleFeature: (feature) => {
+   918→        set((s) => {
+   919→          const next = {
+   920→            ...s.settings,
+   921→            teamGenerator: {
+   922→              ...s.settings.teamGenerator,
+   923→              [feature]: !s.settings.teamGenerator[feature],
+   924→            },
+   925→          };
+   926→          lsSet(LS_SETTINGS, next);
+   927→          return { settings: next };
+   928→        });
+   929→        get().addLog("admin_action", `Toggled feature: ${feature}`);
+   930→      },
+   931→
+   932→      sendAnnouncement: (title, message, target) => {
+   933→        const ann: Announcement = {
+   934→          id: uid(),
+   935→          title,
+   936→          message,
+   937→          target,
+   938→          createdAt: Date.now(),
+   939→          sent: true,
+   940→        };
+   941→        set((s) => {
+   942→          const next = [ann, ...s.announcements];
+   943→          lsSet(LS_ANNOUNCEMENTS, next);
+   944→          return { announcements: next };
+   945→        });
+   946→        get().addLog("admin_action", `Announcement sent: ${title} → ${target}`);
+   947→      },
+   948→
+   949→      addLog: (type, message, details) => {
+   950→        const log: ActivityLog = {
+   951→          id: uid(),
+   952→          timestamp: Date.now(),
+   953→          type,
+   954→          message,
+   955→          details,
+   956→        };
+   957→        set((s) => {
+   958→          const next = [log, ...s.logs].slice(0, 500);
+   959→          lsSet(LS_LOGS, next);
+   960→          return { logs: next };
+   961→        });
+   962→      },
+   963→
+   964→      clearLogs: () => {
+   965→        set({ logs: [] });
+   966→        lsSet(LS_LOGS, []);
+   967→      },
+   968→
+   969→      getStats: () => {
+   970→        const { keys, devices, users, logs } = get();
+   971→        const now = Date.now();
+   972→        const todayStart = new Date().setHours(0, 0, 0, 0);
+   973→        return {
+   974→          totalKeys: keys.length,
+   975→          activeKeys: keys.filter((k) => k.status === "active" && (!k.expiresAt || k.expiresAt > now)).length,
+   976→          usedKeys: keys.filter((k) => k.status === "used").length,
+   977→          expiredKeys: keys.filter((k) => k.status === "expired" || (k.expiresAt && k.expiresAt < now)).length,
+   978→          activeDevices: devices.filter((d) => d.status === "allowed").length,
+   979→          todayVerifications: logs.filter((l) => l.type === "key_verification" && l.timestamp >= todayStart).length,
+   980→          totalUsers: users.length,
+   981→          teamsGeneratedToday: logs.filter((l) => l.type === "team_generation" && l.timestamp >= todayStart).length,
+   982→        };
+   983→      },
+   984→    })
+   985→);
+   986→
+   987→/* ----------------------------------------------------------------- *
+   988→ * AUTO-SYNC ON APP LOAD
+   989→ * ----------------------------------------------------------------- *
+   990→ * On first window load we call syncFromFirebase() — this:
+   991→ *   1. Refreshes the in-memory store from localStorage
+   992→ *   2. Fetches admin-generated key strings from the
+   993→ *      admin_generated_keys collection (one fetch, max 50)
+   994→ *   3. For each missing key, does an INDIVIDUAL doc read of
+   995→ *      license_keys/{keyStr} to hydrate the local store
+   996→ *
+   997→ * NO onSnapshot listeners are attached — all reads are one-shot.
+   998→ * ----------------------------------------------------------------- */
+   999→if (typeof window !== "undefined") {
+  1000→  setTimeout(() => {
+  1001→    useAdmin.getState().syncFromFirebase().then((ok) => {
+  1002→      if (ok) console.log("[Admin Store] Initial sync complete (localStorage + Firebase license-only hydration)");
+  1003→      else console.warn("[Admin Store] Initial sync failed — using localStorage seed");
+  1004→    });
+  1005→  }, 100);
+  1006→}
+  1007→
+  1008→/* ---------- License Lock (client-side) ---------- */
+  1009→
+  1010→const LICENSE_STORAGE_KEY = "apna-cricket-license";
+  1011→
+  1012→export interface LicenseState {
+  1013→  verified: boolean;
+  1014→  key: string | null;
+  1015→  deviceId: string;
+  1016→  keyType?: KeyType | null;
+  1017→}
+  1018→
+  1019→export function getDeviceId(): string {
+  1020→  if (typeof window === "undefined") return "server";
+  1021→  let id = localStorage.getItem("apna-cricket-device-id");
+  1022→  if (!id) {
+  1023→    id = "dev_" + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+  1024→    localStorage.setItem("apna-cricket-device-id", id);
+  1025→  }
+  1026→  return id;
+  1027→}
+  1028→
+  1029→export function getLicenseState(): LicenseState {
+  1030→  if (typeof window === "undefined") return { verified: false, key: null, deviceId: "server", keyType: null };
+  1031→  try {
+  1032→    const data = JSON.parse(localStorage.getItem(LICENSE_STORAGE_KEY) || "{}");
+  1033→    return {
+  1034→      verified: !!data.verified,
+  1035→      key: data.key || null,
+  1036→      deviceId: getDeviceId(),
+  1037→      keyType: data.keyType || null,
+  1038→    };
+  1039→  } catch {
+  1040→    return { verified: false, key: null, deviceId: getDeviceId(), keyType: null };
+  1041→  }
+  1042→}
+  1043→
+  1044→export function setLicenseVerified(key: string, keyType?: KeyType | null) {
+  1045→  if (typeof window === "undefined") return;
+  1046→  localStorage.setItem(
+  1047→    LICENSE_STORAGE_KEY,
+  1048→    JSON.stringify({
+  1049→      verified: true,
+  1050→      key,
+  1051→      deviceId: getDeviceId(),
+  1052→      keyType: keyType || null,
+  1053→    })
+  1054→  );
+  1055→}
+  1056→
+  1057→export function clearLicense() {
+  1058→  if (typeof window === "undefined") return;
+  1059→  localStorage.removeItem(LICENSE_STORAGE_KEY);
+  1060→}
+  1061→

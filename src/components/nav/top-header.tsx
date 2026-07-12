@@ -34,21 +34,21 @@ export function TopHeader({ onAdminTrigger }: { onAdminTrigger?: () => void }) {
   }
 
   return (
-    <header className="sticky top-0 z-40 bg-white/80 dark:bg-background/80 backdrop-blur-xl border-b border-amber-600/20">
+    <header className="sticky top-0 z-40 backdrop-blur-xl border-b border-amber-600/30" style={{ background: "rgba(10, 10, 26, 0.92)" }}>
       <div className="max-w-3xl mx-auto px-4 h-16 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
               <button
-                className="p-2 rounded-lg hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors"
+                className="p-2 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors"
                 aria-label="Open menu"
               >
-                <Menu className="w-5 h-5 text-violet-700 dark:text-violet-300" />
+                <Menu className="w-5 h-5 text-amber-600 dark:text-amber-400" />
               </button>
             </SheetTrigger>
             <SheetContent side="left" className="w-[280px] p-0">
               <SheetHeader className="p-4 brand-gradient">
-                <SheetTitle className="text-white flex items-center gap-2">
+                <SheetTitle className="text-black flex items-center gap-2">
                   <BrandLogo size={36} />
                   <span className="text-lg font-black">Apna Cricket</span>
                 </SheetTitle>
@@ -58,18 +58,18 @@ export function TopHeader({ onAdminTrigger }: { onAdminTrigger?: () => void }) {
                   <button
                     key={item.label}
                     onClick={() => handleMenuClick(item)}
-                    className="w-full text-left px-4 py-3 rounded-lg text-sm font-medium hover:bg-violet-50 dark:hover:bg-violet-900/20 text-foreground/80 hover:text-violet-700 dark:hover:text-violet-300 transition-colors flex items-center justify-between group"
+                    className="w-full text-left px-4 py-3 rounded-lg text-sm font-medium hover:bg-amber-50 dark:hover:bg-amber-950/20 text-foreground/80 hover:text-amber-600 dark:hover:text-amber-400 transition-colors flex items-center justify-between group"
                   >
                     {item.label}
                     {"view" in item && item.view && (
-                      <span className="text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full dark:bg-violet-900/40 dark:text-violet-300">
+                      <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full dark:bg-amber-950/40 dark:text-amber-400">
                         Live
                       </span>
                     )}
                   </button>
                 ))}
-                <div className="mt-4 p-4 rounded-xl bg-gradient-to-br from-violet-50 to-pink-50 dark:from-violet-950/40 dark:to-pink-950/40">
-                  <p className="text-xs font-semibold text-violet-700 dark:text-violet-300 mb-1">
+                <div className="mt-4 p-4 rounded-xl bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40">
+                  <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 mb-1">
                     Join our community
                   </p>
                   <p className="text-[11px] text-muted-foreground mb-3">
@@ -103,11 +103,11 @@ export function TopHeader({ onAdminTrigger }: { onAdminTrigger?: () => void }) {
         </div>
 
         <button
-          className="relative p-2 rounded-lg hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors"
+          className="relative p-2 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors"
           aria-label="Notifications"
         >
-          <Bell className="w-5 h-5 text-violet-700 dark:text-violet-300" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-pink-500 rounded-full ring-2 ring-white dark:ring-background animate-pulse-glow" />
+          <Bell className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-amber-500 rounded-full ring-2 ring-white dark:ring-background animate-pulse-glow" />
         </button>
       </div>
     </header>

@@ -295,15 +295,47 @@ async function preVerifyToken(authToken: string, fantasyApp: string, matchId?: s
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+
+    // SECURITY: Server-side license verification
+    const { licenseKey, deviceId } = body;
+    if (!licenseKey || !deviceId) {
+      return NextResponse.json({
+        status: "fail",
+        message: "License key and device ID required",
+        code: "LICENSE_REQUIRED",
+      }, { status: 200 });
+    }
+
+    // Verify license server-side
+    try {
+      const verifyRes = await fetch(`${new URL(request.url).origin}/api/license/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ licenseKey, deviceId, feature: "transfer" }),
+      });
+      const verifyData = await verifyRes.json();
+      if (!verifyData.valid) {
+        return NextResponse.json({
+          status: "fail",
+          message: `License verification failed: ${verifyData.message || "invalid"}`,
+          code: "LICENSE_INVALID",
+        }, { status: 200 });
+      }
+    } catch (verifyErr) {
+      return NextResponse.json({
+        status: "fail",
+        message: "License verification error",
+        code: "LICENSE_VERIFY_ERROR",
+      }, { status: 200 });
+    }
+
     const {
       authToken,
       matchId,
       captain,
       vice_captain,
-      // Also accept camelCase variants (from BulkTransferItem)
       captainId,
       viceCaptainId,
-      // Also accept "vicecaptain" (original APK format, no underscore)
       vicecaptain,
       players,
       fantasyApp,

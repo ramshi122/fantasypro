@@ -22,6 +22,8 @@ import { LineupAlertManager } from "@/components/alerts/lineup-alert-manager";
 import { SplashScreen } from "@/components/splash-screen";
 import { AdminPanel } from "@/components/admin/admin-panel";
 import { LicenseLockOverlay } from "@/components/admin/license-lock";
+import { useLicense } from "@/lib/use-license";
+import { Lock, CheckCircle2 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 
 const SPLASH_KEY = "apna-cricket-splash-shown";
@@ -31,8 +33,10 @@ export default function Home() {
   const isGuest = useAuth((s) => s.isGuest);
   const setGuest = useAuth((s) => s.setGuest);
   const view = useApp((s) => s.view);
+  const setView = useApp((s) => s.setView);
   const [showSplash, setShowSplash] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  const license = useLicense();
 
   // Initialize anti-tampering security on mount
   useEffect(() => {
@@ -84,6 +88,13 @@ export default function Home() {
     return <LoginScreen />;
   }
 
+  // ===== FULL-PAGE LICENSE LOCK =====
+  // Block ALL app access until user has a valid subscription.
+  // No page (Home, Research, My Matches, Profile, etc.) is accessible without license.
+  if (!license.isLicensed) {
+    return <FullPageLicenseLock license={license} />;
+  }
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <TopHeader onAdminTrigger={() => setShowAdmin(true)} />
@@ -125,6 +136,154 @@ export default function Home() {
 
       {/* Lineup Alert Manager — monitors matches for lineup announcements */}
       <LineupAlertManager />
+    </div>
+  );
+}
+
+// ============================================================
+// FULL-PAGE LICENSE LOCK — blocks ALL app access without license
+// ============================================================
+function FullPageLicenseLock({ license }: { license: ReturnType<typeof useLicense> }) {
+  const [keyInput, setKeyInput] = useState("");
+  const [verifying, setVerifying] = useState(false);
+
+  async function handleVerify() {
+    if (!keyInput.trim()) return;
+    setVerifying(true);
+    const result = await license.activate(keyInput.trim());
+    setVerifying(false);
+    if (result?.success) {
+      // License activated — page will auto-unlock via re-render
+    }
+  }
+
+  const features = [
+    "🏆 AI Team Generation (40 teams)",
+    "🧪 AI Research Dashboard (18 modules)",
+    "📡 Live Match Tracking",
+    "👥 Verified Playing XI",
+    "🎯 DT Probability Ranking",
+    "📊 Real-time Career Stats",
+    "🧠 AI Tactical Coach",
+    "💎 Grand League Research",
+  ];
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: "linear-gradient(160deg, #FFFFFF, #F5F7FA)" }}>
+      <div
+        className="max-w-md w-full rounded-3xl p-8"
+        style={{
+          background: "#FFFFFF",
+          border: "2px solid #2563EB",
+          boxShadow: "0 8px 40px rgba(37,99,235,0.15)",
+          borderRadius: "24px",
+        }}
+      >
+        {/* Lock icon */}
+        <div className="text-center mb-6">
+          <div
+            className="w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-4"
+            style={{ background: "#EFF6FF", border: "3px solid #2563EB" }}
+          >
+            <Lock className="w-10 h-10" style={{ color: "#2563EB" }} />
+          </div>
+          <h1 className="text-[24px] font-black" style={{ color: "#111111", fontFamily: "'Orbitron', sans-serif", letterSpacing: "0.05em" }}>
+            SUBSCRIPTION REQUIRED
+          </h1>
+          <p className="text-[15px] mt-2" style={{ color: "#444444" }}>
+            Activate your license key to unlock all features
+          </p>
+        </div>
+
+        {/* Features list */}
+        <div
+          className="rounded-xl p-4 mb-6"
+          style={{ background: "#F5F7FA", border: "1px solid #E5E7EB" }}
+        >
+          <p className="text-[14px] font-black uppercase mb-3" style={{ color: "#2563EB", fontFamily: "'Orbitron', sans-serif" }}>
+            Unlock with subscription:
+          </p>
+          <div className="space-y-2">
+            {features.map((f, i) => (
+              <div key={i} className="flex items-center gap-2 text-[15px]" style={{ color: "#111111" }}>
+                <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "#16A34A" }} />
+                <span>{f}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Price hint */}
+        <div
+          className="rounded-xl p-4 text-center mb-6"
+          style={{ background: "#FFFBEB", border: "1px solid #F59E0B" }}
+        >
+          <p className="text-[18px] font-black" style={{ color: "#F59E0B", fontFamily: "'Orbitron', sans-serif" }}>
+            Starting from ₹49 only
+          </p>
+          <p className="text-[13px] mt-1" style={{ color: "#444444" }}>
+            1 Match · 24 Hour · Weekly · Pro · Elite · Lifetime
+          </p>
+        </div>
+
+        {/* License key input */}
+        <div className="mb-4">
+          <label className="text-[14px] font-black uppercase mb-2 block" style={{ color: "#2563EB", fontFamily: "'Orbitron', sans-serif" }}>
+            License Key
+          </label>
+          <input
+            value={keyInput}
+            onChange={(e) => setKeyInput(e.target.value.toUpperCase())}
+            placeholder="CRICB-XXXX-XXXX-XXXX"
+            className="w-full h-12 px-4 rounded-xl text-[16px] font-mono"
+            style={{
+              background: "#F5F7FA",
+              border: "2px solid #E5E7EB",
+              color: "#111111",
+              outline: "none",
+            }}
+            onKeyDown={(e) => { if (e.key === "Enter") handleVerify(); }}
+            autoFocus
+          />
+        </div>
+
+        {/* Activate button */}
+        <button
+          onClick={handleVerify}
+          disabled={verifying}
+          className="w-full h-14 rounded-xl text-[18px] font-black transition-all active:scale-95"
+          style={{
+            background: "#2563EB",
+            color: "#FFFFFF",
+            border: "none",
+            fontFamily: "'Orbitron', sans-serif",
+            letterSpacing: "0.05em",
+            boxShadow: "0 4px 12px rgba(37,99,235,0.3)",
+          }}
+        >
+          {verifying ? "⏳ VERIFYING..." : "🔑 ACTIVATE NOW"}
+        </button>
+
+        {/* Help */}
+        <div
+          className="rounded-xl p-3 mt-4 text-center"
+          style={{ background: "#EFF6FF", border: "1px solid #2563EB" }}
+        >
+          <p className="text-[14px] font-bold mb-1" style={{ color: "#2563EB" }}>💡 How to get a key?</p>
+          <p className="text-[13px]" style={{ color: "#444444" }}>Contact admin via WhatsApp to purchase a subscription</p>
+        </div>
+
+        {/* Expiry info if licensed but expired */}
+        {license.isExpired && (
+          <div
+            className="rounded-xl p-3 mt-4 text-center"
+            style={{ background: "#FEF2F2", border: "1px solid #DC2626" }}
+          >
+            <p className="text-[14px] font-bold" style={{ color: "#DC2626" }}>⚠️ License Expired</p>
+            <p className="text-[13px] mt-1" style={{ color: "#444444" }}>Your subscription has expired. Activate a new key to continue.</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

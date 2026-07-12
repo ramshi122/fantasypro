@@ -11,15 +11,72 @@ import {
 } from "./admin-store";
 
 /**
+ * Server Time Cache
+ * ==================
+ * Fetches server time from /api/admin/time every 30 seconds.
+ * All expiry checks use this server time — NOT device Date.now().
+ * This ensures all devices show the same expiry countdown.
+ */
+let cachedServerTime: number | null = null;
+let lastServerTimeFetch: number = 0;
+const SERVER_TIME_CACHE_MS = 30_000; // 30 seconds
+
+async function getServerTime(): Promise<number> {
+  // Return cached value if fresh (< 30s old)
+  if (cachedServerTime && Date.now() - lastServerTimeFetch < SERVER_TIME_CACHE_MS) {
+    return cachedServerTime;
+  }
+
+  try {
+    const res = await fetch("/api/admin/time");
+    if (res.ok) {
+      const data = await res.json();
+      if (data.serverTime) {
+        cachedServerTime = data.serverTime;
+        lastServerTimeFetch = Date.now();
+        return data.serverTime;
+      }
+    }
+  } catch {
+    // Network error — use cached or device time
+  }
+
+  return cachedServerTime || Date.now();
+}
+
+// Also check localStorage cache (set by admin-realtime-sync onSnapshot)
+function getCachedServerTime(): number {
+  if (typeof window === "undefined") return Date.now();
+  try {
+    const lsTime = localStorage.getItem("apna-server-time");
+    const lsFetched = localStorage.getItem("apna-server-time-fetched");
+    if (lsTime && lsFetched) {
+      const serverTime = Number(lsTime);
+      const fetchedAt = Number(lsFetched);
+      // If cached within last 60 seconds, use it
+      if (Date.now() - fetchedAt < 60_000) {
+        return serverTime + (Date.now() - fetchedAt);
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return Date.now();
+}
+
+/**
  * useLicense Hook
  * ----------------
  * Tracks license verification status across the app.
  *
  * Features:
- *   - Auto-expires license when expiresAt is reached
+ *   - Auto-expires license when expiresAt is reached (using SERVER TIME)
  *   - Periodic check (every 30s) to auto-lock on expiry
  *   - isLicensed returns false if key is expired
  *   - requireLicense() checks expiry before granting access
+ *
+ * IMPORTANT: Expiry uses SERVER TIME (not device time) so all devices
+ * show the same expiry countdown — no 1-minute difference.
  *
  * Key Tiers:
  *   trial       — basic access (1 day)
@@ -27,6 +84,7 @@ import {
  *   match_full  — 24 hours
  *   weekly      — 7 days
  *   monthly     — pro access (30 days)
+ *   half_yearly — 6 months (180 days)
  *   elite       — FULL access including Elite AI (90 days)
  *   lifetime    — FULL access including Elite AI (forever)
  */
@@ -41,9 +99,9 @@ export function useLicense() {
 
   /**
    * Check if the current license key has expired.
-   * Looks up the key in admin store and checks expiresAt.
-   * FIX: Do NOT auto-clear license on phone lock/unlock.
-   * Only clear if key is genuinely expired or suspended.
+   * Uses SERVER TIME (not device time) for accurate expiry.
+   * SECURITY FIX: If key not in local store, mark as expired (not "keep verified").
+   * Prevents localStorage manipulation to fake license state.
    */
   const checkExpiry = useCallback(() => {
     if (!licenseState.verified || !licenseState.key) {
@@ -54,17 +112,17 @@ export function useLicense() {
     // Find the key in admin store to get expiresAt
     const keyObj = admin.keys.find((k) => k.key === licenseState.key);
     if (!keyObj) {
-      // FIX: Key not found in LOCAL store — but might still be valid in Firebase.
-      // Do NOT auto-clear! The key might be syncing from Firebase.
-      // Only mark as expired if we've tried Firebase sync and still can't find it.
-      // For now, just set a warning but keep verified.
-      console.log("[useLicense] Key not in local store — keeping verified (Firebase sync pending)");
-      setIsExpired(false);
-      return false;
+      // SECURITY FIX: Key not found → DO NOT keep verified.
+      // Previously: "keeping verified (Firebase sync pending)" — this was a loophole!
+      // Now: mark as expired → forces re-verification via Firebase.
+      console.log("[useLicense] Key not in local store — marking expired (security fix)");
+      clearLicense();
+      setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
+      setIsExpired(true);
+      return true;
     }
 
     if (keyObj.status === "suspended") {
-      // Key suspended by admin — auto-clear (confirmed action)
       console.log("[useLicense] Key suspended — auto-clearing");
       clearLicense();
       setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
@@ -72,9 +130,13 @@ export function useLicense() {
       return true;
     }
 
-    if (keyObj.expiresAt && keyObj.expiresAt < Date.now()) {
-      // Key expired — auto-clear (confirmed by timestamp)
-      console.log("[useLicense] Key expired — auto-clearing");
+    // SERVER TIME expiry check — NOT device Date.now()
+    // This ensures all devices show the same expiry countdown
+    const serverTime = getCachedServerTime();
+    if (keyObj.expiresAt && keyObj.expiresAt < serverTime) {
+      console.log("[useLicense] Key expired (server time) — auto-clearing");
+      console.log(`[useLicense] expiresAt: ${new Date(keyObj.expiresAt).toISOString()}`);
+      console.log(`[useLicense] serverTime: ${new Date(serverTime).toISOString()}`);
       clearLicense();
       setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
       setIsExpired(true);
@@ -107,8 +169,13 @@ export function useLicense() {
             setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
             setIsExpired(true);
           } else {
-            // Might be a sync issue — keep verified, don't clear
-            console.log("[useLicense] License check inconclusive — keeping verified");
+            // SECURITY FIX: Don't keep verified on inconclusive results.
+            // Previously: "keeping verified" — this was a loophole!
+            // Now: clear license — forces re-verification
+            console.log("[useLicense] License check inconclusive — clearing (security fix)");
+            clearLicense();
+            setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
+            setIsExpired(true);
           }
         } else if (result.keyType && result.keyType !== licenseState.keyType) {
           // Sync keyType
@@ -131,18 +198,43 @@ export function useLicense() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Periodic expiry check — FIX: Increase to 2 minutes (was 30s — caused slowness)
-  // Also: Only check LOCAL expiry timestamp, NOT full verifyLicense (which hits Firebase)
+  // SERVER TIME SYNC — fetch server time every 30 seconds
+  // This ensures all devices use the same time for expiry checks
   useEffect(() => {
     if (!licenseState.verified) return;
 
-    // Check immediately (local only — fast)
+    // Fetch server time immediately
+    getServerTime().then((time) => {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("apna-server-time", String(time));
+        localStorage.setItem("apna-server-time-fetched", String(Date.now()));
+      }
+    });
+
+    // Refresh server time every 30 seconds
+    const timeInterval = setInterval(async () => {
+      const time = await getServerTime();
+      if (typeof window !== "undefined") {
+        localStorage.setItem("apna-server-time", String(time));
+        localStorage.setItem("apna-server-time-fetched", String(Date.now()));
+      }
+    }, 30_000); // 30 seconds
+
+    return () => clearInterval(timeInterval);
+  }, [licenseState.verified]);
+
+  // Periodic expiry check — every 30 seconds (using SERVER TIME)
+  // This ensures expiry happens at the EXACT same moment on all devices
+  useEffect(() => {
+    if (!licenseState.verified) return;
+
+    // Check immediately
     checkExpiry();
 
-    // Check every 2 minutes (was 30s — too frequent, caused page slowness)
+    // Check every 30 seconds (was 2 minutes — too slow for accurate expiry)
     const interval = setInterval(() => {
       checkExpiry();
-    }, 120000); // 2 minutes
+    }, 30_000); // 30 seconds — ensures expiry within 30s of actual expiry time
 
     return () => clearInterval(interval);
   }, [licenseState.verified, checkExpiry]);
@@ -232,6 +324,7 @@ export function useLicense() {
     licenseKey: licenseState.key,
     licenseKeyType: licenseState.keyType,
     deviceId: licenseState.deviceId,
+    expiresAt: licenseState.expiresAt,
     // Tier flags
     isElite,
     isPro,

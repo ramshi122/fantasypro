@@ -96,9 +96,9 @@ export function HomeScreen() {
 
       {/* Stats strip */}
       <div className="grid grid-cols-3 gap-2">
-        <StatCard label="Accuracy" value="91.2%" gradient="from-violet-500 to-purple-600" />
-        <StatCard label="Premium" value="Software" gradient="from-pink-500 to-rose-600" />
-        <StatCard label="Active" value={displayMatches.length.toString()} gradient="from-sky-500 to-cyan-600" />
+        <StatCard label="Accuracy" value="91.2%" gradient="from-amber-500 to-orange-600" />
+        <StatCard label="Premium" value="Software" gradient="from-yellow-500 to-amber-600" />
+        <StatCard label="Active" value={displayMatches.length.toString()} gradient="from-cyan-500 to-blue-600" />
       </div>
 
       {/* Matches list */}
@@ -124,7 +124,7 @@ export function HomeScreen() {
         </div>
       ) : displayMatches.length === 0 ? (
         <div className="text-center py-12 px-4">
-          <div className="w-14 h-14 mx-auto rounded-full bg-violet-50 dark:bg-violet-900/30 flex items-center justify-center mb-3">
+          <div className="w-14 h-14 mx-auto rounded-full bg-amber-50 dark:bg-amber-950/30 flex items-center justify-center mb-3">
             <span className="text-2xl">📭</span>
           </div>
           <p className="text-sm font-semibold text-foreground mb-1">

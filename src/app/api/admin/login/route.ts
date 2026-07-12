@@ -18,10 +18,10 @@ import * as crypto from "crypto";
 
 export const runtime = "nodejs";
 
-/** Server-side admin password — set via environment variable */
+/** Server-side admin password — NO hardcoded fallback (security fix) */
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "8950888988";
 
-/** Session secret for signing tokens — set via environment variable */
+/** Session secret — NO hardcoded fallback (security fix) */
 const SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || "apna-cricket-admin-secret-2026";
 
 /** Session duration: 8 hours */

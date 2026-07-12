@@ -8,9 +8,9 @@ const BANNERS = [
     title: "Join Apna Cricket Group",
     subtitle: "Instant alerts & expert tips",
     cta: "Join now",
-    gradient: "from-violet-600 via-purple-600 to-fuchsia-600",
+    gradient: "from-amber-600 via-orange-600 to-yellow-600",
     icon: Users,
-    glow: "shadow-violet-500/40",
+    glow: "shadow-amber-500/40",
   },
   {
     title: "Transfer to Dream11",

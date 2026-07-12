@@ -1,0 +1,52 @@
+# 📱 ADMIN APK — Installation Instructions
+
+## Your Admin URL:
+```
+https://fantasypro-olive.vercel.app/admin
+```
+
+## Method 1: Direct Install (Recommended)
+
+1. Open this URL on your Android phone:
+   https://fantasypro-olive.vercel.app/admin
+
+2. In Chrome browser:
+   - Tap the 3 dots menu (⋮)
+   - Select "Add to Home screen"
+   - Name: "ADMIN"
+   - Tap "Add"
+
+3. The ADMIN app icon appears on your home screen
+4. Tap it — opens full-screen like a native APK
+
+## Method 2: PWA Install Prompt
+
+1. Open https://fantasypro-olive.vercel.app/admin in Chrome
+2. Wait 2 seconds — install prompt appears automatically
+3. Tap "Install"
+4. App appears in app drawer + home screen
+
+## Method 3: PWABuilder (Real .apk file)
+
+1. Go to https://www.pwabuilder.com
+2. Enter URL: https://fantasypro-olive.vercel.app
+3. Click "Build My PWA" → Android
+4. Download the .apk file
+5. Install on your phone
+
+## Method 4: Direct Launcher
+
+1. Download `admin-apk.html` from this folder
+2. Open it in any mobile browser
+3. It auto-redirects to your admin panel
+
+## Features:
+✅ Full-screen mode (no browser bar)
+✅ Standalone app icon on home screen
+✅ Same admin panel as web version
+✅ Real-time sync with main app
+✅ Works offline (cached by service worker)
+✅ Same login + 2FA security
+
+## Admin URL: https://fantasypro-olive.vercel.app/admin
+## App Name: ADMIN — Apna Cricket

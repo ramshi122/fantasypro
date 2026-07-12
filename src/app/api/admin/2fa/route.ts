@@ -10,20 +10,32 @@ import {
   disable2FA,
   type TwoFactorConfig,
 } from "@/lib/admin-2fa";
+import { verifySessionToken } from "@/app/api/admin/login/route";
 
 /**
  * Admin 2FA API
+ * SECURITY FIX: All actions now require valid admin session token.
  * POST /api/admin/2fa?action=setup      → generate secret + QR URL
  * POST /api/admin/2fa?action=enable     → verify token + enable {token, secret}
  * POST /api/admin/2fa?action=verify     → verify token (login) {token}
  * POST /api/admin/2fa?action=disable    → disable 2FA
  * GET  /api/admin/2fa                   → status check
- *
- * NOTE: This API stores config in localStorage on the calling client.
- * For server-side enforcement, the client must POST the token here.
  */
 
-export async function GET() {
+/** Verify admin session token from request */
+function checkAdminAuth(request: Request): boolean {
+  const authHeader = request.headers.get("authorization");
+  const adminToken = authHeader?.replace("Bearer ", "") ||
+    new URL(request.url).searchParams.get("adminToken");
+  if (!adminToken) return false;
+  return verifySessionToken(adminToken);
+}
+
+export async function GET(request: Request) {
+  // SECURITY: Require admin auth
+  if (!checkAdminAuth(request)) {
+    return NextResponse.json({ status: "fail", message: "Unauthorized" }, { status: 401 });
+  }
   return NextResponse.json({
     status: "success",
     enabled: is2FAEnabled(),
@@ -32,6 +44,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    // SECURITY: Require admin auth for all 2FA actions
+    if (!checkAdminAuth(request)) {
+      return NextResponse.json({ status: "fail", message: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await request.json();
     const { action } = body;
 

@@ -215,8 +215,36 @@ function generateLicenseKey(prefix: string = LICENSE_PREFIX_DEFAULT): string {
   return `${prefix}-${randomKeySegment()}-${randomKeySegment()}-${randomKeySegment()}`;
 }
 
+/**
+ * Get expiry timestamp for a key type.
+ *
+ * Uses server time if available (from localStorage cache set by
+ * admin-realtime-sync onSnapshot listener), otherwise falls back
+ * to device time.
+ *
+ * This ensures keys generated on different devices have consistent
+ * expiry times (within 30 seconds of each other).
+ */
 export function getExpiryForType(type: KeyType): number | null {
-  const now = Date.now();
+  // Try to use cached server time
+  let now = Date.now();
+  if (typeof window !== "undefined") {
+    try {
+      const lsTime = localStorage.getItem("apna-server-time");
+      const lsFetched = localStorage.getItem("apna-server-time-fetched");
+      if (lsTime && lsFetched) {
+        const serverTime = Number(lsTime);
+        const fetchedAt = Number(lsFetched);
+        // If cached within last 60 seconds, use server time + elapsed
+        if (Date.now() - fetchedAt < 60_000) {
+          now = serverTime + (Date.now() - fetchedAt);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const day = 86400000;
   const hour = 3600000;
   switch (type) {
@@ -403,48 +431,42 @@ export const useAdmin = create<AdminState>()((set, get) => ({
       syncFromFirebase: async () => {
         set({ isSyncing: true });
         try {
-          // 1. Refresh localStorage snapshot into the in-memory store
+          // REAL-TIME SYNC: Fetch ALL admin data from Firestore (source of truth)
+          const { fullSyncFromFirestore } = await import("./admin-realtime-sync");
+          const synced = await fullSyncFromFirestore();
+
+          // Update in-memory store with Firestore data (or fallback to localStorage)
           const lsKeys = lsGet<LicenseKey[]>(LS_KEYS, []);
           const lsDevices = lsGet<Device[]>(LS_DEVICES, []);
           const lsUsers = lsGet<User[]>(LS_USERS, []);
           const lsLogs = lsGet<ActivityLog[]>(LS_LOGS, []);
           const lsSettings = lsGet<AdminSettings>(LS_SETTINGS, DEFAULT_SETTINGS);
 
-          // 2. Discover admin-generated keys (from other devices) via the
-          //    admin_generated_keys collection (single fetch of key strings,
-          //    NOT a full collection download of license_keys). For each
-          //    missing key, do an INDIVIDUAL fetchKeyFromFirestore read.
-          try {
-            const { fetchAdminGeneratedKeys } = await import("./admin-firebase-sync");
-            const { fetchKeyFromFirestore } = await import("./firebase-license");
-            const keyStrs = await fetchAdminGeneratedKeys(50);
-            const existing = new Set(get().keys.map((k) => k.key));
-            const missing = keyStrs.filter((s) => !existing.has(s));
-            const hydrated: LicenseKey[] = [];
-            for (const s of missing) {
-              const k = await fetchKeyFromFirestore(s);
-              if (k) hydrated.push(k);
-            }
-            if (hydrated.length > 0) {
-              const merged = [...hydrated, ...lsKeys];
-              lsSet(LS_KEYS, merged);
-              set({ keys: merged });
-              console.log(`[Admin Sync] Hydrated ${hydrated.length} admin-generated keys from Firebase`);
-            } else {
-              set({ keys: lsKeys });
-            }
-          } catch (err) {
-            console.warn("[Admin Sync] Firebase admin-key hydration failed:", err);
-            set({ keys: lsKeys });
-          }
+          const keys = synced.keys || lsKeys;
+          const devices = synced.devices || lsDevices;
+          const users = synced.users || lsUsers;
+          const logs = synced.logs || lsLogs;
+          const settings = synced.settings || lsSettings;
+
+          // Cache to localStorage (for offline fallback)
+          lsSet(LS_KEYS, keys);
+          lsSet(LS_DEVICES, devices);
+          lsSet(LS_USERS, users);
+          lsSet(LS_LOGS, logs);
+          lsSet(LS_SETTINGS, settings);
 
           set({
-            devices: lsDevices,
-            users: lsUsers,
-            logs: lsLogs,
-            settings: lsSettings,
+            keys,
+            devices,
+            users,
+            logs,
+            settings,
             isSyncing: false,
             lastSyncedAt: Date.now(),
+          });
+
+          console.log("[Admin Sync] ✅ Full sync complete:", {
+            keys: keys.length, devices: devices.length, users: users.length,
           });
           return true;
         } catch (err) {
@@ -455,8 +477,67 @@ export const useAdmin = create<AdminState>()((set, get) => ({
       },
 
       subscribeToFirebase: () => {
-        // No real-time listeners — kept for UI compatibility.
-        return () => {};
+        // REAL-TIME SYNC: onSnapshot listeners for ALL admin data
+        // When Admin A changes data → Firestore updates → Admin B/C/D
+        // receive update INSTANTLY (no refresh needed)
+        let unsub: (() => void) | null = null;
+
+        (async () => {
+          try {
+            const { subscribeToAdminData, initNetworkReconnectListener } = await import("./admin-realtime-sync");
+
+            // Init network reconnect handler
+            initNetworkReconnectListener();
+
+            unsub = subscribeToAdminData({
+              onKeysUpdate: (keys) => {
+                lsSet(LS_KEYS, keys);
+                set({ keys, lastSyncedAt: Date.now() });
+              },
+              onDevicesUpdate: (devices) => {
+                lsSet(LS_DEVICES, devices);
+                set({ devices });
+              },
+              onUsersUpdate: (users) => {
+                lsSet(LS_USERS, users);
+                set({ users });
+              },
+              onLogsUpdate: (logs) => {
+                lsSet(LS_LOGS, logs);
+                set({ logs });
+              },
+              onSettingsUpdate: (settings) => {
+                lsSet(LS_SETTINGS, settings);
+                set({ settings });
+              },
+              onAnnouncementsUpdate: (announcements) => {
+                set({ announcements });
+              },
+              onServerTimeUpdate: (serverTime) => {
+                // Store server time for expiry calculations
+                if (typeof window !== "undefined") {
+                  localStorage.setItem("apna-server-time", String(serverTime));
+                  localStorage.setItem("apna-server-time-fetched", String(Date.now()));
+                }
+              },
+              onError: (err) => {
+                console.error("[Admin Sync] Real-time listener error:", err);
+              },
+            });
+
+            set({ isSubscribed: true });
+            console.log("[Admin Sync] ✅ Real-time listeners active");
+          } catch (err) {
+            console.error("[Admin Sync] Failed to subscribe:", err);
+          }
+        })();
+
+        return () => {
+          if (unsub) {
+            try { unsub(); } catch { /* ignore */ }
+          }
+          set({ isSubscribed: false });
+        };
       },
 
       generateKey: (type) => {
@@ -488,6 +569,11 @@ export const useAdmin = create<AdminState>()((set, get) => ({
         });
         import("./admin-firebase-sync").then(({ recordAdminGeneratedKey }) => {
           recordAdminGeneratedKey(key).catch(() => {});
+        });
+        // 3. REAL-TIME SYNC: Push all keys to admin_data/keys doc
+        //    so all admin devices get the update via onSnapshot
+        import("./admin-realtime-sync").then(({ syncKeysToFirestore }) => {
+          syncKeysToFirestore(get().keys).catch(() => {});
         });
         return key;
       },
@@ -912,6 +998,10 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           return { settings: next };
         });
         get().addLog("admin_action", "Settings updated");
+        // REAL-TIME SYNC: Push settings to Firestore
+        import("./admin-realtime-sync").then(({ syncSettingsToFirestore }) => {
+          syncSettingsToFirestore(get().settings).catch(() => {});
+        });
       },
 
       toggleFeature: (feature) => {
@@ -927,6 +1017,10 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           return { settings: next };
         });
         get().addLog("admin_action", `Toggled feature: ${feature}`);
+        // REAL-TIME SYNC: Push settings to Firestore
+        import("./admin-realtime-sync").then(({ syncSettingsToFirestore }) => {
+          syncSettingsToFirestore(get().settings).catch(() => {});
+        });
       },
 
       sendAnnouncement: (title, message, target) => {
@@ -958,6 +1052,10 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           const next = [log, ...s.logs].slice(0, 500);
           lsSet(LS_LOGS, next);
           return { logs: next };
+        });
+        // REAL-TIME SYNC: Push logs to Firestore
+        import("./admin-realtime-sync").then(({ syncLogsToFirestore }) => {
+          syncLogsToFirestore(get().logs).catch(() => {});
         });
       },
 

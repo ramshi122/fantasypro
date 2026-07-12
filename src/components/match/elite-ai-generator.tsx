@@ -852,7 +852,7 @@ function RankedTeamCard({
   canDream11?: boolean;
   canMy11?: boolean;
 }) {
-  const { rank, team, efv, aiScore, riskLevel, strategy, reasoning, captainReason, vcReason } = rankedTeam;
+  const { rank, team, efv, aiScore, riskLevel, strategy, reasoning, captainReason, vcReason, hackTier, hackScore } = rankedTeam;
 
   const rankColor =
     rank === 1 ? "from-amber-400 to-yellow-500" :
@@ -908,6 +908,17 @@ function RankedTeamCard({
         <div className="text-right">
           <p className="text-xs font-black text-white tabular-nums">EFV {efv.toFixed(1)}</p>
           <p className="text-[10px] text-white/80">AI: {aiScore}/100</p>
+          {hackTier && (
+            <span className={cn(
+              "inline-block text-[8px] font-black px-1.5 py-0.5 rounded-full mt-0.5",
+              hackTier === "S" && "bg-red-500 text-white",
+              hackTier === "A" && "bg-amber-500 text-white",
+              hackTier === "B" && "bg-sky-500 text-white",
+              hackTier === "C" && "bg-slate-500 text-white",
+            )}>
+              🧠 HACK {hackTier} ({hackScore})
+            </span>
+          )}
         </div>
       </div>
 

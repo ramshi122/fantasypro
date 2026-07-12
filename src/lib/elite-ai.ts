@@ -44,6 +44,7 @@
 import type { MatchPlayer, TeamRow } from "./api";
 import { roleFromPlayerType } from "./format";
 import { calculateWinProbability, type WinProbability } from "./win-probability";
+import { calculateHackScores, getHackTierMultiplier } from "./hack-algorithms";
 
 /* ============== Types ============== */
 
@@ -98,6 +99,10 @@ export interface EliteRankedTeam {
   reasoning: string;
   captainReason: string;
   vcReason: string;
+  /** Hack Engine tier for captain — S/A/B/C */
+  hackTier?: string;
+  /** Hack Engine total score for captain — 0-100 */
+  hackScore?: number;
 }
 
 export interface EliteGenerateResult {
@@ -155,12 +160,15 @@ function avg(nums: number[]): number {
 /**
  * Calculate EFV for a single player.
  *
- * EFV = base_value × form_factor × role_weight × venue_factor
+ * EFV = base_value × form_factor × role_weight × venue_factor × HACK_BOOST
  *
  * - base_value: derived from sel% (crowd wisdom)
  * - form_factor: derived from credits (higher credits = better recent form)
  * - role_weight: AR gets bonus (dual scoring), BAT/BOWL normal, WK slight bonus
  * - venue_factor: not available without venue data, defaults to 1.0
+ * - HACK_BOOST: 10 AI algorithms (reverse eng, ownership, DNA, form cycle,
+ *   impact player, weather, pace race, ice cold, toss, live score)
+ *   S-tier (85+): +35% boost, A-tier: +25%, B-tier: +10%, C-tier: -10%
  */
 export function calculatePlayerEFV(p: MatchPlayer): number {
   const sel = selPct(p);
@@ -185,7 +193,31 @@ export function calculatePlayerEFV(p: MatchPlayer): number {
   // Differential bonus: low-sel% players get a small upside bonus (GL value)
   const diffBonus = sel < 15 ? 1.10 : sel < 30 ? 1.05 : 1.00;
 
-  return baseValue * formFactor * roleWeight * diffBonus * 100;
+  // === HACK ENGINE BOOST (10 AI algorithms) ===
+  // Integrates hack scores into EFV for better team generation
+  let hackBoost = 1.0;
+  try {
+    const hackScores = calculateHackScores({
+      id: String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? ""),
+      name: p.name || "",
+      team: p.team_name || "",
+      role: role,
+      roleShort: role,
+      captain: false,
+      wicketKeeper: role === "WK",
+    });
+    // Apply boost: S-tier +35%, A-tier +25%, B-tier +10%, C-tier -10%
+    switch (hackScores.tier) {
+      case "S": hackBoost = 1.35; break;
+      case "A": hackBoost = 1.25; break;
+      case "B": hackBoost = 1.10; break;
+      case "C": hackBoost = 0.90; break;
+    }
+  } catch {
+    // If hack algorithms fail, use default boost (1.0)
+  }
+
+  return baseValue * formFactor * roleWeight * diffBonus * hackBoost * 100;
 }
 
 /* ============== 25 Analysis Checks ============== */
@@ -1849,13 +1881,19 @@ export function generateEliteTeams(
   }
 
   // === Generate role compositions proportional to count ===
-  // Strategy split: 25% safe, 30% balanced, 25% differential, 20% grand-league
-  const safeCount = Math.max(1, Math.round(teamCount * 0.25));
-  const balancedCount = Math.max(1, Math.round(teamCount * 0.30));
-  const diffCount = Math.max(1, Math.round(teamCount * 0.25));
-  const glCount = Math.max(0, teamCount - safeCount - balancedCount - diffCount);
+  // Strategy split: 1 MAX WIN (rank 1), 25% safe, 30% balanced, 25% differential, 20% GL
+  // Rank 1 = MAXIMUM WIN PROBABILITY — strongest possible team
+  const maxWinCount = 1; // First team = MAX WIN
+  const remainingCount = teamCount - maxWinCount;
+  const safeCount = Math.max(1, Math.round(remainingCount * 0.25));
+  const balancedCount = Math.max(1, Math.round(remainingCount * 0.30));
+  const diffCount = Math.max(1, Math.round(remainingCount * 0.25));
+  const glCount = Math.max(0, remainingCount - safeCount - balancedCount - diffCount);
 
   // Role composition templates per strategy (WK, BAT, AR, BOWL — sums to 11)
+  // MAX WIN template — best balance for maximum win probability
+  const maxWinTemplate = { WK: 1, BAT: 4, AR: 3, BOWL: 3, label: "MAX WIN — Ultimate balanced" };
+
   const safeTemplates = [
     { WK: 1, BAT: 4, AR: 3, BOWL: 3, label: "Safe — BAT-heavy core" },
     { WK: 1, BAT: 5, AR: 2, BOWL: 3, label: "Safe — Top-order blast" },
@@ -1886,7 +1924,10 @@ export function generateEliteTeams(
   ];
 
   // Build the full composition list for this run
+  // FIRST team = MAX WIN (strongest possible), then safe/balanced/diff/GL
   const roleCompositions: Array<{ WK: number; BAT: number; AR: number; BOWL: number; strategy: EliteRankedTeam["strategy"]; label: string }> = [];
+  // Add MAX WIN team first
+  roleCompositions.push({ ...maxWinTemplate, strategy: "safe" });
   for (let i = 0; i < safeCount; i++) roleCompositions.push({ ...safeTemplates[i % safeTemplates.length], strategy: "safe" });
   for (let i = 0; i < balancedCount; i++) roleCompositions.push({ ...balancedTemplates[i % balancedTemplates.length], strategy: "balanced" });
   for (let i = 0; i < diffCount; i++) roleCompositions.push({ ...diffTemplates[i % diffTemplates.length], strategy: "differential" });
@@ -1901,6 +1942,7 @@ export function generateEliteTeams(
 
   for (let i = 0; i < roleCompositions.length; i++) {
     const cfg = roleCompositions[i];
+    const isMaxWin = i === 0; // First team = MAX WIN
     // FIX: Shift rotation EVERY team (not every 4) for maximum diversity
     // Each team gets a unique offset based on its index
     const rotationOffset = i; // shifts every team
@@ -1911,7 +1953,50 @@ export function generateEliteTeams(
     const team: MatchPlayer[] = [];
     let roleFailed = false;
 
-    // Pick strategy: safe → top EFV; differential → mix top + low-sel
+    // === MAX WIN TEAM: Pick TOP S-tier players by hack-boosted EFV ===
+    if (isMaxWin) {
+      for (const role of ["WK", "BAT", "AR", "BOWL"] as const) {
+        const need = cfg[role];
+        const poolForRole = byRole[role];
+        if (poolForRole.length < need) {
+          // Fallback: borrow from AR
+          const borrow = role !== "AR" ? byRole.AR : byRole.BAT;
+          const borrowed = borrow.slice(0, need - poolForRole.length);
+          team.push(...poolForRole.slice(0, poolForRole.length), ...borrowed);
+        } else {
+          // Sort by hack-boosted EFV (highest first) — pick the BEST players
+          const sortedByHackEFV = [...poolForRole].sort((a, b) => {
+            const efvA = calculatePlayerEFV(a) * getHackTierMultiplier(
+              calculateHackScores({
+                id: String(a.player_fixed_id ?? a.pl_id ?? a.pid ?? a.name ?? ""),
+                name: a.name || "",
+                team: a.team_name || "",
+                roleShort: role,
+                wicketKeeper: role === "WK",
+              }).tier
+            );
+            const efvB = calculatePlayerEFV(b) * getHackTierMultiplier(
+              calculateHackScores({
+                id: String(b.player_fixed_id ?? b.pl_id ?? b.pid ?? b.name ?? ""),
+                name: b.name || "",
+                team: b.team_name || "",
+                roleShort: role,
+                wicketKeeper: role === "WK",
+              }).tier
+            );
+            return efvB - efvA;
+          });
+          // Pick top N players (NO shuffle — best of the best)
+          team.push(...sortedByHackEFV.slice(0, need));
+        }
+      }
+
+      if (team.length !== 11) continue;
+
+      // Skip dedup for MAX WIN — it's the best team, duplicates don't matter
+      // Skip similarity check — Rank 1 should be the strongest, even if similar to others
+    } else {
+      // Normal teams: use shuffle + strategy-based selection
     for (const role of ["WK", "BAT", "AR", "BOWL"] as const) {
       const need = cfg[role];
       let poolForRole = byRole[role];
@@ -1981,6 +2066,7 @@ export function generateEliteTeams(
         team.push(...top, ...contraPool.slice(0, contraCount));
       }
     }
+    } // end else (normal teams)
 
     if (roleFailed || team.length !== 11) continue;
 
@@ -2043,8 +2129,9 @@ export function generateEliteTeams(
       }
     }
 
-    // Dedup check — try multiple swaps to make unique
+    // Dedup check — MAX WIN team skips dedup (it's the best, duplicates OK)
     let teamKey = team.map(playerId).sort().join("|");
+    if (!isMaxWin) {
     let dedupAttempts = 0;
     while (usedTeamKeys.has(teamKey) && dedupAttempts < 10) {
       // Force a swap to make unique — try swapping different roles each time
@@ -2108,37 +2195,60 @@ export function generateEliteTeams(
       if (usedTeamKeys.has(teamKey)) continue; // still duplicate after swaps
       usedTeamKeys.add(teamKey);
     }
+    } // end if (!isMaxWin)
+    usedTeamKeys.add(teamKey);
 
-    // Pick C/VC based on strategy
+    // Pick C/VC based on strategy + HACK TIER
+    // Hack Engine: S-tier players get priority for C/VC (35% boost)
     let captain: MatchPlayer;
     let viceCaptain: MatchPlayer;
 
+    // === HACK-BOOSTED C/VC SELECTION ===
+    // Sort by hack-boosted EFV (combines original EFV + hack tier multiplier)
+    const hackGetTierMultiplier = (p: MatchPlayer): number => {
+      try {
+        const role = roleOf(p);
+        const scores = calculateHackScores({
+          id: String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? ""),
+          name: p.name || "",
+          team: p.team_name || "",
+          roleShort: role,
+          wicketKeeper: role === "WK",
+        });
+        return getHackTierMultiplier(scores.tier);
+      } catch {
+        return 1.0;
+      }
+    };
+
+    // Sort team by hack-boosted EFV (EFV × hack tier multiplier)
+    const sortedByHackEFV = [...team].sort((a, b) => {
+      const efvA = calculatePlayerEFV(a) * hackGetTierMultiplier(a);
+      const efvB = calculatePlayerEFV(b) * hackGetTierMultiplier(b);
+      return efvB - efvA;
+    });
+
     if (cfg.strategy === "safe") {
-      // C = top EFV, VC = 2nd top EFV
-      const sorted = [...team].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
-      captain = sorted[0];
-      viceCaptain = sorted[1];
+      // C = top hack-boosted EFV, VC = 2nd
+      captain = sortedByHackEFV[0];
+      viceCaptain = sortedByHackEFV[1];
     } else if (cfg.strategy === "balanced") {
-      // C = top EFV, VC = 3rd top (for diversity)
-      const sorted = [...team].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
-      captain = sorted[0];
-      viceCaptain = sorted[2] || sorted[1];
+      // C = top, VC = 3rd (for diversity)
+      captain = sortedByHackEFV[0];
+      viceCaptain = sortedByHackEFV[2] || sortedByHackEFV[1];
     } else if (cfg.strategy === "differential") {
-      // C = 2nd top (contrarian captain), VC = top
-      const sorted = [...team].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
-      captain = sorted[1] || sorted[0];
-      viceCaptain = sorted[0];
+      // C = 2nd (contrarian captain), VC = top
+      captain = sortedByHackEFV[1] || sortedByHackEFV[0];
+      viceCaptain = sortedByHackEFV[0];
     } else {
-      // grand-league: C = mid EFV (3rd), VC = 2nd
-      const sorted = [...team].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
-      captain = sorted[2] || sorted[0];
-      viceCaptain = sorted[1] || sorted[0];
+      // grand-league: C = 3rd, VC = 2nd
+      captain = sortedByHackEFV[2] || sortedByHackEFV[0];
+      viceCaptain = sortedByHackEFV[1] || sortedByHackEFV[0];
     }
 
     // Ensure C ≠ VC
     if (playerId(captain) === playerId(viceCaptain)) {
-      const sorted = [...team].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
-      viceCaptain = sorted.find((p) => playerId(p) !== playerId(captain)) || sorted[1];
+      viceCaptain = sortedByHackEFV.find((p) => playerId(p) !== playerId(captain)) || sortedByHackEFV[1];
     }
 
     const cvPair = `${playerId(captain)}|${playerId(viceCaptain)}`;
@@ -2191,15 +2301,47 @@ export function generateEliteTeams(
     };
 
     // Reasoning (rank assigned later, use placeholder)
-    const reasoning = `${cfg.label}. Team EFV: ${teamEFV.toFixed(1)}. ` +
-      `Avg sel%: ${teamSelAvg.toFixed(1)}%. Strategy: ${cfg.strategy.toUpperCase()}. ` +
-      `${riskLevel === "low" ? "Best for small leagues." : riskLevel === "medium" ? "Best for mid leagues." : "Best for grand leagues."}`;
+    // Include Hack Engine tier info in reasoning
+    let hackInfo = "";
+    try {
+      const capRole = roleOf(captain);
+      const capHack = calculateHackScores({
+        id: String(captain.player_fixed_id ?? captain.pl_id ?? captain.pid ?? captain.name ?? ""),
+        name: captain.name || "",
+        team: captain.team_name || "",
+        roleShort: capRole,
+        wicketKeeper: capRole === "WK",
+      });
+      hackInfo = ` | Hack: ${capHack.tier}-tier (${capHack.total}/100)`;
+    } catch { /* ignore */ }
 
-    const captainReason = `C: ${playerName(captain)} — EFV ${captainEFV.toFixed(1)}, sel% ${selPct(captain).toFixed(1)}%. ` +
-      `${cfg.strategy === "safe" ? "Top safe pick — consistent scorer." : cfg.strategy === "balanced" ? "Balanced pick — good floor + ceiling." : "Contrarian pick — GL upside."}`;
+    const reasoning = `${cfg.label}. Team EFV: ${teamEFV.toFixed(1)}. ` +
+      `Avg sel%: ${teamSelAvg.toFixed(1)}%. Strategy: ${cfg.strategy.toUpperCase()}.` +
+      hackInfo +
+      ` ${riskLevel === "low" ? "Best for small leagues." : riskLevel === "medium" ? "Best for mid leagues." : "Best for grand leagues."}`;
+
+    const captainReason = `C: ${playerName(captain)} — EFV ${captainEFV.toFixed(1)}, sel% ${selPct(captain).toFixed(1)}%.` +
+      hackInfo +
+      ` ${cfg.strategy === "safe" ? "Top safe pick — consistent scorer." : cfg.strategy === "balanced" ? "Balanced pick — good floor + ceiling." : "Contrarian pick — GL upside."}`;
 
     const vcReason = `VC: ${playerName(viceCaptain)} — EFV ${vcEFV.toFixed(1)}, sel% ${selPct(viceCaptain).toFixed(1)}%. ` +
       `${cfg.strategy === "safe" ? "Safe VC — high floor." : cfg.strategy === "balanced" ? "Diversified VC." : "Differential VC — max upside."}`;
+
+    // Get hack tier/score for captain (for UI badge)
+    let capHackTier = "";
+    let capHackScore = 0;
+    try {
+      const capRole = roleOf(captain);
+      const capHack = calculateHackScores({
+        id: String(captain.player_fixed_id ?? captain.pl_id ?? captain.pid ?? captain.name ?? ""),
+        name: captain.name || "",
+        team: captain.team_name || "",
+        roleShort: capRole,
+        wicketKeeper: capRole === "WK",
+      });
+      capHackTier = capHack.tier;
+      capHackScore = capHack.total;
+    } catch { /* ignore */ }
 
     rankedTeams.push({
       rank: i + 1, // temporary, will be reassigned after sort
@@ -2211,6 +2353,8 @@ export function generateEliteTeams(
       reasoning,
       captainReason,
       vcReason,
+      hackTier: capHackTier,
+      hackScore: capHackScore,
     });
   }
 

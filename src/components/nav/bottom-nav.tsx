@@ -16,7 +16,7 @@ export function BottomNav() {
   const setView = useApp((s) => s.setView);
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-violet-100 dark:border-violet-900/30 bg-white/90 dark:bg-background/90 backdrop-blur-xl safe-area-bottom">
+    <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-amber-100 dark:border-amber-900/30 bg-white/90 dark:bg-background/90 backdrop-blur-xl safe-area-bottom">
       <div className="max-w-3xl mx-auto px-2 py-1.5 flex items-center justify-around">
         {ITEMS.map((item) => {
           const active = view === item.view ||
@@ -28,14 +28,14 @@ export function BottomNav() {
               onClick={() => setView(item.view)}
               className={cn(
                 "relative flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all min-w-[64px]",
-                active && "bg-violet-50 dark:bg-violet-900/30"
+                active && "bg-amber-50 dark:bg-amber-950/30"
               )}
             >
               <Icon
                 className={cn(
                   "w-5 h-5 transition-colors",
                   active
-                    ? "text-violet-700 dark:text-violet-300"
+                    ? "text-amber-600 dark:text-amber-400"
                     : "text-muted-foreground"
                 )}
                 strokeWidth={active ? 2.5 : 2}
@@ -44,7 +44,7 @@ export function BottomNav() {
                 className={cn(
                   "text-[10px] font-medium transition-colors",
                   active
-                    ? "text-violet-700 dark:text-violet-300"
+                    ? "text-amber-600 dark:text-amber-400"
                     : "text-muted-foreground"
                 )}
               >

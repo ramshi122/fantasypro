@@ -16,40 +16,80 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { ShopVideoAd } from "@/components/ads/shop-video-ad";
-import { CricbuzzResearch } from "@/components/pages/cricbuzz-research";
+import { TitanResearch } from "@/components/pages/titan-research";
 import { useLicense } from "@/lib/use-license";
 
 export function ResearchScreen() {
   const license = useLicense();
 
   return (
-    <div className="px-4 py-4 pb-24 space-y-4">
-      {/* Header */}
-      <div className="brand-gradient rounded-3xl p-5 text-white shadow-lg">
+    <div className="pb-24 space-y-4" style={{ background: "var(--bg)", minHeight: "100vh" }}>
+      {/* Header — V77 theme (dark navy + gold + cyan) */}
+      <div
+        className="rounded-2xl p-5 shadow-lg"
+        style={{
+          background: "linear-gradient(160deg, #111520, #06090e)",
+          border: "1px solid var(--b1)",
+          borderBottom: "3px solid var(--gold)",
+          boxShadow: "var(--sh-depth)",
+        }}
+      >
         <div className="flex items-center gap-2 mb-1">
-          <Telescope className="w-4 h-4" />
-          <h1 className="text-lg font-bold">Research</h1>
+          <Telescope className="w-4 h-4" style={{ color: "var(--cyan)" }} />
+          <h1 className="text-lg font-bold" style={{ color: "var(--gold)", fontFamily: "'Orbitron', sans-serif", letterSpacing: "0.1em" }}>
+            RESEARCH
+          </h1>
           {license.isLicensed ? (
-            <span className="ml-auto text-[9px] bg-emerald-400 text-emerald-950 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
-              <Shield className="w-3 h-3" /> {license.licenseKeyType?.toUpperCase()}
+            <span
+              className="ml-auto text-[9px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1"
+              style={{
+                background: "rgba(56,224,123,0.15)",
+                color: "var(--green)",
+                border: "1px solid var(--green)",
+                fontFamily: "'Orbitron', sans-serif",
+              }}
+            >
+              <Shield className="w-3 h-3" /> {license.licenseKeyType?.toUpperCase() || "ACTIVE"}
             </span>
           ) : (
-            <span className="ml-auto text-[9px] bg-red-400 text-red-950 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+            <span
+              className="ml-auto text-[9px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1"
+              style={{
+                background: "rgba(255,61,139,0.15)",
+                color: "var(--pink)",
+                border: "1px solid var(--pink)",
+                fontFamily: "'Orbitron', sans-serif",
+              }}
+            >
               <Lock className="w-3 h-3" /> LOCKED
             </span>
           )}
         </div>
-        <p className="text-xs text-white/80">
-          Live match research from Cricbuzz · Verified lineups · Player analysis
+        <p className="text-xs" style={{ color: "var(--text-off)", fontFamily: "'Share Tech Mono', monospace" }}>
+          Live match research · Verified lineups · Player analysis
         </p>
+        {/* License expiry info if licensed */}
+        {license.isLicensed && license.expiresAt && (
+          <div
+            className="mt-2 px-2.5 py-1 rounded-md text-[10px]"
+            style={{
+              background: "rgba(78,226,236,0.06)",
+              border: "1px solid rgba(78,226,236,0.3)",
+              color: "var(--cyan)",
+              fontFamily: "'Share Tech Mono', monospace",
+            }}
+          >
+            ✓ Verified · Expires: {new Date(license.expiresAt).toLocaleDateString()}
+          </div>
+        )}
       </div>
 
       {/* My Shop Video Ad Banner — always visible (it's an ad) */}
       <ShopVideoAd />
 
-      {/* Cricbuzz Research — LOCKED for non-subscribers */}
+      {/* Research — LOCKED for non-subscribers */}
       {license.isLicensed ? (
-        <CricbuzzResearch />
+        <TitanResearch />
       ) : (
         <ResearchLockScreen
           onActivate={() => license.setShowActivate(true)}
@@ -76,64 +116,99 @@ export function ResearchScreen() {
 
 function ResearchLockScreen({ onActivate }: { onActivate: () => void }) {
   const features = [
-    "🔍 Live match scraping from Cricbuzz",
-    "👥 Verified playing XI lineup",
-    "🎯 DT Sadhyatha (probability ranking)",
-    "🧠 Hack Sheet (insider intel)",
-    "🏆 Team generation (1-100 teams)",
-    "📤 Transfer to Dream11 & My11Circle",
+    "🔍 Live match scraping (Cricbuzz real-time)",
+    "👥 Verified playing XI lineup (Before + After)",
+    "🎯 DT probability ranking (2026 AI)",
+    "🧠 AI tactical analysis & insights",
+    "🏆 40 team generation (Safe + GL)",
+    "📊 Real-time career stats from Cricbuzz",
   ];
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-white dark:bg-card rounded-2xl p-6 border-2 border-amber-300 dark:border-amber-700 shadow-lg space-y-4"
+      className="rounded-2xl p-6 space-y-4"
+      style={{
+        background: "var(--panel)",
+        border: "2px solid var(--gold)",
+        boxShadow: "var(--sh-depth)",
+      }}
     >
       {/* Lock icon */}
       <div className="text-center">
-        <div className="w-16 h-16 mx-auto rounded-full bg-amber-100 dark:bg-amber-950/40 flex items-center justify-center mb-3">
-          <Lock className="w-8 h-8 text-amber-500" />
+        <div
+          className="w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-3"
+          style={{
+            background: "rgba(255,210,63,0.08)",
+            border: "2px solid var(--gold)",
+          }}
+        >
+          <Lock className="w-8 h-8" style={{ color: "var(--gold)" }} />
         </div>
-        <h2 className="text-base font-bold text-foreground">Research Locked</h2>
-        <p className="text-xs text-muted-foreground mt-1">
-          Active subscription required to access Cricbuzz Research
+        <h2 className="text-base font-bold" style={{ color: "var(--gold)", fontFamily: "'Orbitron', sans-serif", letterSpacing: "0.1em" }}>
+          RESEARCH LOCKED
+        </h2>
+        <p className="text-xs mt-1" style={{ color: "var(--text-off)", fontFamily: "'Share Tech Mono', monospace" }}>
+          Active subscription required to access Research
         </p>
       </div>
 
       {/* Features list */}
-      <div className="bg-violet-50 dark:bg-violet-950/30 rounded-xl p-3 space-y-2">
-        <p className="text-[10px] font-bold text-violet-600 dark:text-violet-400 uppercase mb-2">
+      <div
+        className="rounded-xl p-3 space-y-2"
+        style={{
+          background: "rgba(78,226,236,0.04)",
+          border: "1px solid rgba(78,226,236,0.2)",
+        }}
+      >
+        <p
+          className="text-[10px] font-bold uppercase mb-2"
+          style={{ color: "var(--cyan)", fontFamily: "'Orbitron', sans-serif" }}
+        >
           Unlock with subscription:
         </p>
         {features.map((f, i) => (
-          <div key={i} className="flex items-center gap-2 text-[11px] text-foreground">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+          <div key={i} className="flex items-center gap-2 text-[11px]" style={{ color: "var(--text-off)" }}>
+            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "var(--green)" }} />
             <span>{f}</span>
           </div>
         ))}
       </div>
 
       {/* Price hint */}
-      <div className="bg-amber-50 dark:bg-amber-950/30 rounded-xl p-3 text-center">
-        <p className="text-xs font-bold text-amber-600 dark:text-amber-400">
+      <div
+        className="rounded-xl p-3 text-center"
+        style={{
+          background: "rgba(255,210,63,0.06)",
+          border: "1px solid rgba(255,210,63,0.3)",
+        }}
+      >
+        <p className="text-xs font-bold" style={{ color: "var(--gold)", fontFamily: "'Orbitron', sans-serif" }}>
           Starting from ₹49 only
         </p>
-        <p className="text-[10px] text-muted-foreground mt-0.5">
+        <p className="text-[10px] mt-0.5" style={{ color: "var(--text-off)", fontFamily: "'Share Tech Mono', monospace" }}>
           1 Match · 24 Hour · Weekly · Pro · Semi-Annual · Elite · Lifetime
         </p>
       </div>
 
       {/* Activate button */}
       <Button
-        className="w-full h-12 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white font-bold"
+        className="w-full h-12 font-bold"
+        style={{
+          background: "linear-gradient(135deg, var(--gold), #ff9800)",
+          color: "#000",
+          border: "none",
+          fontFamily: "'Orbitron', sans-serif",
+          letterSpacing: "0.1em",
+        }}
         onClick={onActivate}
       >
         <Crown className="w-5 h-5 mr-1.5" />
-        Activate License Key
+        ACTIVATE LICENSE KEY
       </Button>
 
-      <p className="text-[9px] text-center text-muted-foreground">
+      <p className="text-[9px] text-center" style={{ color: "var(--text-off)", fontFamily: "'Share Tech Mono', monospace" }}>
         💡 Don&apos;t have a key? Contact admin to purchase a subscription
       </p>
     </motion.div>
@@ -174,35 +249,54 @@ function LicenseActivateModal({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4"
       onClick={onClose}
     >
       <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="bg-white dark:bg-card rounded-3xl shadow-2xl max-w-sm w-full p-5 space-y-4"
+        className="rounded-3xl shadow-2xl max-w-sm w-full p-5 space-y-4"
+        style={{
+          background: "var(--panel)",
+          border: "2px solid var(--gold)",
+          boxShadow: "var(--sh-depth)",
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-yellow-600 flex items-center justify-center">
-              <Crown className="w-5 h-5 text-white" />
+            <div
+              className="w-10 h-10 rounded-xl flex items-center justify-center"
+              style={{ background: "linear-gradient(135deg, var(--gold), #ff9800)" }}
+            >
+              <Crown className="w-5 h-5 text-black" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-foreground">Activate License</h3>
-              <p className="text-[10px] text-muted-foreground">Enter your subscription key</p>
+              <h3 className="text-sm font-bold" style={{ color: "var(--gold)", fontFamily: "'Orbitron', sans-serif" }}>
+                ACTIVATE LICENSE
+              </h3>
+              <p className="text-[10px]" style={{ color: "var(--text-off)", fontFamily: "'Share Tech Mono', monospace" }}>
+                Enter your subscription key
+              </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800">
-            <X className="w-4 h-4 text-muted-foreground" />
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-full"
+            style={{ background: "rgba(255,255,255,0.05)" }}
+          >
+            <X className="w-4 h-4" style={{ color: "var(--text-off)" }} />
           </button>
         </div>
 
         {/* Input */}
         <div>
-          <label className="text-[10px] font-bold text-muted-foreground uppercase mb-1 block">
+          <label
+            className="text-[10px] font-bold uppercase mb-1 block"
+            style={{ color: "var(--cyan)", fontFamily: "'Orbitron', sans-serif" }}
+          >
             License Key
           </label>
           <Input
@@ -210,6 +304,11 @@ function LicenseActivateModal({
             onChange={(e) => setKeyInput(e.target.value.toUpperCase())}
             placeholder="CRICB-XXXX-XXXX-XXXX"
             className="h-11 text-sm font-mono"
+            style={{
+              background: "rgba(0,0,0,0.5)",
+              border: "1px solid var(--b2)",
+              color: "var(--gold)",
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") handleVerify();
             }}
@@ -219,20 +318,35 @@ function LicenseActivateModal({
 
         {/* Activate button */}
         <Button
-          className="w-full h-11 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-700 hover:to-yellow-700 text-white font-bold"
+          className="w-full h-11 font-bold"
+          style={{
+            background: "linear-gradient(135deg, var(--gold), #ff9800)",
+            color: "#000",
+            border: "none",
+            fontFamily: "'Orbitron', sans-serif",
+            letterSpacing: "0.1em",
+          }}
           onClick={handleVerify}
           disabled={verifying}
         >
           {verifying ? (
-            <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Verifying...</>
+            <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> VERIFYING...</>
           ) : (
-            <><Zap className="w-4 h-4 mr-1.5" /> Activate Now</>
+            <><Zap className="w-4 h-4 mr-1.5" /> ACTIVATE NOW</>
           )}
         </Button>
 
         {/* Help */}
-        <div className="bg-amber-50 dark:bg-amber-950/30 rounded-xl p-2.5 text-[10px] text-muted-foreground text-center">
-          <p className="font-bold text-amber-600 dark:text-amber-400 mb-0.5">💡 How to get a key?</p>
+        <div
+          className="rounded-xl p-2.5 text-[10px] text-center"
+          style={{
+            background: "rgba(78,226,236,0.04)",
+            border: "1px solid rgba(78,226,236,0.2)",
+            color: "var(--text-off)",
+            fontFamily: "'Share Tech Mono', monospace",
+          }}
+        >
+          <p className="font-bold mb-0.5" style={{ color: "var(--cyan)" }}>💡 How to get a key?</p>
           <p>Contact admin via WhatsApp to purchase a subscription</p>
         </div>
       </motion.div>

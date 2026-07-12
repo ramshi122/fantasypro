@@ -26,8 +26,8 @@ export function SportTabs() {
             className={cn(
               "flex-shrink-0 px-4 h-9 rounded-full text-sm font-semibold transition-all flex items-center gap-1.5",
               active
-                ? "brand-gradient text-white shadow-md shadow-violet-500/30"
-                : "bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 hover:bg-violet-100"
+                ? "brand-gradient text-black shadow-md shadow-amber-500/30"
+                : "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400 hover:bg-amber-100"
             )}
           >
             <span className="text-base">{s.emoji}</span>
@@ -44,7 +44,7 @@ export function MatchTabs() {
   const setTab = useApp((s) => s.setMatchTab);
 
   return (
-    <div className="flex bg-violet-50 dark:bg-violet-900/20 rounded-xl p-1">
+    <div className="flex bg-amber-50 dark:bg-amber-950/20 rounded-xl p-1">
       {(["upcoming", "saved"] as const).map((t) => (
         <button
           key={t}
@@ -52,7 +52,7 @@ export function MatchTabs() {
           className={cn(
             "flex-1 h-9 rounded-lg text-sm font-semibold transition-all capitalize",
             tab === t
-              ? "bg-white text-violet-700 shadow-sm dark:bg-violet-950 dark:text-violet-200"
+              ? "bg-white text-amber-700 shadow-sm dark:bg-amber-950 dark:text-amber-200"
               : "text-muted-foreground hover:text-foreground"
           )}
         >

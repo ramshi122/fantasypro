@@ -1,20 +1,27 @@
 import { NextResponse } from "next/server";
 import { useAdmin } from "@/lib/admin-store";
+import { verifySessionToken } from "@/app/api/admin/login/route";
 
 /**
- * Backup/Restore API — LOCAL ONLY (per FIREBASE-CLEANUP)
- * ========================================================
+ * Backup/Restore API — ADMIN ONLY (security fix)
+ * SECURITY: All actions require valid admin session token.
  * GET  /api/backup              → export all local admin data as JSON
  * POST /api/backup?action=import   → restore from JSON {data}
- *
- * Export includes:
- *   - All license keys (from local admin store)
- *   - All devices, users, announcements, settings, recent logs
- *
- * No Firebase collections are exported/imported.
  */
 
-export async function GET() {
+function checkAdminAuth(request: Request): boolean {
+  const authHeader = request.headers.get("authorization");
+  const adminToken = authHeader?.replace("Bearer ", "") ||
+    new URL(request.url).searchParams.get("adminToken");
+  if (!adminToken) return false;
+  return verifySessionToken(adminToken);
+}
+
+export async function GET(request: Request) {
+  // SECURITY: Require admin auth
+  if (!checkAdminAuth(request)) {
+    return NextResponse.json({ status: "fail", message: "Unauthorized" }, { status: 401 });
+  }
   try {
     const adminState = useAdmin.getState();
     const exportData: Record<string, unknown> = {
@@ -43,6 +50,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // SECURITY: Require admin auth
+  if (!checkAdminAuth(request)) {
+    return NextResponse.json({ status: "fail", message: "Unauthorized" }, { status: 401 });
+  }
   try {
     const body = await request.json();
     const { action, data } = body as { action: "import"; data: Record<string, unknown> };
