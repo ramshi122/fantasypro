@@ -263,7 +263,21 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   // teams to localStorage via bulkAddTeams(), so we just need to refresh the
   // view and show a success toast.
   function handleBulkAddTeams(teams: TeamRow[]) {
-    toast.success(`Generated ${teams.length} unique teams`);
+    // SAVE TEAMS TO LOCAL STORAGE — this was missing!
+    try {
+      const key = String(matchId);
+      const all = JSON.parse(localStorage.getItem("apna-cricket-local-teams") || "{}");
+      const existing = all[key] || [];
+      // Add new teams to existing list
+      all[key] = [...existing, ...teams];
+      localStorage.setItem("apna-cricket-local-teams", JSON.stringify(all));
+      // Update the displayed teams
+      setExistingTeams(all[key]);
+    } catch (e) {
+      console.error("[TransferFlow] Failed to save teams:", e);
+    }
+
+    toast.success(`Generated ${teams.length} unique teams — saved!`);
     setRefreshKey((k) => k + 1);
 
     // === Integration: analytics + performance tracker + cashback + leaderboard ===
