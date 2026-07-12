@@ -866,37 +866,40 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
                 {/* Live score + match status — shown when match is in progress */}
                 {details.liveScore && (
                   <div
-                    className="mt-3 rounded-xl p-3"
+                    className="mt-3 rounded-xl p-4"
                     style={{
-                      background: "linear-gradient(90deg, #FEF2F2, #FECACA)",
-                      border: "1px solid #ff1744",
-                      boxShadow: "0 0 20px rgba(220,38,38,0.1)",
+                      background: "linear-gradient(135deg, rgba(220,38,38,0.15), rgba(220,38,38,0.05))",
+                      borderTop: "2px solid var(--pink)",
+                      borderRight: "2px solid var(--pink)",
+                      borderBottom: "2px solid var(--pink)",
+                      borderLeft: "5px solid var(--pink)",
+                      boxShadow: "0 0 15px rgba(220,38,38,0.2)",
                     }}
                   >
                     <div
-                      className="text-[12px] font-black tracking-widest mb-1"
+                      className="text-[14px] font-black tracking-widest mb-2"
                       style={{ color: "var(--pink)", fontFamily: "'Orbitron', sans-serif" }}
                     >
                       🔴 LIVE SCORE
                     </div>
                     <div
-                      className="text-lg font-black"
+                      className="text-xl font-black"
                       style={{ fontFamily: "'Share Tech Mono', monospace", color: "#f0f0f5" }}
                     >
                       {details.liveScore}
                     </div>
                     {details.matchStatus && (
                       <div
-                        className="text-[13px] mt-1.5"
-                        style={{ color: "var(--pink)", fontFamily: "'Share Tech Mono', monospace" }}
+                        className="text-[15px] mt-2"
+                        style={{ color: "#f0f0f5", fontFamily: "'Share Tech Mono', monospace" }}
                       >
                         📊 {details.matchStatus}
                       </div>
                     )}
                     {details.shortStatus && (
                       <div
-                        className="text-[12px] mt-0.5"
-                        style={{ color: "var(--pink)", fontFamily: "'Share Tech Mono', monospace" }}
+                        className="text-[14px] mt-1"
+                        style={{ color: "var(--text-off)", fontFamily: "'Share Tech Mono', monospace" }}
                       >
                         {details.shortStatus}
                       </div>
@@ -1335,7 +1338,7 @@ function Header({ match }: { match: CricketMatch | null }) {
       </div>
       <div
         className="mt-4 p-3 rounded-xl text-base font-black uppercase tracking-wide"
-        style={{ background: "rgba(0,0,0,0.05)", border: "1px solid var(--b1)" }}
+        style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)", color: "#f0f0f5" }}
       >
         {match ? `${match.team1} vs ${match.team2}` : "SELECT A MATCH"}
       </div>
@@ -1346,17 +1349,20 @@ function Header({ match }: { match: CricketMatch | null }) {
       )}
       {match?.liveScore && (
         <div
-          className="mt-3 p-3 rounded-xl"
+          className="mt-3 p-4 rounded-xl"
           style={{
-            background: "linear-gradient(90deg, #FEF2F2, #FECACA)",
-            border: "1px solid #ff1744",
-            boxShadow: "0 0 20px rgba(220,38,38,0.15)",
+            background: "linear-gradient(135deg, rgba(220,38,38,0.15), rgba(220,38,38,0.05))",
+            borderTop: "2px solid var(--pink)",
+            borderRight: "2px solid var(--pink)",
+            borderBottom: "2px solid var(--pink)",
+            borderLeft: "5px solid var(--pink)",
+            boxShadow: "0 0 15px rgba(220,38,38,0.2)",
           }}
         >
-          <div className="text-[14px] font-black tracking-widest" style={{ color: "var(--pink)", fontFamily: "'Orbitron'" }}>
+          <div className="text-[14px] font-black tracking-widest" style={{ color: "var(--pink)", fontFamily: "'Orbitron', sans-serif" }}>
             🔴 LIVE SCORE
           </div>
-          <div className="text-2xl font-black mt-1" style={{ fontFamily: "'Share Tech Mono'" }}>
+          <div className="text-2xl font-black mt-2" style={{ fontFamily: "'Share Tech Mono', monospace", color: "#f0f0f5" }}>
             {match.liveScore}
           </div>
         </div>
