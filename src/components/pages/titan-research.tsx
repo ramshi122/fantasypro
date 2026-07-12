@@ -2089,10 +2089,19 @@ function CaptainCenterTab({ showToast }: { showToast: (s: string) => void }) {
     try {
       const r = await fetch("/api/cricket-matches", { headers: licenseHeaders() }).then((x) => x.json());
       if (r.ok) {
-        const all = [...r.live, ...r.upcoming];
+        const live = r.live || [];
+        const upcoming = r.upcoming || [];
+        const all = [...live, ...upcoming];
         setMatches(all);
+        if (all.length > 0 && !selectedMatch) {
+          selectMatch(all[0]);
+        }
+      } else {
+        showToast("⚠️ " + (r.error || "Failed to load matches"));
       }
-    } catch {}
+    } catch (e: any) {
+      showToast("⚠️ " + (e?.message || "Network error"));
+    }
     setLoading(false);
   }
 
@@ -2110,8 +2119,14 @@ function CaptainCenterTab({ showToast }: { showToast: (s: string) => void }) {
       setDetails(d);
       if (d.ok && d.teams?.length >= 2) {
         void runCaptainAnalysis(m, d);
+      } else if (d.licenseRequired) {
+        showToast("⚠️ License required — activate your key first");
+      } else {
+        showToast("⚠️ Squad not available — try another match");
       }
-    } catch {}
+    } catch (e: any) {
+      showToast("⚠️ " + (e?.message || "Network error"));
+    }
     setLoading(false);
   }
 
@@ -2412,10 +2427,19 @@ function PlayerFormTab({ showToast }: { showToast: (s: string) => void }) {
     try {
       const r = await fetch("/api/cricket-matches", { headers: licenseHeaders() }).then((x) => x.json());
       if (r.ok) {
-        const all = [...r.live, ...r.upcoming];
+        const live = r.live || [];
+        const upcoming = r.upcoming || [];
+        const all = [...live, ...upcoming];
         setMatches(all);
+        if (all.length > 0 && !selectedMatch) {
+          selectMatch(all[0]);
+        }
+      } else {
+        showToast("⚠️ " + (r.error || "Failed to load matches"));
       }
-    } catch {}
+    } catch (e: any) {
+      showToast("⚠️ " + (e?.message || "Network error"));
+    }
     setLoading(false);
   }
 
@@ -2431,8 +2455,16 @@ function PlayerFormTab({ showToast }: { showToast: (s: string) => void }) {
         body: JSON.stringify({ matchId: m.id }),
       }).then((r) => r.json());
       setDetails(d);
-      if (d.ok && d.teams?.length >= 2) void runFormAnalysis(m, d);
-    } catch {}
+      if (d.ok && d.teams?.length >= 2) {
+        void runFormAnalysis(m, d);
+      } else if (d.licenseRequired) {
+        showToast("⚠️ License required — activate your key first");
+      } else {
+        showToast("⚠️ Squad not available — try another match");
+      }
+    } catch (e: any) {
+      showToast("⚠️ " + (e?.message || "Network error"));
+    }
     setLoading(false);
   }
 
@@ -2607,10 +2639,19 @@ function VenueStatsTab({ showToast }: { showToast: (s: string) => void }) {
     try {
       const r = await fetch("/api/cricket-matches", { headers: licenseHeaders() }).then((x) => x.json());
       if (r.ok) {
-        const all = [...r.live, ...r.upcoming];
+        const live = r.live || [];
+        const upcoming = r.upcoming || [];
+        const all = [...live, ...upcoming];
         setMatches(all);
+        if (all.length > 0 && !selectedMatch) {
+          selectMatch(all[0]);
+        }
+      } else {
+        showToast("⚠️ " + (r.error || "Failed to load matches"));
       }
-    } catch {}
+    } catch (e: any) {
+      showToast("⚠️ " + (e?.message || "Network error"));
+    }
     setLoading(false);
   }
 
@@ -3016,7 +3057,9 @@ function AiResearchDashboard({ showToast }: { showToast: (s: string) => void }) 
     try {
       const r = await fetch("/api/cricket-matches", { headers: licenseHeaders() }).then((x) => x.json());
       if (r.ok) {
-        const all = [...r.live, ...r.upcoming];
+        const live = r.live || [];
+        const upcoming = r.upcoming || [];
+        const all = [...live, ...upcoming];
         setMatches(all);
         if (all[0]) selectMatch(all[0]);
       }
@@ -3042,6 +3085,12 @@ function AiResearchDashboard({ showToast }: { showToast: (s: string) => void }) 
       if (d.ok && d.teams?.length >= 2) {
         // Auto-run full AI analysis
         void runFullAnalysis(m, d);
+      } else if (d.licenseRequired) {
+        showToast("⚠️ License required — activate your key first");
+      } else if (!d.ok) {
+        showToast("⚠️ " + (d.error || "Squad not available yet"));
+      } else {
+        showToast("⚠️ Squad data incomplete — try another match");
       }
     } catch (e: any) {
       showToast(`⚠️ ${e?.message ?? "details failed"}`);
