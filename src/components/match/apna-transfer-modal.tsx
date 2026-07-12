@@ -99,27 +99,15 @@ export function ApnaTransferModal({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPhase("loading");
 
-      const matchIdStr = (match.matchId ?? match.id ?? "") as string;
-      if (!matchIdStr) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setPhase("ready");
-        toast.error("⚠️ Match ID not found — transfer only works for matches from the Home page (not Research page)");
-        return;
-      }
-
-      const detail = await getMatchDetail(matchIdStr);
-      if (!detail) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setPhase("ready");
-        toast.error("⚠️ This match is not available on the fantasy backend. Transfer works only for matches listed on the Home page.");
-        return;
+      const detail = await getMatchDetail((match.matchId ?? match.id ?? "") as string);
+      if (!detail) { // eslint-disable-next-line react-hooks/set-state-in-effect
+        setPhase("ready"); return;
       }
       const d = detail as any;
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setMatchNumericId(String(d.id || match.matchId || match.id || ""));
-      // FIX: Original app uses numeric ID (d.id) as tgMatchId, NOT MongoDB _id
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setMatchDbId(String(d.id || ""));
+      setMatchDbId(String(d._id || ""));
 
       // Build player ID map
       const allApps = ["dream11", "my11circle"];
@@ -212,7 +200,7 @@ export function ApnaTransferModal({
               if (typeof j.data === "string") { const dec = decrypt<any>(j.data); if (dec?.link) { link = dec.link; success = true; } }
               else if (typeof j.data === "object" && (j.data as any).link) { link = (j.data as any).link; success = true; }
             } else {
-              message = j.message || "Backend rejected — match may not be available for this fantasy platform";
+              message = j.message || "Backend rejected";
             }
           } catch { message = "Parse error"; }
         } else { message = `HTTP ${res.status}`; }

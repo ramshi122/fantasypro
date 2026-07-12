@@ -7,7 +7,6 @@ import {
   Check,
   CheckCircle2,
   Copy,
-  ClipboardPaste,
   Crown,
   ExternalLink,
   Gift,
@@ -19,7 +18,6 @@ import {
   Save,
   Search,
   Send,
-  Smartphone,
   Star,
   Trash2,
   X,
@@ -48,8 +46,6 @@ import { ApnaTransferModal } from "./apna-transfer-modal";
 import { FreeContestsModal } from "./free-contests-modal";
 import { OtpLoginModal } from "@/components/auth/otp-login-modal";
 import { EliteAIGenerator } from "./elite-ai-generator";
-import { CopyPasteModal } from "./copy-paste-modal";
-import { MultiAccountManager } from "@/components/auth/multi-account-manager";
 import { ErrorBoundary } from "@/components/error-boundary";
 import {
   autoReplaceNonPlaying,
@@ -59,7 +55,6 @@ import {
   isLineupAnnounced,
 } from "@/lib/lineup";
 import { useLicense } from "@/lib/use-license";
-import { canMultiAccountDream11, canMultiAccountMy11Circle, canBulkCopyPaste } from "@/lib/subscription";
 import { cn } from "@/lib/utils";
 import { roleFromPlayerType, shortName, teamColor } from "@/lib/format";
 
@@ -82,8 +77,6 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   const [selectedTransferApp, setSelectedTransferApp] = useState<FantasyApp>("dream11");
   const [showFreeContests, setShowFreeContests] = useState(false);
   const [showOtpLogin, setShowOtpLogin] = useState(false);
-  const [showCopyPaste, setShowCopyPaste] = useState(false);
-  const [showMultiAccount, setShowMultiAccount] = useState<FantasyApp | null>(null);
   const [linkedApp, setLinkedApp] = useState<FantasyApp | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lineupAnnounced, setLineupAnnounced] = useState(false);
@@ -155,40 +148,6 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
     loadAll();
   }, [loadAll, refreshKey]);
 
-  // === LINEUP POLLING — re-check lineup status every 60 seconds ===
-  // If lineup gets announced while user is on this page, auto-refresh + auto-replace
-  useEffect(() => {
-    if (!matchId) return;
-    let prevLineupAnnounced = lineupAnnounced;
-
-    const pollLineup = async () => {
-      try {
-        const matchDetail = await getMatchDetail(matchId).catch(() => null);
-        if (!matchDetail) return;
-
-        const lineupStatus = (matchDetail as any).lineup_status;
-        const nowAnnounced = Number(lineupStatus) === 1;
-
-        // If lineup just got announced (0 → 1), refresh + auto-replace
-        if (nowAnnounced && !prevLineupAnnounced) {
-          console.log("[LineupPoll] Lineup just announced! Auto-refreshing...");
-          toast.success("✅ Lineup announced! Auto-updating teams...");
-          prevLineupAnnounced = true;
-          // Reload everything (will filter to playing XI + auto-replace)
-          setRefreshKey((k) => k + 1);
-        } else if (nowAnnounced !== prevLineupAnnounced) {
-          prevLineupAnnounced = nowAnnounced;
-        }
-      } catch (err) {
-        // Silent fail — don't spam user with errors
-      }
-    };
-
-    // Poll every 60 seconds
-    const interval = setInterval(pollLineup, 60_000);
-    return () => clearInterval(interval);
-  }, [matchId, lineupAnnounced]);
-
   // Check if user already has a Dream11 token saved
   useEffect(() => {
     const t = getFantasyToken("dream11");
@@ -239,41 +198,14 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   }
 
   async function handleDeleteTeam(teamId: string) {
+    setStep("saving");
     try {
-      // Direct localStorage manipulation for reliable delete
-      const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
-      const key = String(matchId);
-      let all: Record<string, TeamRow[]> = {};
-      try { all = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}"); } catch { all = {}; }
-
-      const list = all[key] || [];
-      const newList = list.filter((t) =>
-        (t._id ?? t.teamId ?? "") !== teamId
-      );
-
-      console.log(`[DeleteTeam] Before: ${list.length}, After: ${newList.length}, Deleted: ${teamId}`);
-
-      // Renumber teams
-      newList.forEach((t, i) => {
-        t.teamNo = i + 1;
-        t.team_number = i + 1;
-      });
-
-      all[key] = newList;
-      localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(all));
-
-      // IMMEDIATELY update state
-      setExistingTeams([...newList]);
-
-      // Force reload
-      setTimeout(() => {
-        setRefreshKey((k) => k + 1);
-      }, 50);
-
-      toast.success(`Team deleted (${newList.length} remaining)`);
+      await editTeam(token!, { matchId, teamId, team: {}, type: "delete" });
+      toast.success("Team deleted");
+      setRefreshKey((k) => k + 1);
     } catch (err: any) {
-      console.error("[DeleteTeam] Error:", err);
       toast.error(err?.message || "Failed to delete team");
+      setStep("ready");
     }
   }
 
@@ -327,75 +259,12 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
     }
   }
 
-  // Called after the auto-generator has finished. Saves teams to localStorage
-  // and refreshes the view to show newly generated teams.
-  // BEHAVIOR: New generate WIPES old teams — only new teams shown.
+  // Called after the auto-generator has finished. The generator already saved
+  // teams to localStorage via bulkAddTeams(), so we just need to refresh the
+  // view and show a success toast.
   function handleBulkAddTeams(teams: TeamRow[]) {
-    if (!teams || teams.length === 0) {
-      toast.error("No teams to save");
-      return;
-    }
-
-    // CRITICAL: Save teams to localStorage SYNCHRONOUSLY
-    // NEW BEHAVIOR: Wipe old teams, show only new teams (user requested)
-    try {
-      const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
-      const key = String(matchId);
-
-      // Read existing teams (to count how many were wiped)
-      let all: Record<string, TeamRow[]> = {};
-      try {
-        all = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}");
-      } catch {
-        all = {};
-      }
-
-      const oldCount = (all[key] || []).length;
-
-      // WIPE old teams — only new teams will be saved
-      const newTeams: TeamRow[] = teams.map((t, i) => ({
-        _id: "local_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
-        teamId: "local_" + Math.random().toString(36).slice(2, 10),
-        teamNo: i + 1,
-        team_number: i + 1,
-        players: t.players || [],
-        captain: t.captain,
-        viceCaptain: t.viceCaptain,
-        vicecaptain: t.viceCaptain,
-        c: t.captain,
-        vc: t.viceCaptain,
-        team: t.team,
-        type: t.type ?? "sweep",
-        transferStatus: "pending",
-      }));
-
-      // Save: ONLY new teams (old teams wiped)
-      all[key] = newTeams;
-      localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(all));
-
-      // VERIFY save worked
-      const verifyData = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}");
-      const verifyTeams = verifyData[key] || [];
-      console.log(`[handleBulkAddTeams] Wiped ${oldCount} old. Saved ${newTeams.length}. Verified: ${verifyTeams.length} in localStorage.`);
-
-      // IMMEDIATELY update the state (don't wait for refreshKey)
-      setExistingTeams([...newTeams]);
-
-      // Force a complete reload after a short delay to ensure UI updates
-      setTimeout(() => {
-        setRefreshKey((k) => k + 1);
-      }, 100);
-
-      if (oldCount > 0) {
-        toast.success(`✓ Wiped ${oldCount} old teams. Generated ${newTeams.length} new teams!`);
-      } else {
-        toast.success(`✓ Generated ${newTeams.length} new teams!`);
-      }
-    } catch (err) {
-      console.error("[handleBulkAddTeams] Save error:", err);
-      toast.error("Failed to save teams — try again");
-      return;
-    }
+    toast.success(`Generated ${teams.length} unique teams`);
+    setRefreshKey((k) => k + 1);
 
     // === Integration: analytics + performance tracker + cashback + leaderboard ===
     (async () => {
@@ -589,31 +458,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
             <p className="text-xs font-semibold text-muted-foreground">
               {existingTeams.length} team{existingTeams.length !== 1 ? "s" : ""} saved
             </p>
-            <div className="flex gap-1.5 flex-wrap items-center">
-              {/* Delete All button */}
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-[10px] border-red-500 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
-                onClick={() => {
-                  if (!confirm(`Delete ALL ${existingTeams.length} teams? This cannot be undone.`)) return;
-                  try {
-                    const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
-                    const key = String(matchId);
-                    let all: Record<string, TeamRow[]> = {};
-                    try { all = JSON.parse(localStorage.getItem(LOCAL_TEAMS_KEY) || "{}"); } catch { all = {}; }
-                    all[key] = [];
-                    localStorage.setItem(LOCAL_TEAMS_KEY, JSON.stringify(all));
-                    setExistingTeams([]);
-                    toast.success("All teams deleted");
-                    setTimeout(() => setRefreshKey((k) => k + 1), 50);
-                  } catch {
-                    toast.error("Failed to delete teams");
-                  }
-                }}
-              >
-                <Trash2 className="w-3 h-3 mr-1" /> Delete All
-              </Button>
+            <div className="flex gap-1.5 flex-wrap">
               {/* Dream11 Transfer — locked for unlicensed, 3/day for trial */}
               {(() => {
                 const canDream11 = license.isLicensed;
@@ -847,70 +692,6 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               >
                 {license.isLicensed ? <Plus className="w-4 h-4 mr-1.5" /> : <Lock className="w-4 h-4 mr-1.5" />}
                 {license.isLicensed ? "Add Team" : "Add 🔒"}
-              </Button>
-
-              {/* Copy/Paste Teams — locked for trial users */}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  if (!canBulkCopyPaste(license.licenseKeyType)) {
-                    toast.error("Bulk Copy/Paste requires 1 Match (₹49) or higher subscription.");
-                    return;
-                  }
-                  setShowCopyPaste(true);
-                }}
-                disabled={existingTeams.length === 0 && !canBulkCopyPaste(license.licenseKeyType)}
-                className={cn(
-                  "border-violet-200 text-violet-700 dark:text-violet-300",
-                  !canBulkCopyPaste(license.licenseKeyType) && "opacity-60"
-                )}
-              >
-                {canBulkCopyPaste(license.licenseKeyType)
-                  ? <><ClipboardPaste className="w-3.5 h-3.5 mr-1" /> Copy/Paste</>
-                  : <><Lock className="w-3.5 h-3.5 mr-1" /> Copy/Paste 🔒</>}
-              </Button>
-
-              {/* Multi-Account Manager — Dream11 (5 accounts) */}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  if (!canMultiAccountDream11(license.licenseKeyType)) {
-                    toast.error("Multi-Account Dream11 requires Pro (₹299), Elite (₹999), or Lifetime subscription.");
-                    return;
-                  }
-                  setShowMultiAccount("dream11");
-                }}
-                className={cn(
-                  "border-red-200 text-red-700 dark:text-red-300",
-                  !canMultiAccountDream11(license.licenseKeyType) && "opacity-60"
-                )}
-              >
-                {canMultiAccountDream11(license.licenseKeyType)
-                  ? <><Smartphone className="w-3.5 h-3.5 mr-1" /> D11 (5x)</>
-                  : <><Lock className="w-3.5 h-3.5 mr-1" /> D11 🔒</>}
-              </Button>
-
-              {/* Multi-Account Manager — My11Circle (5 accounts) */}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  if (!canMultiAccountMy11Circle(license.licenseKeyType)) {
-                    toast.error("Multi-Account My11Circle requires Pro (₹299), Elite (₹999), or Lifetime subscription.");
-                    return;
-                  }
-                  setShowMultiAccount("my11circle");
-                }}
-                className={cn(
-                  "border-sky-200 text-sky-700 dark:text-sky-300",
-                  !canMultiAccountMy11Circle(license.licenseKeyType) && "opacity-60"
-                )}
-              >
-                {canMultiAccountMy11Circle(license.licenseKeyType)
-                  ? <><Smartphone className="w-3.5 h-3.5 mr-1" /> M11 (5x)</>
-                  : <><Lock className="w-3.5 h-3.5 mr-1" /> M11 🔒</>}
               </Button>
             </div>
           </div>
@@ -1151,48 +932,6 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Copy-Paste Modal */}
-      <CopyPasteModal
-        open={showCopyPaste}
-        onClose={() => setShowCopyPaste(false)}
-        teams={existingTeams}
-        onPaste={(pastedTeams) => {
-          handleBulkAddTeams(pastedTeams);
-          toast.success(`Pasted ${pastedTeams.length} teams`);
-        }}
-      />
-
-      {/* Multi-Account Manager — Dream11 */}
-      <MultiAccountManager
-        open={showMultiAccount === "dream11"}
-        onClose={() => setShowMultiAccount(null)}
-        app="dream11"
-        licenseTier={license.licenseKeyType}
-        onAccountAdded={(account) => {
-          if (account.id === "_new_") {
-            // Trigger OTP login flow
-            setShowMultiAccount(null);
-            setLinkedApp("dream11");
-            setShowOtpLogin(true);
-          }
-        }}
-      />
-
-      {/* Multi-Account Manager — My11Circle */}
-      <MultiAccountManager
-        open={showMultiAccount === "my11circle"}
-        onClose={() => setShowMultiAccount(null)}
-        app="my11circle"
-        licenseTier={license.licenseKeyType}
-        onAccountAdded={(account) => {
-          if (account.id === "_new_") {
-            setShowMultiAccount(null);
-            setLinkedApp("my11circle");
-            setShowOtpLogin(true);
-          }
-        }}
-      />
     </div>
   );
 }
