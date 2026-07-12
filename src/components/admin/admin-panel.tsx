@@ -382,11 +382,15 @@ function DashboardTab() {
     { label: "Total Keys", value: stats.totalKeys, icon: Key, color: "from-violet-500 to-purple-600" },
     { label: "Active Keys", value: stats.activeKeys, icon: ShieldCheck, color: "from-emerald-500 to-green-600" },
     { label: "Used Keys", value: stats.usedKeys, icon: Check, color: "from-sky-500 to-blue-600" },
+    { label: "Suspended", value: stats.suspendedKeys || 0, icon: Ban, color: "from-red-500 to-rose-600" },
     { label: "Expired Keys", value: stats.expiredKeys, icon: AlertTriangle, color: "from-amber-500 to-orange-600" },
     { label: "Active Devices", value: stats.activeDevices, icon: Smartphone, color: "from-pink-500 to-rose-600" },
+    { label: "Banned Devices", value: stats.bannedDevices || 0, icon: Ban, color: "from-red-600 to-red-800" },
     { label: "Today Verifications", value: stats.todayVerifications, icon: Activity, color: "from-cyan-500 to-teal-600" },
     { label: "Total Users", value: stats.totalUsers, icon: Users, color: "from-indigo-500 to-violet-600" },
+    { label: "Banned Users", value: stats.bannedUsers || 0, icon: Ban, color: "from-red-500 to-red-700" },
     { label: "Teams Today", value: stats.teamsGeneratedToday, icon: Zap, color: "from-fuchsia-500 to-pink-600" },
+    { label: "Revenue Today", value: stats.revenueToday || 0, icon: Crown, color: "from-amber-500 to-yellow-600" },
   ];
   return (
     <div className="space-y-4">
@@ -965,6 +969,7 @@ function SettingsTab() {
   const [apiUrl, setApiUrl] = useState(admin.settings.apiUrl);
   const [firebase, setFirebase] = useState(admin.settings.firebaseConfig);
   const [prefix, setPrefix] = useState(admin.settings.licensePrefix);
+  const [saving, setSaving] = useState(false);
 
   return (
     <div className="space-y-4">
@@ -1015,13 +1020,24 @@ function SettingsTab() {
 
       <Button
         className="w-full bg-violet-600 hover:bg-violet-700 text-white h-10"
-        onClick={() => {
-          admin.updateSettings({ apiUrl, firebaseConfig: firebase, licensePrefix: prefix || "CRICB" });
-          toast.success("Settings saved");
+        disabled={saving}
+        onClick={async () => {
+          if (saving) return; // Prevent duplicate
+          setSaving(true);
+          try {
+            admin.updateSettings({ apiUrl, firebaseConfig: firebase, licensePrefix: prefix || "CRICB" });
+            // Force sync to Firestore immediately
+            await admin.syncFromFirebase();
+            toast.success("✅ Settings saved + synced to database");
+          } catch (e: any) {
+            toast.error("Failed to save: " + (e?.message || "error"));
+          } finally {
+            setSaving(false);
+          }
         }}
       >
-        <Check className="w-4 h-4 mr-2" />
-        Save All Settings
+        {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Check className="w-4 h-4 mr-2" />}
+        {saving ? "Saving..." : "Save All Settings"}
       </Button>
     </div>
   );

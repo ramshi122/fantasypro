@@ -183,10 +183,14 @@ interface AdminState {
     activeKeys: number;
     usedKeys: number;
     expiredKeys: number;
+    suspendedKeys: number;
+    bannedDevices: number;
     activeDevices: number;
     todayVerifications: number;
     totalUsers: number;
+    bannedUsers: number;
     teamsGeneratedToday: number;
+    revenueToday: number;
   };
 }
 
@@ -1071,12 +1075,16 @@ export const useAdmin = create<AdminState>()((set, get) => ({
         return {
           totalKeys: keys.length,
           activeKeys: keys.filter((k) => k.status === "active" && (!k.expiresAt || k.expiresAt > now)).length,
-          usedKeys: keys.filter((k) => k.status === "used").length,
-          expiredKeys: keys.filter((k) => k.status === "expired" || (k.expiresAt && k.expiresAt < now)).length,
+          usedKeys: keys.filter((k) => k.status === "used" && (!k.expiresAt || k.expiresAt > now)).length,
+          expiredKeys: keys.filter((k) => k.status === "expired" || (k.expiresAt && k.expiresAt < now && k.status !== "suspended")).length,
+          suspendedKeys: keys.filter((k) => k.status === "suspended").length,
+          bannedDevices: devices.filter((d) => d.status === "banned").length,
           activeDevices: devices.filter((d) => d.status === "allowed").length,
           todayVerifications: logs.filter((l) => l.type === "key_verification" && l.timestamp >= todayStart).length,
           totalUsers: users.length,
+          bannedUsers: users.filter((u) => u.banned).length,
           teamsGeneratedToday: logs.filter((l) => l.type === "team_generation" && l.timestamp >= todayStart).length,
+          revenueToday: logs.filter((l) => l.type === "payment" && l.timestamp >= todayStart).length,
         };
       },
     })
