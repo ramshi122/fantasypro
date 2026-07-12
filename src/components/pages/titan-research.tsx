@@ -1749,7 +1749,9 @@ function Dream11Tile({
             : isVc
               ? "linear-gradient(135deg, rgba(78,226,236,0.15), rgba(78,226,236,0.04))"
               : "var(--panel-elevated)",
-        border: `2px solid ${locked ? "var(--cyan)" : isC ? "var(--gold)" : isVc ? "var(--cyan)" : "rgba(0,0,0,0.08)"}`,
+        borderTop: `2px solid ${locked ? "var(--cyan)" : isC ? "var(--gold)" : isVc ? "var(--cyan)" : "var(--b1)"}`,
+        borderRight: `2px solid ${locked ? "var(--cyan)" : isC ? "var(--gold)" : isVc ? "var(--cyan)" : "var(--b1)"}`,
+        borderBottom: `2px solid ${locked ? "var(--cyan)" : isC ? "var(--gold)" : isVc ? "var(--cyan)" : "var(--b1)"}`,
         borderLeft: `5px solid ${accent}`,
         boxShadow: locked
           ? "0 0 15px rgba(78,226,236,0.25), inset 0 0 10px rgba(78,226,236,0.05)"
@@ -2968,7 +2970,7 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {cl.fixPlayers && cl.fixPlayers.length > 0 && card("🔒 7 AI FIX PLAYERS", <>
         <div className="space-y-2">
           {cl.fixPlayers.slice(0, 7).map((p: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)", borderLeft: "4px solid #16A34A" }}>
+            <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", borderTop: "1px solid var(--b1)", borderRight: "1px solid var(--b1)", borderBottom: "1px solid var(--b1)", borderLeft: "4px solid #16A34A" }}>
               <div className="flex justify-between items-center mb-1">
                 <span className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>{p.name}</span>
                 <span className="text-[14px] font-bold px-2 py-0.5 rounded" style={{ background: "#16A34A", color: "#f0f0f5" }}>LOCK {p.lockPct || 0}%</span>
@@ -2986,7 +2988,7 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {cl.topCaptains && cl.topCaptains.length > 0 && card("👑 TOP 6 CAPTAIN PICKS", <>
         <div className="space-y-2">
           {cl.topCaptains.slice(0, 6).map((c: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)", borderLeft: "4px solid #F59E0B" }}>
+            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "var(--panel-elevated)", borderTop: "1px solid var(--b1)", borderRight: "1px solid var(--b1)", borderBottom: "1px solid var(--b1)", borderLeft: "4px solid #F59E0B" }}>
               <div>
                 <div className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>#{c.rank} {c.name}</div>
                 <div className="text-[13px]" style={{ color: "var(--muted)" }}>{c.reason}</div>
@@ -3002,7 +3004,7 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {cl.topViceCaptains && cl.topViceCaptains.length > 0 && card("⚡ TOP 6 VICE CAPTAIN PICKS", <>
         <div className="space-y-2">
           {cl.topViceCaptains.slice(0, 6).map((c: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)", borderLeft: "4px solid #2563EB" }}>
+            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "var(--panel-elevated)", borderTop: "1px solid var(--b1)", borderRight: "1px solid var(--b1)", borderBottom: "1px solid var(--b1)", borderLeft: "4px solid #2563EB" }}>
               <div>
                 <div className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>#{c.rank} {c.name}</div>
                 <div className="text-[13px]" style={{ color: "var(--muted)" }}>{c.reason}</div>
@@ -3238,7 +3240,7 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {card("⚠️ PLAYERS TO AVOID (Max 5)", <>
         <div className="space-y-2">
           {pa.slice(0, 5).map((p: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "rgba(245,0,87,0.08)", border: "1px solid var(--pink)", borderLeft: "4px solid #DC2626" }}>
+            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "rgba(245,0,87,0.08)", borderTop: "1px solid var(--pink)", borderRight: "1px solid var(--pink)", borderBottom: "1px solid var(--pink)", borderLeft: "4px solid #DC2626" }}>
               <span className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>{p.name}</span>
               <span className="text-[13px] font-bold px-2 py-0.5 rounded" style={{ background: "#DC2626", color: "#f0f0f5" }}>{p.reason}</span>
             </div>
@@ -3309,13 +3311,13 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     return <>
       {card("🧠 AI INSIGHTS", <>
         <div className="space-y-3">
-          {ai.topDifferential && <div className="p-3 rounded-lg" style={{ background: "rgba(124,58,237,0.08)", border: "1px solid #7C3AED", borderLeft: "4px solid #7C3AED" }}><div className="text-[14px] font-bold" style={{ color: "#a78bfa" }}>💎 TOP DIFFERENTIAL</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.topDifferential}</div></div>}
-          {ai.highestCeiling && <div className="p-3 rounded-lg" style={{ background: "rgba(255,210,63,0.08)", border: "1px solid var(--gold)", borderLeft: "4px solid #F59E0B" }}><div className="text-[14px] font-bold" style={{ color: "var(--gold)" }}>🚀 HIGHEST CEILING</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.highestCeiling}</div></div>}
-          {ai.safestPlayer && <div className="p-3 rounded-lg" style={{ background: "rgba(56,224,123,0.08)", border: "1px solid var(--green)", borderLeft: "4px solid #16A34A" }}><div className="text-[14px] font-bold" style={{ color: "var(--green)" }}>🛡️ SAFEST PLAYER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.safestPlayer}</div></div>}
-          {ai.mostDangerousBowler && <div className="p-3 rounded-lg" style={{ background: "rgba(245,0,87,0.08)", border: "1px solid var(--pink)", borderLeft: "4px solid #DC2626" }}><div className="text-[14px] font-bold" style={{ color: "var(--pink)" }}>⚡ MOST DANGEROUS BOWLER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.mostDangerousBowler}</div></div>}
-          {ai.explosiveBatter && <div className="p-3 rounded-lg" style={{ background: "rgba(234,88,12,0.08)", border: "1px solid #EA580C", borderLeft: "4px solid #EA580C" }}><div className="text-[14px] font-bold" style={{ color: "#EA580C" }}>💥 EXPLOSIVE BATTER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.explosiveBatter}</div></div>}
-          {ai.deathOversSpecialist && <div className="p-3 rounded-lg" style={{ background: "rgba(78,226,236,0.08)", border: "1px solid var(--cyan)", borderLeft: "4px solid #2563EB" }}><div className="text-[14px] font-bold" style={{ color: "var(--cyan)" }}>🎯 DEATH OVERS SPECIALIST</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.deathOversSpecialist}</div></div>}
-          {ai.powerplaySpecialist && <div className="p-3 rounded-lg" style={{ background: "rgba(14,165,233,0.08)", border: "1px solid #0EA5E9", borderLeft: "4px solid #0EA5E9" }}><div className="text-[14px] font-bold" style={{ color: "#0EA5E9" }}>⚡ POWERPLAY SPECIALIST</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.powerplaySpecialist}</div></div>}
+          {ai.topDifferential && <div className="p-3 rounded-lg" style={{ background: "rgba(124,58,237,0.08)", borderTop: "1px solid #7C3AED", borderRight: "1px solid #7C3AED", borderBottom: "1px solid #7C3AED", borderLeft: "4px solid #7C3AED" }}><div className="text-[14px] font-bold" style={{ color: "#a78bfa" }}>💎 TOP DIFFERENTIAL</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.topDifferential}</div></div>}
+          {ai.highestCeiling && <div className="p-3 rounded-lg" style={{ background: "rgba(255,210,63,0.08)", borderTop: "1px solid var(--gold)", borderRight: "1px solid var(--gold)", borderBottom: "1px solid var(--gold)", borderLeft: "4px solid #F59E0B" }}><div className="text-[14px] font-bold" style={{ color: "var(--gold)" }}>🚀 HIGHEST CEILING</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.highestCeiling}</div></div>}
+          {ai.safestPlayer && <div className="p-3 rounded-lg" style={{ background: "rgba(56,224,123,0.08)", borderTop: "1px solid var(--green)", borderRight: "1px solid var(--green)", borderBottom: "1px solid var(--green)", borderLeft: "4px solid #16A34A" }}><div className="text-[14px] font-bold" style={{ color: "var(--green)" }}>🛡️ SAFEST PLAYER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.safestPlayer}</div></div>}
+          {ai.mostDangerousBowler && <div className="p-3 rounded-lg" style={{ background: "rgba(245,0,87,0.08)", borderTop: "1px solid var(--pink)", borderRight: "1px solid var(--pink)", borderBottom: "1px solid var(--pink)", borderLeft: "4px solid #DC2626" }}><div className="text-[14px] font-bold" style={{ color: "var(--pink)" }}>⚡ MOST DANGEROUS BOWLER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.mostDangerousBowler}</div></div>}
+          {ai.explosiveBatter && <div className="p-3 rounded-lg" style={{ background: "rgba(234,88,12,0.08)", borderTop: "1px solid #EA580C", borderRight: "1px solid #EA580C", borderBottom: "1px solid #EA580C", borderLeft: "4px solid #EA580C" }}><div className="text-[14px] font-bold" style={{ color: "#EA580C" }}>💥 EXPLOSIVE BATTER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.explosiveBatter}</div></div>}
+          {ai.deathOversSpecialist && <div className="p-3 rounded-lg" style={{ background: "rgba(78,226,236,0.08)", borderTop: "1px solid var(--cyan)", borderRight: "1px solid var(--cyan)", borderBottom: "1px solid var(--cyan)", borderLeft: "4px solid #2563EB" }}><div className="text-[14px] font-bold" style={{ color: "var(--cyan)" }}>🎯 DEATH OVERS SPECIALIST</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.deathOversSpecialist}</div></div>}
+          {ai.powerplaySpecialist && <div className="p-3 rounded-lg" style={{ background: "rgba(14,165,233,0.08)", borderTop: "1px solid #0EA5E9", borderRight: "1px solid #0EA5E9", borderBottom: "1px solid #0EA5E9", borderLeft: "4px solid #0EA5E9" }}><div className="text-[14px] font-bold" style={{ color: "#0EA5E9" }}>⚡ POWERPLAY SPECIALIST</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.powerplaySpecialist}</div></div>}
         </div>
       </>)}
     </>;
