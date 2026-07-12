@@ -99,14 +99,25 @@ export function ApnaTransferModal({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPhase("loading");
 
-      const detail = await getMatchDetail((match.matchId ?? match.id ?? "") as string);
-      if (!detail) { // eslint-disable-next-line react-hooks/set-state-in-effect
-        setPhase("ready"); return;
+      const matchIdStr = (match.matchId ?? match.id ?? "") as string;
+      if (!matchIdStr) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setPhase("ready");
+        toast.error("⚠️ Match ID not found — transfer only works for matches from the Home page (not Research page)");
+        return;
+      }
+
+      const detail = await getMatchDetail(matchIdStr);
+      if (!detail) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setPhase("ready");
+        toast.error("⚠️ This match is not available on the fantasy backend. Transfer works only for matches listed on the Home page.");
+        return;
       }
       const d = detail as any;
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setMatchNumericId(String(d.id || match.matchId || match.id || ""));
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+      // eslint-disable-next-line react-hooks/set-state-in-effect/set-state-in-effect
       setMatchDbId(String(d._id || ""));
 
       // Build player ID map
@@ -200,7 +211,7 @@ export function ApnaTransferModal({
               if (typeof j.data === "string") { const dec = decrypt<any>(j.data); if (dec?.link) { link = dec.link; success = true; } }
               else if (typeof j.data === "object" && (j.data as any).link) { link = (j.data as any).link; success = true; }
             } else {
-              message = j.message || "Backend rejected";
+              message = j.message || "Backend rejected — match may not be available for this fantasy platform";
             }
           } catch { message = "Parse error"; }
         } else { message = `HTTP ${res.status}`; }
