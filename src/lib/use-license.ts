@@ -117,7 +117,7 @@ export function useLicense() {
       // Now: mark as expired → forces re-verification via Firebase.
       console.log("[useLicense] Key not in local store — marking expired (security fix)");
       clearLicense();
-      setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
+      setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
       setIsExpired(true);
       return true;
     }
@@ -125,7 +125,7 @@ export function useLicense() {
     if (keyObj.status === "suspended") {
       console.log("[useLicense] Key suspended — auto-clearing");
       clearLicense();
-      setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
+      setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
       setIsExpired(true);
       return true;
     }
@@ -138,7 +138,7 @@ export function useLicense() {
       console.log(`[useLicense] expiresAt: ${new Date(keyObj.expiresAt).toISOString()}`);
       console.log(`[useLicense] serverTime: ${new Date(serverTime).toISOString()}`);
       clearLicense();
-      setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
+      setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
       setIsExpired(true);
       return true;
     }
@@ -158,7 +158,7 @@ export function useLicense() {
     // Give Firebase time to sync before checking
     const timer = setTimeout(async () => {
       try {
-        const result = await admin.verifyLicense(licenseState.key, licenseState.deviceId);
+        const result = await admin.verifyLicense(licenseState.key || "", licenseState.deviceId);
         if (!result.valid) {
           // FIX: Don't auto-clear immediately — check if Firebase is still syncing
           // Only clear if we get a definitive "expired" or "suspended" response
@@ -166,7 +166,7 @@ export function useLicense() {
           if (msg.includes("expired") || msg.includes("suspended") || msg.includes("not found")) {
             console.log("[useLicense] License invalid (confirmed) — clearing");
             clearLicense();
-            setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
+            setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
             setIsExpired(true);
           } else {
             // SECURITY FIX: Don't keep verified on inconclusive results.
@@ -174,12 +174,12 @@ export function useLicense() {
             // Now: clear license — forces re-verification
             console.log("[useLicense] License check inconclusive — clearing (security fix)");
             clearLicense();
-            setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
+            setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
             setIsExpired(true);
           }
         } else if (result.keyType && result.keyType !== licenseState.keyType) {
-          // Sync keyType
-          setLicenseVerified(licenseState.key, result.keyType);
+          // Sync keyType + expiresAt
+          setLicenseVerified(licenseState.key || "", result.keyType, result.expiresAt);
           setLicenseState({
             verified: true,
             key: licenseState.key,
@@ -250,8 +250,8 @@ export function useLicense() {
         const result = await admin.verifyLicense(cleanKey, deviceId);
         setVerifying(false);
         if (result.valid) {
-          setLicenseVerified(cleanKey, result.keyType);
-          setLicenseState({ verified: true, key: cleanKey, deviceId, keyType: result.keyType || null });
+          setLicenseVerified(cleanKey, result.keyType, result.expiresAt);
+          setLicenseState({ verified: true, key: cleanKey, deviceId, keyType: result.keyType || null, expiresAt: result.expiresAt ?? null });
           setIsExpired(false);
           setShowActivate(false);
           setKeyInput("");
@@ -265,7 +265,7 @@ export function useLicense() {
 
   const deactivate = useCallback(() => {
     clearLicense();
-    setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null });
+    setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
     setIsExpired(false);
   }, []);
 

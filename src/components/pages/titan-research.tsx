@@ -1622,7 +1622,7 @@ function LineupFlowBanner({
   // 2 = Official Lineup (just announced — transition)
   // 3 = After Lineup (lineup announced, teams not yet generated)
   // 4 = Final Teams (teams generated + valid XI)
-  const currentStage = hasValidXI && hasGeneratedTeams
+  const currentStage: number = hasValidXI && hasGeneratedTeams
     ? 4
     : lineupAnnounced
       ? 3

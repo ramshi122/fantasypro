@@ -149,7 +149,7 @@ interface AdminState {
   deleteKey: (key: string) => void;
   extendExpiry: (key: string, days: number) => void;
   resetDevice: (key: string) => void;
-  verifyLicense: (key: string, deviceId: string) => Promise<{ valid: boolean; message: string; keyType?: KeyType }>;
+  verifyLicense: (key: string, deviceId: string) => Promise<{ valid: boolean; message: string; keyType?: KeyType; expiresAt?: number | null }>;
   /** Re-activate ALL keys — fixes any expired/suspended key by extending expiry
    *  and setting status to "active". Returns count of fixed keys. */
   validateAllKeys: () => number;
@@ -902,7 +902,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
         get().addLog("key_verification", `Key ${cleanKey} verified on ${deviceId} | Type: ${k.type} | Status: ${k.status}`);
         console.log("[License Verify] ✅ SUCCESS: License verified, type:", k.type);
         clearLockout();
-        return { valid: true, message: "✅ License Key Verified Successfully", keyType: k.type };
+        return { valid: true, message: "✅ License Key Verified Successfully", keyType: k.type, expiresAt: k.expiresAt ?? null };
       },
 
       unbindDevice: (deviceId) => {
@@ -1112,6 +1112,7 @@ export interface LicenseState {
   key: string | null;
   deviceId: string;
   keyType?: KeyType | null;
+  expiresAt?: number | null;
 }
 
 export function getDeviceId(): string {
@@ -1125,7 +1126,7 @@ export function getDeviceId(): string {
 }
 
 export function getLicenseState(): LicenseState {
-  if (typeof window === "undefined") return { verified: false, key: null, deviceId: "server", keyType: null };
+  if (typeof window === "undefined") return { verified: false, key: null, deviceId: "server", keyType: null, expiresAt: null };
   try {
     const data = JSON.parse(localStorage.getItem(LICENSE_STORAGE_KEY) || "{}");
     return {
@@ -1133,13 +1134,14 @@ export function getLicenseState(): LicenseState {
       key: data.key || null,
       deviceId: getDeviceId(),
       keyType: data.keyType || null,
+      expiresAt: data.expiresAt ?? null,
     };
   } catch {
-    return { verified: false, key: null, deviceId: getDeviceId(), keyType: null };
+    return { verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null };
   }
 }
 
-export function setLicenseVerified(key: string, keyType?: KeyType | null) {
+export function setLicenseVerified(key: string, keyType?: KeyType | null, expiresAt?: number | null) {
   if (typeof window === "undefined") return;
   localStorage.setItem(
     LICENSE_STORAGE_KEY,
@@ -1148,6 +1150,7 @@ export function setLicenseVerified(key: string, keyType?: KeyType | null) {
       key,
       deviceId: getDeviceId(),
       keyType: keyType || null,
+      expiresAt: expiresAt ?? null,
     })
   );
 }
