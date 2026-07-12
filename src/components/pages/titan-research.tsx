@@ -178,7 +178,7 @@ export function TitanResearch() {
         <div
           className="fixed left-1/2 top-20 -translate-x-1/2 z-[9999] px-5 py-3 rounded-xl text-sm font-bold border-2 max-w-[90vw] text-center animate-in fade-in slide-in-from-top duration-200"
           style={{
-            background: "linear-gradient(135deg, #FFFFFF, #F5F7FA)",
+            background: "linear-gradient(135deg, var(--panel), var(--panel-elevated))",
             borderColor: "var(--cyan)",
             color: "var(--cyan)",
             fontFamily: "'Share Tech Mono'",
@@ -225,9 +225,9 @@ function Nav({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
           onClick={() => setTab(it.id)}
           className="py-3 rounded-xl text-[14px] font-black uppercase flex flex-col items-center gap-1 transition"
           style={{
-            background: tab === it.id ? "#2563EB" : "transparent",
-            color: tab === it.id ? "#FFFFFF" : "#6B7280",
-            border: tab === it.id ? "1px solid #2563EB" : "1px solid transparent",
+            background: tab === it.id ? "var(--cyan)" : "transparent",
+            color: tab === it.id ? "#000000" : "var(--muted)",
+            border: tab === it.id ? "1px solid var(--cyan)" : "1px solid transparent",
             fontFamily: "'Orbitron', sans-serif",
           }}
         >
@@ -936,7 +936,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
           {!details?.lineupAnnounced && (
             <Section title="⏳ BEFORE LINEUP · Official Playing XI പ്രഖ്യാപിക്കുന്നതിന് മുമ്പ്">
               <div className="space-y-2 text-xs" style={{ fontFamily: "'Share Tech Mono'" }}>
-                <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(255,193,7,0.06)", border: "1px solid var(--gold)" }}>
+                <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(255,210,63,0.06)", border: "1px solid var(--gold)" }}>
                   <span style={{ color: "var(--gold)" }}>①</span>
                   <span style={{ color: "#f0f0f5" }}>Predicted Playing XI</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>Auto-loaded from Cricbuzz predicted squad</span>
@@ -951,7 +951,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
                   <span style={{ color: "#f0f0f5" }}>Pitch & Weather Analysis</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>Tap "PITCH & WEATHER ANALYSIS" below</span>
                 </div>
-                <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(255,193,7,0.06)", border: "1px solid var(--gold)" }}>
+                <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(255,210,63,0.06)", border: "1px solid var(--gold)" }}>
                   <span style={{ color: "var(--gold)" }}>④</span>
                   <span style={{ color: "#f0f0f5" }}>Probable Captain/Vice-Captain</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>See DT SADHYATHA section below</span>
@@ -988,7 +988,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
                     {pool.filter(p => p.inXI === false).length} bench players filtered out
                   </span>
                 </div>
-                <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(255,193,7,0.06)", border: "1px solid var(--gold)" }}>
+                <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(255,210,63,0.06)", border: "1px solid var(--gold)" }}>
                   <span style={{ color: "var(--gold)" }}>③</span>
                   <span style={{ color: "#f0f0f5" }}>Impact Player Analysis</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>Substitutes listed in Player Pool</span>
@@ -998,7 +998,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
                   <span style={{ color: "#f0f0f5" }}>Final AI Teams</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>Tap "GENERATE FINAL TEAMS" below</span>
                 </div>
-                <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(255,193,7,0.06)", border: "1px solid var(--gold)" }}>
+                <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(255,210,63,0.06)", border: "1px solid var(--gold)" }}>
                   <span style={{ color: "var(--gold)" }}>⑤</span>
                   <span style={{ color: "#f0f0f5" }}>Updated Captain/Vice-Captain</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>Auto-suggested from confirmed XI perf</span>
@@ -1072,7 +1072,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
                 disabled={shotBusy}
                 className="px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
                 style={{
-                  background: "rgba(255,193,7,0.08)",
+                  background: "rgba(255,210,63,0.08)",
                   color: "var(--gold)",
                   border: "1px solid var(--gold)",
                   fontFamily: "'Orbitron'",
@@ -1102,7 +1102,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
               {pool.length === 0 && !detailsLoading && (
                 <div
                   className="rounded-xl p-4 text-sm space-y-2"
-                  style={{ background: "rgba(255,210,63,0.08)", border: "1px dashed #F59E0B", color: "var(--gold)", fontFamily: "'Share Tech Mono'" }}
+                  style={{ background: "rgba(255,210,63,0.08)", border: "1px dashed var(--gold)", color: "var(--gold)", fontFamily: "'Share Tech Mono'" }}
                 >
                   <div className="font-black" style={{ color: "var(--gold)", fontFamily: "'Orbitron'" }}>
                     ⚠️ SQUAD NOT LOADED
@@ -1269,7 +1269,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
             <Section title="📜 BLUEPRINT CHEAT SHEET">
               <div
                 className="rounded-xl p-4 text-sm space-y-2"
-                style={{ background: "rgba(255,193,7,0.08)", border: "1px dashed var(--gold)", color: "var(--gold)", fontFamily: "'Share Tech Mono'" }}
+                style={{ background: "rgba(255,210,63,0.08)", border: "1px dashed var(--gold)", color: "var(--gold)", fontFamily: "'Share Tech Mono'" }}
               >
                 <div className="font-black" style={{ color: "var(--gold)", fontFamily: "'Orbitron'" }}>
                   ⏳ CHEAT SHEET WILL APPEAR WHEN XI IS VALID
@@ -1407,7 +1407,7 @@ function Section({
     >
       <div
         className="flex items-center justify-between mb-3 pb-2 text-[18px] font-black"
-        style={{ color: "#f0f0f5", fontFamily: "'Orbitron', sans-serif", borderBottom: "2px solid #F5F7FA" }}
+        style={{ color: "#f0f0f5", fontFamily: "'Orbitron', sans-serif", borderBottom: "2px solid var(--b1)" }}
       >
         <span>{title}</span>
         {actionLabel && (
@@ -1459,8 +1459,8 @@ function CBtn({ children, active, onClick }: { children: React.ReactNode; active
       className="w-full py-3 px-2 rounded-lg text-[15px] font-bold"
       style={{
         background: active ? "var(--cyan)" : "var(--panel-elevated)",
-        color: active ? "#FFFFFF" : "#444444",
-        border: `2px solid ${active ? "#2563EB" : "#E5E7EB"}`,
+        color: active ? "#000000" : "var(--text-off)",
+        border: `2px solid ${active ? "var(--cyan)" : "var(--b1)"}`,
         fontFamily: "'Orbitron', sans-serif",
       }}
     >
@@ -1896,7 +1896,7 @@ function GenTeamCard({ idx, group, team, t1Short }: { idx: number; group: string
         <div className="text-sm font-black" style={{ color: "var(--cyan)", fontFamily: "'Orbitron'" }}>
           TEAM #{idx}
         </div>
-        <div className="text-[14px] px-2 py-1 rounded-md" style={{ background: "rgba(255,193,7,0.1)", color: "var(--gold)", border: "1px solid var(--gold)", fontFamily: "'Share Tech Mono'" }}>
+        <div className="text-[14px] px-2 py-1 rounded-md" style={{ background: "rgba(255,210,63,0.1)", color: "var(--gold)", border: "1px solid var(--gold)", fontFamily: "'Share Tech Mono'" }}>
           {group}
         </div>
       </div>
@@ -2911,7 +2911,7 @@ function DtRow({ p, dt, isT1, locked, onClick, dim }: { p: Player; dt: DtPredict
       onClick={onClick}
       className="w-full text-left flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg transition-all active:scale-[0.98] cursor-pointer"
       style={{
-        background: locked ? "rgba(255,193,7,0.15)" : dim ? "rgba(0,0,0,0.05)" : "var(--panel-elevated)",
+        background: locked ? "rgba(255,210,63,0.15)" : dim ? "rgba(0,0,0,0.05)" : "var(--panel-elevated)",
         border: `1px solid ${locked ? "var(--gold)" : dim ? "rgba(0,0,0,0.05)" : "var(--b1)"}`,
         borderLeft: `4px solid ${isT1 ? "var(--t1)" : "var(--t2)"}`,
         opacity: dim && !locked ? 0.7 : 1,
@@ -2955,12 +2955,12 @@ function SquadSummaryBox({
         <StatPill label="🔄 ROTATING" value={`${rotating.length}`} color="var(--cyan)" />
         <StatPill label={`${t1Short} / ${t2Short}`} value={`${t1Locked} / ${t2Locked}`} color="#fff" />
       </div>
-      <div className="mb-2 text-[14px] font-black px-2 py-1 rounded" style={{ background: "rgba(255,193,7,0.1)", color: "var(--gold)", border: "1px solid var(--gold)", fontFamily: "'Orbitron'" }}>
+      <div className="mb-2 text-[14px] font-black px-2 py-1 rounded" style={{ background: "rgba(255,210,63,0.1)", color: "var(--gold)", border: "1px solid var(--gold)", fontFamily: "'Orbitron'" }}>
         🔒 GOLD — LOCKED IN EVERY TEAM
       </div>
       <div className="flex flex-wrap gap-1.5 mb-3">
         {lockedPlayers.map((p) => (
-          <span key={p.id} className="px-2 py-1 rounded text-[14px] font-black" style={{ background: "rgba(255,193,7,0.15)", color: "var(--gold)", border: "1px solid var(--gold)", fontFamily: "'Orbitron'" }}>
+          <span key={p.id} className="px-2 py-1 rounded text-[14px] font-black" style={{ background: "rgba(255,210,63,0.15)", color: "var(--gold)", border: "1px solid var(--gold)", fontFamily: "'Orbitron'" }}>
             🔒 {p.name}
           </span>
         ))}
@@ -3384,7 +3384,7 @@ ${modulesPrompt}`;
                 className="p-3 rounded-lg cursor-pointer transition-all"
                 style={{
                   background: selectedMatch?.id === m.id ? "rgba(78,226,236,0.08)" : "var(--panel-elevated)",
-                  border: `2px solid ${selectedMatch?.id === m.id ? "#2563EB" : "#E5E7EB"}`,
+                  border: `2px solid ${selectedMatch?.id === m.id ? "var(--cyan)" : "var(--b1)"}`,
                 }}
               >
                 <div className="flex items-center justify-between">
@@ -3392,7 +3392,7 @@ ${modulesPrompt}`;
                     {m.team1Short} vs {m.team2Short}
                   </div>
                   {m.state === "live" && (
-                    <span className="text-[12px] font-black px-2 py-0.5 rounded" style={{ background: "#DC2626", color: "#f0f0f5" }}>● LIVE</span>
+                    <span className="text-[12px] font-black px-2 py-0.5 rounded" style={{ background: "var(--pink)", color: "#f0f0f5" }}>● LIVE</span>
                   )}
                 </div>
                 <div className="text-[13px]" style={{ color: "var(--text-off)" }}>
@@ -3416,8 +3416,8 @@ ${modulesPrompt}`;
                   className="p-3 rounded-lg text-[13px] font-black flex flex-col items-center gap-1 transition-all"
                   style={{
                     background: activeModule === mod.n ? "var(--cyan)" : "var(--panel-elevated)",
-                    color: activeModule === mod.n ? "#FFFFFF" : "#444444",
-                    border: `2px solid ${activeModule === mod.n ? "#2563EB" : "#E5E7EB"}`,
+                    color: activeModule === mod.n ? "#000000" : "var(--text-off)",
+                    border: `2px solid ${activeModule === mod.n ? "var(--cyan)" : "var(--b1)"}`,
                     fontFamily: "'Orbitron', sans-serif",
                   }}
                 >
@@ -3476,7 +3476,7 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
   // Helper: Premium white card
   const card = (title: string, children: React.ReactNode) => (
     <div className="rounded-2xl p-5 mb-3" style={{ background: "var(--panel)", border: "1px solid var(--b1)", boxShadow: "var(--sh-depth)", borderRadius: "18px" }}>
-      <div className="text-[18px] font-black mb-3 pb-2" style={{ color: "#f0f0f5", fontFamily: "'Orbitron', sans-serif", borderBottom: "2px solid #F5F7FA" }}>
+      <div className="text-[18px] font-black mb-3 pb-2" style={{ color: "#f0f0f5", fontFamily: "'Orbitron', sans-serif", borderBottom: "2px solid var(--b1)" }}>
         {title}
       </div>
       {children}
@@ -3485,7 +3485,7 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
 
   // Helper: Stat row
   const statRow = (label: string, value: any, color = "#111111") => (
-    <div className="flex justify-between items-center py-2 border-b" style={{ borderColor: "#F5F7FA" }}>
+    <div className="flex justify-between items-center py-2 border-b" style={{ borderColor: "var(--b1)" }}>
       <span className="text-[15px]" style={{ color: "var(--text-off)" }}>{label}</span>
       <span className="text-[15px] font-bold" style={{ color }}>{typeof value === "number" ? value : (value || "—")}</span>
     </div>
@@ -3496,7 +3496,7 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     <div className="px-3 py-2 rounded-lg flex items-center justify-between" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)" }}>
       <span className="text-[15px] font-bold" style={{ color: "#f0f0f5" }}>{name}</span>
       {badge && (
-        <span className="text-[12px] font-black px-2 py-0.5 rounded" style={{ background: badgeColor || "#2563EB", color: "#f0f0f5" }}>
+        <span className="text-[12px] font-black px-2 py-0.5 rounded" style={{ background: badgeColor || "var(--cyan)", color: "#f0f0f5" }}>
           {badge}
         </span>
       )}
@@ -3522,17 +3522,17 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     return <>
       {card("🏟️ MATCH INTELLIGENCE", <>
         {statRow("Venue Analysis", mi.venueAnalysis)}
-        {statRow("Pitch Type", mi.pitchType, mi.pitchType?.includes("Batting") ? "#16A34A" : mi.pitchType?.includes("Bowling") ? "#DC2626" : "#F59E0B")}
+        {statRow("Pitch Type", mi.pitchType, mi.pitchType?.includes("Batting") ? "var(--green)" : mi.pitchType?.includes("Bowling") ? "var(--pink)" : "var(--gold)")}
         {statRow("Avg First Innings", mi.avgFirstInnings)}
         {statRow("Avg Second Innings", mi.avgSecondInnings)}
         {statRow("Boundary Size", mi.boundarySize)}
-        {statRow("Chasing Success Rate", mi.chasingSuccessRate ? `${mi.chasingSuccessRate}%` : null, "#16A34A")}
+        {statRow("Chasing Success Rate", mi.chasingSuccessRate ? `${mi.chasingSuccessRate}%` : null, "var(--green)")}
         {statRow("Toss Advantage", mi.tossAdvantage)}
-        {statRow("Dew Factor", mi.dewFactor, mi.dewFactor === "High" ? "#DC2626" : "#F59E0B")}
+        {statRow("Dew Factor", mi.dewFactor, mi.dewFactor === "High" ? "var(--pink)" : "var(--gold)")}
         {statRow("Spin vs Pace", mi.spinVsPace)}
         {statRow("Powerplay Behaviour", mi.powerplayBehaviour)}
         {statRow("Death Overs Behaviour", mi.deathOversBehaviour)}
-        {statRow("AI Venue Rating", mi.aiVenueRating ? `${mi.aiVenueRating}/100` : null, "#2563EB")}
+        {statRow("AI Venue Rating", mi.aiVenueRating ? `${mi.aiVenueRating}/100` : null, "var(--cyan)")}
       </>)}
     </>;
   }
@@ -3544,12 +3544,12 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {card("🌤️ WEATHER REPORT", <>
         {statRow("Temperature", w.temperature)}
         {statRow("Humidity", w.humidity)}
-        {statRow("Rain Probability", w.rainProbability ? `${w.rainProbability}%` : null, w.rainProbability > 50 ? "#DC2626" : "#F59E0B")}
+        {statRow("Rain Probability", w.rainProbability ? `${w.rainProbability}%` : null, w.rainProbability > 50 ? "var(--pink)" : "var(--gold)")}
         {statRow("Wind Speed", w.windSpeed)}
         {statRow("Cloud Cover", w.cloudCover)}
-        {statRow("Dew Probability", w.dewProbability ? `${w.dewProbability}%` : null, "#F59E0B")}
-        {progressBar("Fantasy Weather Impact", w.fantasyImpactScore || 0, "#2563EB")}
-        {statRow("Risk Indicator", w.riskIndicator, w.riskIndicator === "High" ? "#DC2626" : w.riskIndicator === "Medium" ? "#F59E0B" : "#16A34A")}
+        {statRow("Dew Probability", w.dewProbability ? `${w.dewProbability}%` : null, "var(--gold)")}
+        {progressBar("Fantasy Weather Impact", w.fantasyImpactScore || 0, "var(--cyan)")}
+        {statRow("Risk Indicator", w.riskIndicator, w.riskIndicator === "High" ? "var(--pink)" : w.riskIndicator === "Medium" ? "var(--gold)" : "var(--green)")}
       </>)}
     </>;
   }
@@ -3562,21 +3562,21 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
         {t.tossWinProbability && (
           <div className="mb-3">
             <div className="text-[15px] mb-2" style={{ color: "var(--text-off)" }}>Toss Win Probability:</div>
-            {progressBar(match.team1Short, t.tossWinProbability.team1 || 0, "#DC2626")}
-            {progressBar(match.team2Short, t.tossWinProbability.team2 || 0, "#2563EB")}
+            {progressBar(match.team1Short, t.tossWinProbability.team1 || 0, "var(--pink)")}
+            {progressBar(match.team2Short, t.tossWinProbability.team2 || 0, "var(--cyan)")}
           </div>
         )}
         {statRow("Bat First Prediction", t.batFirstPrediction)}
         {statRow("Bowl First Prediction", t.bowlFirstPrediction)}
-        {statRow("Toss Impact Rating", t.tossImpactRating ? `${t.tossImpactRating}/100` : null, "#2563EB")}
+        {statRow("Toss Impact Rating", t.tossImpactRating ? `${t.tossImpactRating}/100` : null, "var(--cyan)")}
         {statRow("Captain Changes", t.captainChanges)}
         {statRow("Vice Captain Changes", t.viceCaptainChanges)}
       </>)}
       {t.bestPlayersBatFirst && t.bestPlayersBatFirst.length > 0 && card("🏏 BEST IF BAT FIRST", <>
-        <div className="space-y-2">{t.bestPlayersBatFirst.map((p: string, i: number) => <div key={i}>{playerChip(p, "BAT", "#16A34A")}</div>)}</div>
+        <div className="space-y-2">{t.bestPlayersBatFirst.map((p: string, i: number) => <div key={i}>{playerChip(p, "BAT", "var(--green)")}</div>)}</div>
       </>)}
       {t.bestPlayersBowlFirst && t.bestPlayersBowlFirst.length > 0 && card("🎯 BEST IF BOWL FIRST", <>
-        <div className="space-y-2">{t.bestPlayersBowlFirst.map((p: string, i: number) => <div key={i}>{playerChip(p, "BOWL", "#2563EB")}</div>)}</div>
+        <div className="space-y-2">{t.bestPlayersBowlFirst.map((p: string, i: number) => <div key={i}>{playerChip(p, "BOWL", "var(--cyan)")}</div>)}</div>
       </>)}
     </>;
   }
@@ -3587,17 +3587,17 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     return <>
       {xi.confirmedXI && xi.confirmedXI.length > 0 && card("✅ CONFIRMED PLAYING XI", <>
         <div className="grid grid-cols-2 gap-2">
-          {xi.confirmedXI.map((p: string, i: number) => <div key={i}>{playerChip(p, "XI", "#16A34A")}</div>)}
+          {xi.confirmedXI.map((p: string, i: number) => <div key={i}>{playerChip(p, "XI", "var(--green)")}</div>)}
         </div>
       </>)}
       {xi.impactPlayers && xi.impactPlayers.length > 0 && card("⚡ IMPACT PLAYERS", <>
         <div className="grid grid-cols-2 gap-2">
-          {xi.impactPlayers.map((p: string, i: number) => <div key={i}>{playerChip(p, "IMPACT", "#F59E0B")}</div>)}
+          {xi.impactPlayers.map((p: string, i: number) => <div key={i}>{playerChip(p, "IMPACT", "var(--gold)")}</div>)}
         </div>
       </>)}
       {xi.benchPlayers && xi.benchPlayers.length > 0 && card("🪑 BENCH PLAYERS", <>
         <div className="grid grid-cols-2 gap-2">
-          {xi.benchPlayers.map((p: string, i: number) => <div key={i}>{playerChip(p, "BENCH", "#6B7280")}</div>)}
+          {xi.benchPlayers.map((p: string, i: number) => <div key={i}>{playerChip(p, "BENCH", "var(--muted)")}</div>)}
         </div>
       </>)}
       {card("📢 LAST MINUTE UPDATES", <>
@@ -3617,19 +3617,19 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
             <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)" }}>
               <div className="flex justify-between items-center mb-2">
                 <span className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>{p.name}</span>
-                <span className="text-[14px] font-bold px-2 py-0.5 rounded" style={{ background: p.aiRating >= 75 ? "#16A34A" : p.aiRating >= 50 ? "#F59E0B" : "#DC2626", color: "#f0f0f5" }}>
+                <span className="text-[14px] font-bold px-2 py-0.5 rounded" style={{ background: p.aiRating >= 75 ? "var(--green)" : p.aiRating >= 50 ? "var(--gold)" : "var(--pink)", color: "#f0f0f5" }}>
                   AI {p.aiRating || 0}
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-[14px]">
                 <div style={{ color: "var(--text-off)" }}>Last 5: <b style={{ color: "#f0f0f5" }}>{(p.last5Scores || []).join(", ") || "—"}</b></div>
-                <div style={{ color: "var(--text-off)" }}>Bat Form: <b style={{ color: p.battingForm === "Good" ? "#16A34A" : p.battingForm === "Poor" ? "#DC2626" : "#F59E0B" }}>{p.battingForm || "—"}</b></div>
-                <div style={{ color: "var(--text-off)" }}>Bowl Form: <b style={{ color: p.bowlingForm === "Good" ? "#16A34A" : p.bowlingForm === "Poor" ? "#DC2626" : "#F59E0B" }}>{p.bowlingForm || "—"}</b></div>
+                <div style={{ color: "var(--text-off)" }}>Bat Form: <b style={{ color: p.battingForm === "Good" ? "var(--green)" : p.battingForm === "Poor" ? "var(--pink)" : "var(--gold)" }}>{p.battingForm || "—"}</b></div>
+                <div style={{ color: "var(--text-off)" }}>Bowl Form: <b style={{ color: p.bowlingForm === "Good" ? "var(--green)" : p.bowlingForm === "Poor" ? "var(--pink)" : "var(--gold)" }}>{p.bowlingForm || "—"}</b></div>
                 <div style={{ color: "var(--text-off)" }}>SR: <b style={{ color: "var(--cyan)" }}>{p.strikeRate || "—"}</b></div>
                 <div style={{ color: "var(--text-off)" }}>Eco: <b style={{ color: "var(--cyan)" }}>{p.economyRate || "—"}</b></div>
                 <div style={{ color: "var(--text-off)" }}>Fantasy Avg: <b style={{ color: "var(--green)" }}>{p.fantasyAverage || "—"}</b></div>
                 <div style={{ color: "var(--text-off)" }}>Consistency: <b style={{ color: "#f0f0f5" }}>{p.consistencyScore || "—"}%</b></div>
-                <div style={{ color: "var(--text-off)" }}>Risk: <b style={{ color: p.riskRating >= 70 ? "#DC2626" : p.riskRating >= 40 ? "#F59E0B" : "#16A34A" }}>{p.riskRating || "—"}</b></div>
+                <div style={{ color: "var(--text-off)" }}>Risk: <b style={{ color: p.riskRating >= 70 ? "var(--pink)" : p.riskRating >= 40 ? "var(--gold)" : "var(--green)" }}>{p.riskRating || "—"}</b></div>
               </div>
               {p.venueRecord && <div className="text-[13px] mt-2" style={{ color: "var(--muted)" }}>📍 {p.venueRecord}</div>}
               {p.oppositionRecord && <div className="text-[13px]" style={{ color: "var(--muted)" }}>⚔️ {p.oppositionRecord}</div>}
@@ -3647,10 +3647,10 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {cl.fixPlayers && cl.fixPlayers.length > 0 && card("🔒 7 AI FIX PLAYERS", <>
         <div className="space-y-2">
           {cl.fixPlayers.slice(0, 7).map((p: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", borderTop: "1px solid var(--b1)", borderRight: "1px solid var(--b1)", borderBottom: "1px solid var(--b1)", borderLeft: "4px solid #16A34A" }}>
+            <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", borderTop: "1px solid var(--b1)", borderRight: "1px solid var(--b1)", borderBottom: "1px solid var(--b1)", borderLeft: "4px solid var(--green)" }}>
               <div className="flex justify-between items-center mb-1">
                 <span className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>{p.name}</span>
-                <span className="text-[14px] font-bold px-2 py-0.5 rounded" style={{ background: "#16A34A", color: "#f0f0f5" }}>LOCK {p.lockPct || 0}%</span>
+                <span className="text-[14px] font-bold px-2 py-0.5 rounded" style={{ background: "var(--green)", color: "#f0f0f5" }}>LOCK {p.lockPct || 0}%</span>
               </div>
               <div className="grid grid-cols-3 gap-2 text-[13px]" style={{ color: "var(--text-off)" }}>
                 <div>Role: <b>{p.role}</b></div>
@@ -3665,14 +3665,14 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {cl.topCaptains && cl.topCaptains.length > 0 && card("👑 TOP 6 CAPTAIN PICKS", <>
         <div className="space-y-2">
           {cl.topCaptains.slice(0, 6).map((c: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "var(--panel-elevated)", borderTop: "1px solid var(--b1)", borderRight: "1px solid var(--b1)", borderBottom: "1px solid var(--b1)", borderLeft: "4px solid #F59E0B" }}>
+            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "var(--panel-elevated)", borderTop: "1px solid var(--b1)", borderRight: "1px solid var(--b1)", borderBottom: "1px solid var(--b1)", borderLeft: "4px solid var(--gold)" }}>
               <div>
                 <div className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>#{c.rank} {c.name}</div>
                 <div className="text-[13px]" style={{ color: "var(--muted)" }}>{c.reason}</div>
               </div>
               <div className="text-right">
                 <div className="text-[15px] font-black" style={{ color: "var(--gold)" }}>{c.captainScore}</div>
-                <div className="text-[12px]" style={{ color: c.risk === "High" ? "#DC2626" : c.risk === "Medium" ? "#F59E0B" : "#16A34A" }}>{c.risk}</div>
+                <div className="text-[12px]" style={{ color: c.risk === "High" ? "var(--pink)" : c.risk === "Medium" ? "var(--gold)" : "var(--green)" }}>{c.risk}</div>
               </div>
             </div>
           ))}
@@ -3681,14 +3681,14 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {cl.topViceCaptains && cl.topViceCaptains.length > 0 && card("⚡ TOP 6 VICE CAPTAIN PICKS", <>
         <div className="space-y-2">
           {cl.topViceCaptains.slice(0, 6).map((c: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "var(--panel-elevated)", borderTop: "1px solid var(--b1)", borderRight: "1px solid var(--b1)", borderBottom: "1px solid var(--b1)", borderLeft: "4px solid #2563EB" }}>
+            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "var(--panel-elevated)", borderTop: "1px solid var(--b1)", borderRight: "1px solid var(--b1)", borderBottom: "1px solid var(--b1)", borderLeft: "4px solid var(--cyan)" }}>
               <div>
                 <div className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>#{c.rank} {c.name}</div>
                 <div className="text-[13px]" style={{ color: "var(--muted)" }}>{c.reason}</div>
               </div>
               <div className="text-right">
                 <div className="text-[15px] font-black" style={{ color: "var(--cyan)" }}>{c.vcScore}</div>
-                <div className="text-[12px]" style={{ color: c.risk === "High" ? "#DC2626" : c.risk === "Medium" ? "#F59E0B" : "#16A34A" }}>{c.risk}</div>
+                <div className="text-[12px]" style={{ color: c.risk === "High" ? "var(--pink)" : c.risk === "Medium" ? "var(--gold)" : "var(--green)" }}>{c.risk}</div>
               </div>
             </div>
           ))}
@@ -3702,23 +3702,23 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     const cc = analysis.captainCenter || {};
     return <>
       {card("👑 AI CAPTAIN CENTER", <>
-        {progressBar("Captain Success Rate", cc.captainSuccessPct || 0, "#F59E0B")}
-        {progressBar("Vice Captain Success Rate", cc.viceCaptainSuccessPct || 0, "#2563EB")}
+        {progressBar("Captain Success Rate", cc.captainSuccessPct || 0, "var(--gold)")}
+        {progressBar("Vice Captain Success Rate", cc.viceCaptainSuccessPct || 0, "var(--cyan)")}
       </>)}
       {cc.top10Captains && card("🏆 TOP 10 CAPTAINS", <>
-        <div className="space-y-2">{cc.top10Captains.map((p: string, i: number) => <div key={i}>{playerChip(`#${i+1} ${p}`, "C", "#F59E0B")}</div>)}</div>
+        <div className="space-y-2">{cc.top10Captains.map((p: string, i: number) => <div key={i}>{playerChip(`#${i+1} ${p}`, "C", "var(--gold)")}</div>)}</div>
       </>)}
       {cc.top10ViceCaptains && card("⚡ TOP 10 VICE CAPTAINS", <>
-        <div className="space-y-2">{cc.top10ViceCaptains.map((p: string, i: number) => <div key={i}>{playerChip(`#${i+1} ${p}`, "VC", "#2563EB")}</div>)}</div>
+        <div className="space-y-2">{cc.top10ViceCaptains.map((p: string, i: number) => <div key={i}>{playerChip(`#${i+1} ${p}`, "VC", "var(--cyan)")}</div>)}</div>
       </>)}
       {cc.safeCaptains && card("🛡️ SAFE CAPTAINS", <>
-        <div className="space-y-2">{cc.safeCaptains.map((p: string, i: number) => <div key={i}>{playerChip(p, "SAFE", "#16A34A")}</div>)}</div>
+        <div className="space-y-2">{cc.safeCaptains.map((p: string, i: number) => <div key={i}>{playerChip(p, "SAFE", "var(--green)")}</div>)}</div>
       </>)}
       {cc.differentialCaptains && card("💎 DIFFERENTIAL CAPTAINS", <>
         <div className="space-y-2">{cc.differentialCaptains.map((p: string, i: number) => <div key={i}>{playerChip(p, "DIFF", "#7C3AED")}</div>)}</div>
       </>)}
       {cc.megaGLCaptains && card("🎰 MEGA GL CAPTAINS", <>
-        <div className="space-y-2">{cc.megaGLCaptains.map((p: string, i: number) => <div key={i}>{playerChip(p, "GL", "#DC2626")}</div>)}</div>
+        <div className="space-y-2">{cc.megaGLCaptains.map((p: string, i: number) => <div key={i}>{playerChip(p, "GL", "var(--pink)")}</div>)}</div>
       </>)}
     </>;
   }
@@ -3743,7 +3743,7 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
         {gl.hiddenGems && gl.hiddenGems.length > 0 && (
           <div className="mb-3">
             <div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>🔮 HIDDEN GEMS</div>
-            <div className="space-y-2">{gl.hiddenGems.map((p: string, i: number) => <div key={i}>{playerChip(p, "GEM", "#16A34A")}</div>)}</div>
+            <div className="space-y-2">{gl.hiddenGems.map((p: string, i: number) => <div key={i}>{playerChip(p, "GEM", "var(--green)")}</div>)}</div>
           </div>
         )}
         {gl.jackpotCombinations && gl.jackpotCombinations.length > 0 && (
@@ -3781,11 +3781,11 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
             <div className="text-[20px] font-black" style={{ color: "#f0f0f5" }}>{tb.wicketkeepers || 0}</div>
           </div>
         </div>
-        {progressBar("Credits Used", tb.creditsUsed || 0, "#2563EB")}
-        {statRow("Credits Remaining", tb.creditsRemaining != null ? `${tb.creditsRemaining}/100` : null, "#16A34A")}
+        {progressBar("Credits Used", tb.creditsUsed || 0, "var(--cyan)")}
+        {statRow("Credits Remaining", tb.creditsRemaining != null ? `${tb.creditsRemaining}/100` : null, "var(--green)")}
         {statRow("Left vs Right", tb.leftRightCombo)}
         {statRow("Spin vs Pace", tb.spinVsPace)}
-        {progressBar("Experience Score", tb.experienceScore || 0, "#F59E0B")}
+        {progressBar("Experience Score", tb.experienceScore || 0, "var(--gold)")}
       </>)}
     </>;
   }
@@ -3795,10 +3795,10 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     const wp = analysis.winProbability || {};
     return <>
       {card("🎯 WIN PROBABILITY", <>
-        {progressBar(`${match.team1Short} Win`, wp.team1WinPct || 0, "#DC2626")}
-        {progressBar(`${match.team2Short} Win`, wp.team2WinPct || 0, "#2563EB")}
-        {statRow("Match Confidence", wp.matchConfidence ? `${wp.matchConfidence}%` : null, "#2563EB")}
-        {statRow("Fantasy Confidence", wp.fantasyConfidence ? `${wp.fantasyConfidence}%` : null, "#16A34A")}
+        {progressBar(`${match.team1Short} Win`, wp.team1WinPct || 0, "var(--pink)")}
+        {progressBar(`${match.team2Short} Win`, wp.team2WinPct || 0, "var(--cyan)")}
+        {statRow("Match Confidence", wp.matchConfidence ? `${wp.matchConfidence}%` : null, "var(--cyan)")}
+        {statRow("Fantasy Confidence", wp.fantasyConfidence ? `${wp.fantasyConfidence}%` : null, "var(--green)")}
         {statRow("AI Prediction Confidence", wp.aiPredictionConfidence ? `${wp.aiPredictionConfidence}%` : null, "#7C3AED")}
       </>)}
     </>;
@@ -3810,22 +3810,22 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     return <>
       {card("💎 FANTASY VALUE PICKS", <>
         {fp.budgetPicks && fp.budgetPicks.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>💰 BUDGET PICKS</div><div className="space-y-2">{fp.budgetPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "BUDGET", "#16A34A")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>💰 BUDGET PICKS</div><div className="space-y-2">{fp.budgetPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "BUDGET", "var(--green)")}</div>)}</div></div>
         )}
         {fp.valuePicks && fp.valuePicks.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--cyan)" }}>⭐ VALUE PICKS</div><div className="space-y-2">{fp.valuePicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "VALUE", "#2563EB")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--cyan)" }}>⭐ VALUE PICKS</div><div className="space-y-2">{fp.valuePicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "VALUE", "var(--cyan)")}</div>)}</div></div>
         )}
         {fp.hiddenGems && fp.hiddenGems.length > 0 && (
           <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#a78bfa" }}>🔮 HIDDEN GEMS</div><div className="space-y-2">{fp.hiddenGems.map((p: string, i: number) => <div key={i}>{playerChip(p, "GEM", "#7C3AED")}</div>)}</div></div>
         )}
         {fp.mustHave && fp.mustHave.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--pink)" }}>🔥 MUST HAVE</div><div className="space-y-2">{fp.mustHave.map((p: string, i: number) => <div key={i}>{playerChip(p, "MUST", "#DC2626")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--pink)" }}>🔥 MUST HAVE</div><div className="space-y-2">{fp.mustHave.map((p: string, i: number) => <div key={i}>{playerChip(p, "MUST", "var(--pink)")}</div>)}</div></div>
         )}
         {fp.avoidPlayers && fp.avoidPlayers.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--pink)" }}>❌ AVOID</div><div className="space-y-2">{fp.avoidPlayers.map((p: string, i: number) => <div key={i}>{playerChip(p, "AVOID", "#DC2626")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--pink)" }}>❌ AVOID</div><div className="space-y-2">{fp.avoidPlayers.map((p: string, i: number) => <div key={i}>{playerChip(p, "AVOID", "var(--pink)")}</div>)}</div></div>
         )}
         {fp.safePicks && fp.safePicks.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>🛡️ SAFE PICKS</div><div className="space-y-2">{fp.safePicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "SAFE", "#16A34A")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>🛡️ SAFE PICKS</div><div className="space-y-2">{fp.safePicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "SAFE", "var(--green)")}</div>)}</div></div>
         )}
         {fp.differentialPicks && fp.differentialPicks.length > 0 && (
           <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#a78bfa" }}>💎 DIFFERENTIAL PICKS</div><div className="space-y-2">{fp.differentialPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "DIFF", "#7C3AED")}</div>)}</div></div>
@@ -3839,14 +3839,14 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     const lt = analysis.liveTracker || {};
     return <>
       {card("📡 LIVE MATCH TRACKER", <>
-        {statRow("Live Score", lt.liveScore || "Not live", "#DC2626")}
+        {statRow("Live Score", lt.liveScore || "Not live", "var(--pink)")}
         {statRow("Overs", lt.overs)}
         {statRow("Runs", lt.runs)}
         {statRow("Wickets", lt.wickets)}
-        {statRow("Current Run Rate", lt.currentRunRate, "#2563EB")}
-        {statRow("Required Run Rate", lt.requiredRunRate, "#F59E0B")}
+        {statRow("Current Run Rate", lt.currentRunRate, "var(--cyan)")}
+        {statRow("Required Run Rate", lt.requiredRunRate, "var(--gold)")}
         {statRow("Partnership", lt.partnership)}
-        {statRow("Momentum", lt.momentum, lt.momentum?.includes("Team1") ? "#DC2626" : lt.momentum?.includes("Team2") ? "#2563EB" : "#6B7280")}
+        {statRow("Momentum", lt.momentum, lt.momentum?.includes("Team1") ? "var(--pink)" : lt.momentum?.includes("Team2") ? "var(--cyan)" : "var(--muted)")}
       </>)}
       {lt.recentOvers && lt.recentOvers.length > 0 && card("📈 RECENT OVERS", <>
         <div className="space-y-2">
@@ -3866,20 +3866,20 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     return <>
       {card("📋 AI CHEAT SHEET", <>
         {cs.mustPick && cs.mustPick.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>✅ MUST PICK</div><div className="space-y-2">{cs.mustPick.map((p: string, i: number) => <div key={i}>{playerChip(p, "MUST", "#16A34A")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>✅ MUST PICK</div><div className="space-y-2">{cs.mustPick.map((p: string, i: number) => <div key={i}>{playerChip(p, "MUST", "var(--green)")}</div>)}</div></div>
         )}
         {cs.avoid && cs.avoid.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--pink)" }}>❌ AVOID</div><div className="space-y-2">{cs.avoid.map((p: string, i: number) => <div key={i}>{playerChip(p, "AVOID", "#DC2626")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--pink)" }}>❌ AVOID</div><div className="space-y-2">{cs.avoid.map((p: string, i: number) => <div key={i}>{playerChip(p, "AVOID", "var(--pink)")}</div>)}</div></div>
         )}
         {statRow("Safe Combination", cs.safeCombination)}
         {statRow("Grand League Combination", cs.grandLeagueCombination)}
-        {statRow("Captain Lock", cs.captainLock, "#F59E0B")}
-        {statRow("Vice Captain Lock", cs.viceCaptainLock, "#2563EB")}
+        {statRow("Captain Lock", cs.captainLock, "var(--gold)")}
+        {statRow("Vice Captain Lock", cs.viceCaptainLock, "var(--cyan)")}
         {cs.differentialPicks && cs.differentialPicks.length > 0 && (
           <div className="mb-3 mt-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#a78bfa" }}>💎 DIFFERENTIAL PICKS</div><div className="space-y-2">{cs.differentialPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "DIFF", "#7C3AED")}</div>)}</div></div>
         )}
         {cs.hiddenPicks && cs.hiddenPicks.length > 0 && (
-          <div className="mt-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>🔮 HIDDEN PICKS</div><div className="space-y-2">{cs.hiddenPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "HIDDEN", "#16A34A")}</div>)}</div></div>
+          <div className="mt-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>🔮 HIDDEN PICKS</div><div className="space-y-2">{cs.hiddenPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "HIDDEN", "var(--green)")}</div>)}</div></div>
         )}
       </>)}
     </>;
@@ -3892,15 +3892,15 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {card("⚡ FINAL AI VERDICT", <>
         <div className="text-center mb-4">
           <div className="text-[14px]" style={{ color: "var(--muted)" }}>Overall Match Rating</div>
-          <div className="text-[48px] font-black" style={{ color: fv.overallMatchRating >= 75 ? "#16A34A" : fv.overallMatchRating >= 50 ? "#F59E0B" : "#DC2626", fontFamily: "'Orbitron', sans-serif" }}>
+          <div className="text-[48px] font-black" style={{ color: fv.overallMatchRating >= 75 ? "var(--green)" : fv.overallMatchRating >= 50 ? "var(--gold)" : "var(--pink)", fontFamily: "'Orbitron', sans-serif" }}>
             {fv.overallMatchRating || 0}<span className="text-[20px]" style={{ color: "var(--muted)" }}>/100</span>
           </div>
         </div>
-        {progressBar("AI Confidence", fv.aiConfidence || 0, "#2563EB")}
-        {progressBar("Safe GL Rating", fv.safeGLRating || 0, "#16A34A")}
+        {progressBar("AI Confidence", fv.aiConfidence || 0, "var(--cyan)")}
+        {progressBar("Safe GL Rating", fv.safeGLRating || 0, "var(--green)")}
         {progressBar("Mega GL Rating", fv.megaGLRating || 0, "#7C3AED")}
-        {progressBar("Risk Meter", fv.riskMeter || 0, "#DC2626")}
-        {statRow("Fantasy Difficulty", fv.fantasyDifficulty, fv.fantasyDifficulty === "Easy" ? "#16A34A" : fv.fantasyDifficulty === "Hard" ? "#DC2626" : "#F59E0B")}
+        {progressBar("Risk Meter", fv.riskMeter || 0, "var(--pink)")}
+        {statRow("Fantasy Difficulty", fv.fantasyDifficulty, fv.fantasyDifficulty === "Easy" ? "var(--green)" : fv.fantasyDifficulty === "Hard" ? "var(--pink)" : "var(--gold)")}
         {statRow("Winning Probability", fv.winningProbability)}
         <div className="mt-3 p-3 rounded-lg" style={{ background: "rgba(78,226,236,0.08)", border: "1px solid var(--cyan)" }}>
           <div className="text-[14px] font-bold mb-1" style={{ color: "var(--cyan)" }}>🎯 FINAL RECOMMENDATION</div>
@@ -3917,9 +3917,9 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {card("⚠️ PLAYERS TO AVOID (Max 5)", <>
         <div className="space-y-2">
           {pa.slice(0, 5).map((p: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "rgba(245,0,87,0.08)", borderTop: "1px solid var(--pink)", borderRight: "1px solid var(--pink)", borderBottom: "1px solid var(--pink)", borderLeft: "4px solid #DC2626" }}>
+            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "rgba(245,0,87,0.08)", borderTop: "1px solid var(--pink)", borderRight: "1px solid var(--pink)", borderBottom: "1px solid var(--pink)", borderLeft: "4px solid var(--pink)" }}>
               <span className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>{p.name}</span>
-              <span className="text-[13px] font-bold px-2 py-0.5 rounded" style={{ background: "#DC2626", color: "#f0f0f5" }}>{p.reason}</span>
+              <span className="text-[13px] font-bold px-2 py-0.5 rounded" style={{ background: "var(--pink)", color: "#f0f0f5" }}>{p.reason}</span>
             </div>
           ))}
           {pa.length === 0 && <div className="text-[15px] text-center py-4" style={{ color: "var(--muted)" }}>No players to avoid — all picks look safe.</div>}
@@ -3935,7 +3935,7 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {card("📊 LOCK CONFIDENCE", <>
         <div className="space-y-3">
           {lc.map((p: any, i: number) => {
-            const color = p.level === "Very High" ? "#16A34A" : p.level === "High" ? "#2563EB" : p.level === "Medium" ? "#F59E0B" : "#DC2626";
+            const color = p.level === "Very High" ? "var(--green)" : p.level === "High" ? "var(--cyan)" : p.level === "Medium" ? "var(--gold)" : "var(--pink)";
             return (
               <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)" }}>
                 <div className="flex justify-between items-center mb-2">
@@ -3959,7 +3959,7 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {card("🎯 CAPTAIN MATRIX", <>
         <div className="space-y-3">
           {cm.map((combo: any, i: number) => {
-            const color = combo.combination === "Safe" ? "#16A34A" : combo.combination === "Balanced" ? "#2563EB" : combo.combination === "Grand League" ? "#F59E0B" : "#7C3AED";
+            const color = combo.combination === "Safe" ? "var(--green)" : combo.combination === "Balanced" ? "var(--cyan)" : combo.combination === "Grand League" ? "var(--gold)" : "#7C3AED";
             return (
               <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", border: `2px solid ${color}` }}>
                 <div className="text-[15px] font-black mb-2" style={{ color }}>{combo.combination}</div>
@@ -3989,11 +3989,11 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {card("🧠 AI INSIGHTS", <>
         <div className="space-y-3">
           {ai.topDifferential && <div className="p-3 rounded-lg" style={{ background: "rgba(124,58,237,0.08)", borderTop: "1px solid #7C3AED", borderRight: "1px solid #7C3AED", borderBottom: "1px solid #7C3AED", borderLeft: "4px solid #7C3AED" }}><div className="text-[14px] font-bold" style={{ color: "#a78bfa" }}>💎 TOP DIFFERENTIAL</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.topDifferential}</div></div>}
-          {ai.highestCeiling && <div className="p-3 rounded-lg" style={{ background: "rgba(255,210,63,0.08)", borderTop: "1px solid var(--gold)", borderRight: "1px solid var(--gold)", borderBottom: "1px solid var(--gold)", borderLeft: "4px solid #F59E0B" }}><div className="text-[14px] font-bold" style={{ color: "var(--gold)" }}>🚀 HIGHEST CEILING</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.highestCeiling}</div></div>}
-          {ai.safestPlayer && <div className="p-3 rounded-lg" style={{ background: "rgba(56,224,123,0.08)", borderTop: "1px solid var(--green)", borderRight: "1px solid var(--green)", borderBottom: "1px solid var(--green)", borderLeft: "4px solid #16A34A" }}><div className="text-[14px] font-bold" style={{ color: "var(--green)" }}>🛡️ SAFEST PLAYER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.safestPlayer}</div></div>}
-          {ai.mostDangerousBowler && <div className="p-3 rounded-lg" style={{ background: "rgba(245,0,87,0.08)", borderTop: "1px solid var(--pink)", borderRight: "1px solid var(--pink)", borderBottom: "1px solid var(--pink)", borderLeft: "4px solid #DC2626" }}><div className="text-[14px] font-bold" style={{ color: "var(--pink)" }}>⚡ MOST DANGEROUS BOWLER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.mostDangerousBowler}</div></div>}
+          {ai.highestCeiling && <div className="p-3 rounded-lg" style={{ background: "rgba(255,210,63,0.08)", borderTop: "1px solid var(--gold)", borderRight: "1px solid var(--gold)", borderBottom: "1px solid var(--gold)", borderLeft: "4px solid var(--gold)" }}><div className="text-[14px] font-bold" style={{ color: "var(--gold)" }}>🚀 HIGHEST CEILING</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.highestCeiling}</div></div>}
+          {ai.safestPlayer && <div className="p-3 rounded-lg" style={{ background: "rgba(56,224,123,0.08)", borderTop: "1px solid var(--green)", borderRight: "1px solid var(--green)", borderBottom: "1px solid var(--green)", borderLeft: "4px solid var(--green)" }}><div className="text-[14px] font-bold" style={{ color: "var(--green)" }}>🛡️ SAFEST PLAYER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.safestPlayer}</div></div>}
+          {ai.mostDangerousBowler && <div className="p-3 rounded-lg" style={{ background: "rgba(245,0,87,0.08)", borderTop: "1px solid var(--pink)", borderRight: "1px solid var(--pink)", borderBottom: "1px solid var(--pink)", borderLeft: "4px solid var(--pink)" }}><div className="text-[14px] font-bold" style={{ color: "var(--pink)" }}>⚡ MOST DANGEROUS BOWLER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.mostDangerousBowler}</div></div>}
           {ai.explosiveBatter && <div className="p-3 rounded-lg" style={{ background: "rgba(234,88,12,0.08)", borderTop: "1px solid #EA580C", borderRight: "1px solid #EA580C", borderBottom: "1px solid #EA580C", borderLeft: "4px solid #EA580C" }}><div className="text-[14px] font-bold" style={{ color: "#EA580C" }}>💥 EXPLOSIVE BATTER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.explosiveBatter}</div></div>}
-          {ai.deathOversSpecialist && <div className="p-3 rounded-lg" style={{ background: "rgba(78,226,236,0.08)", borderTop: "1px solid var(--cyan)", borderRight: "1px solid var(--cyan)", borderBottom: "1px solid var(--cyan)", borderLeft: "4px solid #2563EB" }}><div className="text-[14px] font-bold" style={{ color: "var(--cyan)" }}>🎯 DEATH OVERS SPECIALIST</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.deathOversSpecialist}</div></div>}
+          {ai.deathOversSpecialist && <div className="p-3 rounded-lg" style={{ background: "rgba(78,226,236,0.08)", borderTop: "1px solid var(--cyan)", borderRight: "1px solid var(--cyan)", borderBottom: "1px solid var(--cyan)", borderLeft: "4px solid var(--cyan)" }}><div className="text-[14px] font-bold" style={{ color: "var(--cyan)" }}>🎯 DEATH OVERS SPECIALIST</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.deathOversSpecialist}</div></div>}
           {ai.powerplaySpecialist && <div className="p-3 rounded-lg" style={{ background: "rgba(14,165,233,0.08)", borderTop: "1px solid #0EA5E9", borderRight: "1px solid #0EA5E9", borderBottom: "1px solid #0EA5E9", borderLeft: "4px solid #0EA5E9" }}><div className="text-[14px] font-bold" style={{ color: "#0EA5E9" }}>⚡ POWERPLAY SPECIALIST</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.powerplaySpecialist}</div></div>}
         </div>
       </>)}
