@@ -48,7 +48,7 @@ type Player = {
   } | null;
 };
 
-type Tab = "builder" | "data" | "tv" | "coach" | "airesearch";
+type Tab = "builder" | "airesearch" | "captains" | "form" | "stats";
 
 type CricketMatch = {
   id: string;
@@ -158,19 +158,19 @@ export function TitanResearch() {
             <AiResearchDashboard showToast={showToast} />
           </div>
         )}
-        {mountedTabs.has("data") && (
-          <div style={{ display: tab === "data" ? "block" : "none" }}>
-            <DataHub active={tab === "data"} />
+        {mountedTabs.has("captains") && (
+          <div style={{ display: tab === "captains" ? "block" : "none" }}>
+            <CaptainCenterTab showToast={showToast} />
           </div>
         )}
-        {mountedTabs.has("tv") && (
-          <div style={{ display: tab === "tv" ? "block" : "none" }}>
-            <LiveTV />
+        {mountedTabs.has("form") && (
+          <div style={{ display: tab === "form" ? "block" : "none" }}>
+            <PlayerFormTab showToast={showToast} />
           </div>
         )}
-        {mountedTabs.has("coach") && (
-          <div style={{ display: tab === "coach" ? "block" : "none" }}>
-            <CoachTab />
+        {mountedTabs.has("stats") && (
+          <div style={{ display: tab === "stats" ? "block" : "none" }}>
+            <VenueStatsTab showToast={showToast} />
           </div>
         )}
       </div>
@@ -210,9 +210,9 @@ function Nav({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
   const items: { id: Tab; icon: string; label: string }[] = [
     { id: "builder", icon: "🛠️", label: "BUILDER" },
     { id: "airesearch", icon: "🧪", label: "AI RESEARCH" },
-    { id: "data", icon: "📊", label: "DATA HUB" },
-    { id: "tv", icon: "📺", label: "LIVE TV" },
-    { id: "coach", icon: "🧠", label: "COACH" },
+    { id: "captains", icon: "👑", label: "CAPTAINS" },
+    { id: "form", icon: "📊", label: "FORM" },
+    { id: "stats", icon: "📈", label: "STATS" },
   ];
   return (
     <div
@@ -2053,105 +2053,774 @@ function PlayerCompare({ pool }: { pool: Player[] }) {
   );
 }
 
-function DataHub({ active }: { active: boolean }) {
+// ============================================================
+// CAPTAIN CENTER TAB — Top captains + VC picks + C/VC matrix
+// ============================================================
+function CaptainCenterTab({ showToast }: { showToast: (s: string) => void }) {
+  const [matches, setMatches] = useState<CricketMatch[]>([]);
+  const [selectedMatch, setSelectedMatch] = useState<CricketMatch | null>(null);
+  const [details, setDetails] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [captainData, setCaptainData] = useState<any>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+
   const license = useLicense();
-  const [d, setD] = useState<{ live: CricketMatch[]; upcoming: CricketMatch[] } | null>(null);
-  useEffect(() => {
-    if (!active || d) return;
-    const headers: Record<string, string> = {};
+  const licenseHeaders = useCallback(() => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (license.licenseKey) headers["x-license-key"] = license.licenseKey;
     if (license.deviceId) headers["x-device-id"] = license.deviceId;
-    void fetch("/api/cricket-matches", { headers }).then((r) => r.json()).then(setD);
-  }, [active, d, license.licenseKey, license.deviceId]);
-  return (
-    <Section title="📊 LIVE DATA STREAM">
-      {!d && <Empty>Loading…</Empty>}
-      {d && (
-        <>
-          <div className="text-xs mb-2" style={{ color: "var(--gold)", fontFamily: "'Orbitron'" }}>
-            🔴 LIVE NOW ({d.live.length})
-          </div>
-          <div className="space-y-2 mb-4">
-            {d.live.map((m) => (
-              <div key={m.id} className="p-3 rounded-xl text-sm" style={{ background: "var(--panel-elevated)", border: "1px solid var(--t2)" }}>
-                <div className="font-black">{m.team1Short} vs {m.team2Short}</div>
-                <div className="text-xs" style={{ color: "var(--muted)" }}>{m.status}</div>
-                {m.liveScore && <div className="text-xs mt-1" style={{ color: "var(--cyan)", fontFamily: "'Share Tech Mono'" }}>{m.liveScore}</div>}
-              </div>
-            ))}
-          </div>
-          <div className="text-xs mb-2" style={{ color: "var(--cyan)", fontFamily: "'Orbitron'" }}>
-            ⏳ UPCOMING ({d.upcoming.length})
-          </div>
-          <div className="space-y-2">
-            {d.upcoming.map((m) => (
-              <div key={m.id} className="p-3 rounded-xl text-sm" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)" }}>
-                <div className="font-black">{m.team1Short} vs {m.team2Short}</div>
-                <div className="text-xs" style={{ color: "var(--muted)" }}>
-                  {m.series} · {new Date(m.startTime).toLocaleString()}
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </Section>
-  );
-}
+    return headers;
+  }, [license.licenseKey, license.deviceId]);
 
-function LiveTV() {
-  const channels = [
-    { id: "9bZkp7q19f0", name: "DD News" },
-    { id: "Nq2wYlWFucg", name: "Sky News" },
-    { id: "gCNeDWCI0vo", name: "Al Jazeera" },
-    { id: "iEpJwprxDdk", name: "Bloomberg" },
-  ];
-  const [ch, setCh] = useState(channels[0]);
+  useEffect(() => {
+    void loadMatches();
+  }, []);
+
+  async function loadMatches() {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/cricket-matches", { headers: licenseHeaders() }).then((x) => x.json());
+      if (r.ok) {
+        const all = [...r.live, ...r.upcoming];
+        setMatches(all);
+      }
+    } catch {}
+    setLoading(false);
+  }
+
+  async function selectMatch(m: CricketMatch) {
+    setSelectedMatch(m);
+    setDetails(null);
+    setCaptainData(null);
+    setLoading(true);
+    try {
+      const d = await fetch("/api/cricket-match-details", {
+        method: "POST",
+        headers: licenseHeaders(),
+        body: JSON.stringify({ matchId: m.id }),
+      }).then((r) => r.json());
+      setDetails(d);
+      if (d.ok && d.teams?.length >= 2) {
+        void runCaptainAnalysis(m, d);
+      }
+    } catch {}
+    setLoading(false);
+  }
+
+  async function runCaptainAnalysis(match: CricketMatch, det: any) {
+    setAiLoading(true);
+    const squad: string[] = [];
+    for (const t of det.teams || []) {
+      for (const p of t.players || []) {
+        if (p.inXI !== false) squad.push(p.name);
+      }
+    }
+
+    const prompt = `MATCH: ${match.team1} vs ${match.team2}
+FORMAT: ${match.format}
+VENUE: ${match.venue}
+TOSS: ${det.toss ? `${det.toss.winner} chose to ${det.toss.decision}` : "Not yet"}
+SQUAD: ${squad.join(", ")}
+
+Return JSON for captain analysis:
+{
+  "topCaptains": [{"rank":1,"name":"","score":0,"confidence":0,"expectedPts":0,"risk":"Low|Medium|High","reason":"1-line"}],
+  "topViceCaptains": [{"rank":1,"name":"","score":0,"confidence":0,"expectedPts":0,"risk":"Low|Medium|High","reason":"1-line"}],
+  "safeCaptains": ["name1","name2","name3"],
+  "differentialCaptains": ["name1","name2","name3"],
+  "megaGLCaptains": ["name1","name2","name3"],
+  "contrarianCaptains": ["name1","name2"],
+  "captainMatrix": [
+    {"type":"Safe","captain":"","viceCaptain":""},
+    {"type":"Balanced","captain":"","viceCaptain":""},
+    {"type":"Grand League","captain":"","viceCaptain":""},
+    {"type":"Mega GL","captain":"","viceCaptain":""}
+  ],
+  "captainSuccessRate": 0,
+  "vcSuccessRate": 0,
+  "bestCVCCombo": "name (C) + name (VC) — 1-line reason",
+  "differentialCVCCombo": "name (C) + name (VC) — 1-line reason"
+}
+Use ONLY squad players. 2026 data. JSON only.`;
+
+    try {
+      const res = await fetch("/api/call-ai", {
+        method: "POST",
+        headers: licenseHeaders(),
+        body: JSON.stringify({ prompt, system: "Return STRICT JSON only.", json: true }),
+      }).then((r) => r.json());
+
+      if (res.ok && res.content) {
+        let content = res.content.replace(/```json\s*/gi, "").replace(/```/g, "").trim();
+        if (!content.startsWith("{")) {
+          const start = content.indexOf("{");
+          const end = content.lastIndexOf("}");
+          if (start >= 0 && end > start) content = content.slice(start, end + 1);
+        }
+        setCaptainData(JSON.parse(content));
+        showToast("✅ Captain analysis ready");
+      } else {
+        showToast("⚠️ Captain analysis failed");
+      }
+    } catch {
+      showToast("⚠️ Captain analysis error");
+    }
+    setAiLoading(false);
+  }
+
   return (
     <>
-      <Section title="📺 LIVE NEWS & SPORTS STREAMS">
-        <div className="rounded-xl overflow-hidden mb-3" style={{ background: "var(--panel)", border: "2px solid var(--b2)" }}>
-          <div className="relative w-full" style={{ aspectRatio: "16/9" }}>
-            <iframe
-              key={ch.id}
-              src={`https://www.youtube.com/embed/${ch.id}?autoplay=1&mute=1`}
-              className="absolute inset-0 w-full h-full"
-              allow="autoplay; encrypted-media; picture-in-picture"
-              allowFullScreen
-              title={ch.name}
-            />
+      <Section title="👑 CAPTAIN CENTER — SELECT MATCH">
+        <div className="flex gap-2 mb-3">
+          <button
+            onClick={loadMatches}
+            disabled={loading}
+            className="px-4 py-2 rounded-lg text-[14px] font-black"
+            style={{ background: "var(--cyan)", color: "#000", border: "none", fontFamily: "'Orbitron', sans-serif", minHeight: "44px" }}
+          >
+            {loading ? "⏳ LOADING" : "🔄 LOAD MATCHES"}
+          </button>
+        </div>
+        {matches.length > 0 && (
+          <div className="flex flex-col gap-2 max-h-[280px] overflow-y-auto">
+            {matches.slice(0, 15).map((m) => (
+              <div
+                key={m.id}
+                onClick={() => selectMatch(m)}
+                className="p-3 rounded-lg cursor-pointer"
+                style={{
+                  background: selectedMatch?.id === m.id ? "rgba(78,226,236,0.08)" : "var(--panel-elevated)",
+                  borderTop: `2px solid ${selectedMatch?.id === m.id ? "var(--cyan)" : "var(--b1)"}`,
+                  borderRight: `2px solid ${selectedMatch?.id === m.id ? "var(--cyan)" : "var(--b1)"}`,
+                  borderBottom: `2px solid ${selectedMatch?.id === m.id ? "var(--cyan)" : "var(--b1)"}`,
+                  borderLeft: `4px solid ${m.state === "live" ? "var(--pink)" : "var(--cyan)"}`,
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="text-[15px] font-black" style={{ color: "#f0f0f5" }}>
+                    {m.team1Short} vs {m.team2Short}
+                  </div>
+                  {m.state === "live" && (
+                    <span className="text-[12px] font-black px-2 py-0.5 rounded" style={{ background: "var(--pink)", color: "#fff" }}>● LIVE</span>
+                  )}
+                </div>
+                <div className="text-[13px]" style={{ color: "var(--text-off)" }}>{m.series} · {m.format}</div>
+              </div>
+            ))}
           </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          {channels.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setCh(c)}
-              className="p-3 rounded-xl text-sm font-bold"
-              style={{
-                background: ch.id === c.id ? "rgba(0,229,255,0.1)" : "rgba(0,0,0,0.03)",
-                border: `1px solid ${ch.id === c.id ? "var(--cyan)" : "var(--b2)"}`,
-                color: ch.id === c.id ? "var(--cyan)" : "#fff",
-                fontFamily: "'Barlow Condensed'",
-              }}
-            >
-              {c.name}
-            </button>
-          ))}
-        </div>
-        <div className="text-[14px] mt-3" style={{ color: "var(--muted)" }}>
-          Note: DRM-protected services (JioCinema, Hotstar, Star Sports) cannot be embedded. Use their apps directly.
-        </div>
+        )}
       </Section>
+
+      {selectedMatch && loading && (
+        <Section title="⏳ LOADING...">
+          <Empty>Fetching squad + captain analysis...</Empty>
+        </Section>
+      )}
+
+      {selectedMatch && !loading && aiLoading && (
+        <Section title="🧠 AI ANALYZING CAPTAINS...">
+          <Empty>AI computing top captains, VC picks, and C/VC matrix...</Empty>
+        </Section>
+      )}
+
+      {selectedMatch && !loading && !aiLoading && captainData && (
+        <>
+          {/* Top Captains */}
+          {captainData.topCaptains && captainData.topCaptains.length > 0 && (
+            <Section title="👑 TOP CAPTAIN PICKS">
+              <div className="space-y-2">
+                {captainData.topCaptains.slice(0, 10).map((c: any, i: number) => (
+                  <div key={i} className="p-3 rounded-lg flex justify-between items-center"
+                    style={{
+                      background: "var(--panel-elevated)",
+                      borderTop: "1px solid var(--b1)",
+                      borderRight: "1px solid var(--b1)",
+                      borderBottom: "1px solid var(--b1)",
+                      borderLeft: `4px solid ${i < 3 ? "var(--gold)" : "var(--cyan)"}`,
+                    }}
+                  >
+                    <div>
+                      <div className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>#{c.rank} {c.name}</div>
+                      <div className="text-[13px]" style={{ color: "var(--muted)" }}>{c.reason}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[15px] font-black" style={{ color: "var(--gold)" }}>{c.score}</div>
+                      <div className="text-[12px]" style={{ color: c.risk === "High" ? "var(--pink)" : c.risk === "Medium" ? "var(--gold)" : "var(--green)" }}>{c.risk}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {/* Top Vice Captains */}
+          {captainData.topViceCaptains && captainData.topViceCaptains.length > 0 && (
+            <Section title="⚡ TOP VICE CAPTAIN PICKS">
+              <div className="space-y-2">
+                {captainData.topViceCaptains.slice(0, 10).map((c: any, i: number) => (
+                  <div key={i} className="p-3 rounded-lg flex justify-between items-center"
+                    style={{
+                      background: "var(--panel-elevated)",
+                      borderTop: "1px solid var(--b1)",
+                      borderRight: "1px solid var(--b1)",
+                      borderBottom: "1px solid var(--b1)",
+                      borderLeft: `4px solid ${i < 3 ? "var(--cyan)" : "var(--green)"}`,
+                    }}
+                  >
+                    <div>
+                      <div className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>#{c.rank} {c.name}</div>
+                      <div className="text-[13px]" style={{ color: "var(--muted)" }}>{c.reason}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[15px] font-black" style={{ color: "var(--cyan)" }}>{c.score}</div>
+                      <div className="text-[12px]" style={{ color: c.risk === "High" ? "var(--pink)" : c.risk === "Medium" ? "var(--gold)" : "var(--green)" }}>{c.risk}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {/* Captain Categories */}
+          <Section title="📊 CAPTAIN CATEGORIES">
+            <div className="space-y-3">
+              {captainData.safeCaptains && (
+                <div>
+                  <div className="text-[14px] font-bold mb-2" style={{ color: "var(--green)" }}>🛡️ SAFE CAPTAINS</div>
+                  <div className="flex flex-wrap gap-2">
+                    {captainData.safeCaptains.map((p: string, i: number) => (
+                      <span key={i} className="px-3 py-1.5 rounded-lg text-[14px] font-bold" style={{ background: "rgba(56,224,123,0.08)", color: "var(--green)", border: "1px solid var(--green)" }}>{p}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {captainData.differentialCaptains && (
+                <div>
+                  <div className="text-[14px] font-bold mb-2" style={{ color: "#a78bfa" }}>💎 DIFFERENTIAL CAPTAINS</div>
+                  <div className="flex flex-wrap gap-2">
+                    {captainData.differentialCaptains.map((p: string, i: number) => (
+                      <span key={i} className="px-3 py-1.5 rounded-lg text-[14px] font-bold" style={{ background: "rgba(124,58,237,0.08)", color: "#a78bfa", border: "1px solid #7C3AED" }}>{p}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {captainData.megaGLCaptains && (
+                <div>
+                  <div className="text-[14px] font-bold mb-2" style={{ color: "var(--pink)" }}>🎰 MEGA GL CAPTAINS</div>
+                  <div className="flex flex-wrap gap-2">
+                    {captainData.megaGLCaptains.map((p: string, i: number) => (
+                      <span key={i} className="px-3 py-1.5 rounded-lg text-[14px] font-bold" style={{ background: "rgba(245,0,87,0.08)", color: "var(--pink)", border: "1px solid var(--pink)" }}>{p}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {captainData.contrarianCaptains && (
+                <div>
+                  <div className="text-[14px] font-bold mb-2" style={{ color: "var(--gold)" }}>⚡ CONTRARIAN CAPTAINS</div>
+                  <div className="flex flex-wrap gap-2">
+                    {captainData.contrarianCaptains.map((p: string, i: number) => (
+                      <span key={i} className="px-3 py-1.5 rounded-lg text-[14px] font-bold" style={{ background: "rgba(255,210,63,0.08)", color: "var(--gold)", border: "1px solid var(--gold)" }}>{p}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+
+          {/* Captain Matrix */}
+          {captainData.captainMatrix && captainData.captainMatrix.length > 0 && (
+            <Section title="🎯 CAPTAIN MATRIX — C + VC COMBOS">
+              <div className="space-y-3">
+                {captainData.captainMatrix.map((combo: any, i: number) => {
+                  const color = combo.type === "Safe" ? "var(--green)" : combo.type === "Balanced" ? "var(--cyan)" : combo.type === "Grand League" ? "var(--gold)" : "var(--pink)";
+                  return (
+                    <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", borderTop: `2px solid ${color}`, borderRight: `2px solid ${color}`, borderBottom: `2px solid ${color}`, borderLeft: `4px solid ${color}` }}>
+                      <div className="text-[15px] font-black mb-2" style={{ color }}>{combo.type}</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="p-2 rounded text-center" style={{ background: "rgba(255,210,63,0.08)", border: "1px solid var(--gold)" }}>
+                          <div className="text-[12px]" style={{ color: "var(--muted)" }}>Captain</div>
+                          <div className="text-[15px] font-black" style={{ color: "#f0f0f5" }}>{combo.captain}</div>
+                        </div>
+                        <div className="p-2 rounded text-center" style={{ background: "rgba(78,226,236,0.08)", border: "1px solid var(--cyan)" }}>
+                          <div className="text-[12px]" style={{ color: "var(--muted)" }}>Vice Captain</div>
+                          <div className="text-[15px] font-black" style={{ color: "#f0f0f5" }}>{combo.viceCaptain}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
+
+          {/* Best Combos */}
+          {(captainData.bestCVCCombo || captainData.differentialCVCCombo) && (
+            <Section title="🏆 BEST C/VC COMBOS">
+              <div className="space-y-2">
+                {captainData.bestCVCCombo && (
+                  <div className="p-3 rounded-lg" style={{ background: "rgba(255,210,63,0.08)", border: "1px solid var(--gold)" }}>
+                    <div className="text-[14px] font-bold mb-1" style={{ color: "var(--gold)" }}>🥇 BEST COMBO</div>
+                    <div className="text-[15px]" style={{ color: "#f0f0f5" }}>{captainData.bestCVCCombo}</div>
+                  </div>
+                )}
+                {captainData.differentialCVCCombo && (
+                  <div className="p-3 rounded-lg" style={{ background: "rgba(124,58,237,0.08)", border: "1px solid #7C3AED" }}>
+                    <div className="text-[14px] font-bold mb-1" style={{ color: "#a78bfa" }}>💎 DIFFERENTIAL COMBO</div>
+                    <div className="text-[15px]" style={{ color: "#f0f0f5" }}>{captainData.differentialCVCCombo}</div>
+                  </div>
+                )}
+              </div>
+            </Section>
+          )}
+        </>
+      )}
     </>
   );
 }
 
-function CoachTab() {
+// ============================================================
+// PLAYER FORM TAB — Last 5 scores + form analysis per player
+// ============================================================
+function PlayerFormTab({ showToast }: { showToast: (s: string) => void }) {
+  const [matches, setMatches] = useState<CricketMatch[]>([]);
+  const [selectedMatch, setSelectedMatch] = useState<CricketMatch | null>(null);
+  const [details, setDetails] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState<any>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+
+  const license = useLicense();
+  const licenseHeaders = useCallback(() => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (license.licenseKey) headers["x-license-key"] = license.licenseKey;
+    if (license.deviceId) headers["x-device-id"] = license.deviceId;
+    return headers;
+  }, [license.licenseKey, license.deviceId]);
+
+  useEffect(() => { void loadMatches(); }, []);
+
+  async function loadMatches() {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/cricket-matches", { headers: licenseHeaders() }).then((x) => x.json());
+      if (r.ok) {
+        const all = [...r.live, ...r.upcoming];
+        setMatches(all);
+      }
+    } catch {}
+    setLoading(false);
+  }
+
+  async function selectMatch(m: CricketMatch) {
+    setSelectedMatch(m);
+    setDetails(null);
+    setFormData(null);
+    setLoading(true);
+    try {
+      const d = await fetch("/api/cricket-match-details", {
+        method: "POST",
+        headers: licenseHeaders(),
+        body: JSON.stringify({ matchId: m.id }),
+      }).then((r) => r.json());
+      setDetails(d);
+      if (d.ok && d.teams?.length >= 2) void runFormAnalysis(m, d);
+    } catch {}
+    setLoading(false);
+  }
+
+  async function runFormAnalysis(match: CricketMatch, det: any) {
+    setAiLoading(true);
+    const squad: string[] = [];
+    for (const t of det.teams || []) {
+      for (const p of t.players || []) {
+        if (p.inXI !== false) squad.push(p.name);
+      }
+    }
+
+    const prompt = `MATCH: ${match.team1} vs ${match.team2}
+FORMAT: ${match.format}
+VENUE: ${match.venue}
+SQUAD: ${squad.join(", ")}
+
+Return JSON for player form analysis:
+{
+  "players": [
+    {
+      "name": "",
+      "last5FantasyScores": [0,0,0,0,0],
+      "battingForm": "Good|Average|Poor",
+      "bowlingForm": "Good|Average|Poor",
+      "strikeRate": 0,
+      "economyRate": 0,
+      "fantasyAverage": 0,
+      "venueRecord": "1-line",
+      "oppositionRecord": "1-line",
+      "consistencyScore": 0,
+      "aiRating": 0,
+      "riskRating": 0,
+      "formTrend": "Up|Stable|Down",
+      "recommendation": "Must Pick|Value Pick|Avoid"
+    }
+  ]
+}
+Include ALL squad players. 2026 data. JSON only.`;
+
+    try {
+      const res = await fetch("/api/call-ai", {
+        method: "POST",
+        headers: licenseHeaders(),
+        body: JSON.stringify({ prompt, system: "Return STRICT JSON only.", json: true }),
+      }).then((r) => r.json());
+
+      if (res.ok && res.content) {
+        let content = res.content.replace(/```json\s*/gi, "").replace(/```/g, "").trim();
+        if (!content.startsWith("{")) {
+          const start = content.indexOf("{");
+          const end = content.lastIndexOf("}");
+          if (start >= 0 && end > start) content = content.slice(start, end + 1);
+        }
+        setFormData(JSON.parse(content));
+        showToast("✅ Player form analysis ready");
+      } else {
+        showToast("⚠️ Form analysis failed");
+      }
+    } catch {
+      showToast("⚠️ Form analysis error");
+    }
+    setAiLoading(false);
+  }
+
   return (
-    <Section title="🧠 AI COACH">
-      <Empty>Go to BUILDER, select a match, lock at least 3 players, then run the Tactical Audit.</Empty>
-    </Section>
+    <>
+      <Section title="📊 PLAYER FORM — SELECT MATCH">
+        <div className="flex gap-2 mb-3">
+          <button
+            onClick={loadMatches}
+            disabled={loading}
+            className="px-4 py-2 rounded-lg text-[14px] font-black"
+            style={{ background: "var(--cyan)", color: "#000", border: "none", fontFamily: "'Orbitron', sans-serif", minHeight: "44px" }}
+          >
+            {loading ? "⏳ LOADING" : "🔄 LOAD MATCHES"}
+          </button>
+        </div>
+        {matches.length > 0 && (
+          <div className="flex flex-col gap-2 max-h-[280px] overflow-y-auto">
+            {matches.slice(0, 15).map((m) => (
+              <div
+                key={m.id}
+                onClick={() => selectMatch(m)}
+                className="p-3 rounded-lg cursor-pointer"
+                style={{
+                  background: selectedMatch?.id === m.id ? "rgba(78,226,236,0.08)" : "var(--panel-elevated)",
+                  borderTop: `2px solid ${selectedMatch?.id === m.id ? "var(--cyan)" : "var(--b1)"}`,
+                  borderRight: `2px solid ${selectedMatch?.id === m.id ? "var(--cyan)" : "var(--b1)"}`,
+                  borderBottom: `2px solid ${selectedMatch?.id === m.id ? "var(--cyan)" : "var(--b1)"}`,
+                  borderLeft: `4px solid ${m.state === "live" ? "var(--pink)" : "var(--cyan)"}`,
+                }}
+              >
+                <div className="text-[15px] font-black" style={{ color: "#f0f0f5" }}>{m.team1Short} vs {m.team2Short}</div>
+                <div className="text-[13px]" style={{ color: "var(--text-off)" }}>{m.series} · {m.format}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {selectedMatch && (loading || aiLoading) && (
+        <Section title="⏳ ANALYZING...">
+          <Empty>{aiLoading ? "🧠 AI analyzing player form for all squad players..." : "📋 Fetching squad..."}</Empty>
+        </Section>
+      )}
+
+      {selectedMatch && !loading && !aiLoading && formData?.players && (
+        <Section title="📊 PLAYER FORM ANALYSIS">
+          <div className="space-y-3">
+            {formData.players.map((p: any, i: number) => {
+              const recColor = p.recommendation === "Must Pick" ? "var(--green)" : p.recommendation === "Value Pick" ? "var(--cyan)" : p.recommendation === "Avoid" ? "var(--pink)" : "var(--muted)";
+              const trendIcon = p.formTrend === "Up" ? "📈" : p.formTrend === "Down" ? "📉" : "➡️";
+              return (
+                <div key={i} className="p-3 rounded-lg"
+                  style={{
+                    background: "var(--panel-elevated)",
+                    borderTop: "1px solid var(--b1)",
+                    borderRight: "1px solid var(--b1)",
+                    borderBottom: "1px solid var(--b1)",
+                    borderLeft: `4px solid ${recColor}`,
+                  }}
+                >
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>{p.name}</span>
+                    <span className="text-[12px] font-black px-2 py-0.5 rounded" style={{ background: recColor, color: "#000" }}>{p.recommendation}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[14px] mb-2">
+                    <div style={{ color: "var(--text-off)" }}>Last 5: <b style={{ color: "#f0f0f5" }}>{(p.last5FantasyScores || []).join(", ")}</b></div>
+                    <div style={{ color: "var(--text-off)" }}>{trendIcon} Trend: <b style={{ color: p.formTrend === "Up" ? "var(--green)" : p.formTrend === "Down" ? "var(--pink)" : "var(--gold)" }}>{p.formTrend}</b></div>
+                    <div style={{ color: "var(--text-off)" }}>Bat: <b style={{ color: p.battingForm === "Good" ? "var(--green)" : p.battingForm === "Poor" ? "var(--pink)" : "var(--gold)" }}>{p.battingForm}</b></div>
+                    <div style={{ color: "var(--text-off)" }}>Bowl: <b style={{ color: p.bowlingForm === "Good" ? "var(--green)" : p.bowlingForm === "Poor" ? "var(--pink)" : "var(--gold)" }}>{p.bowlingForm}</b></div>
+                    <div style={{ color: "var(--text-off)" }}>SR: <b style={{ color: "var(--cyan)" }}>{p.strikeRate}</b></div>
+                    <div style={{ color: "var(--text-off)" }}>Eco: <b style={{ color: "var(--cyan)" }}>{p.economyRate}</b></div>
+                    <div style={{ color: "var(--text-off)" }}>Fantasy Avg: <b style={{ color: "var(--gold)" }}>{p.fantasyAverage}</b></div>
+                    <div style={{ color: "var(--text-off)" }}>AI: <b style={{ color: p.aiRating >= 75 ? "var(--green)" : p.aiRating >= 50 ? "var(--gold)" : "var(--pink)" }}>{p.aiRating}/100</b></div>
+                  </div>
+                  {p.venueRecord && <div className="text-[13px] mb-1" style={{ color: "var(--muted)" }}>📍 {p.venueRecord}</div>}
+                  {p.oppositionRecord && <div className="text-[13px]" style={{ color: "var(--muted)" }}>⚔️ {p.oppositionRecord}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+    </>
+  );
+}
+
+// ============================================================
+// VENUE STATS TAB — Pitch report + venue history + stats
+// ============================================================
+function VenueStatsTab({ showToast }: { showToast: (s: string) => void }) {
+  const [matches, setMatches] = useState<CricketMatch[]>([]);
+  const [selectedMatch, setSelectedMatch] = useState<CricketMatch | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [statsData, setStatsData] = useState<any>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+
+  const license = useLicense();
+  const licenseHeaders = useCallback(() => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (license.licenseKey) headers["x-license-key"] = license.licenseKey;
+    if (license.deviceId) headers["x-device-id"] = license.deviceId;
+    return headers;
+  }, [license.licenseKey, license.deviceId]);
+
+  useEffect(() => { void loadMatches(); }, []);
+
+  async function loadMatches() {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/cricket-matches", { headers: licenseHeaders() }).then((x) => x.json());
+      if (r.ok) {
+        const all = [...r.live, ...r.upcoming];
+        setMatches(all);
+      }
+    } catch {}
+    setLoading(false);
+  }
+
+  async function selectMatch(m: CricketMatch) {
+    setSelectedMatch(m);
+    setStatsData(null);
+    void runStatsAnalysis(m);
+  }
+
+  async function runStatsAnalysis(match: CricketMatch) {
+    setAiLoading(true);
+    const prompt = `MATCH: ${match.team1} vs ${match.team2}
+FORMAT: ${match.format}
+VENUE: ${match.venue}
+SERIES: ${match.series}
+
+Return JSON for venue statistics and pitch analysis:
+{
+  "venueAnalysis": {
+    "pitchType": "Batting Friendly|Bowling Friendly|Balanced",
+    "avgFirstInnings": 0,
+    "avgSecondInnings": 0,
+    "boundarySize": "e.g. 65m straight, 75m square",
+    "chasingSuccessRate": 0,
+    "tossAdvantage": "Bat First|Bowl First|Neutral",
+    "dewFactor": "High|Medium|Low",
+    "spinVsPace": "Spin-friendly|Pace-friendly|Balanced",
+    "powerplayBehaviour": "1-line",
+    "deathOversBehaviour": "1-line",
+    "aiVenueRating": 0
+  },
+  "weather": {
+    "temperature": "e.g. 28C",
+    "humidity": "e.g. 65%",
+    "rainProbability": 0,
+    "windSpeed": "e.g. 12 km/h",
+    "cloudCover": "e.g. 40%",
+    "dewProbability": 0,
+    "fantasyImpactScore": 0,
+    "riskIndicator": "Low|Medium|High"
+  },
+  "venueHistory": [
+    {"match": "TeamA vs TeamB", "date": "2026-XX", "result": "TeamA won by X runs", "score": "250/7 vs 220/10"}
+  ],
+  "winProbability": {
+    "team1WinPct": 0,
+    "team2WinPct": 0,
+    "matchConfidence": 0,
+    "aiPredictionConfidence": 0
+  },
+  "keyStats": {
+    "highestTotal": "e.g. 220/4",
+    "lowestTotal": "e.g. 110/10",
+    "mostRunsScorer": "name — runs",
+    "mostWicketsTaker": "name — wickets",
+    "bestCaptainRecord": "name — X wins as captain"
+  }
+}
+2026 data. JSON only.`;
+
+    try {
+      const res = await fetch("/api/call-ai", {
+        method: "POST",
+        headers: licenseHeaders(),
+        body: JSON.stringify({ prompt, system: "Return STRICT JSON only.", json: true }),
+      }).then((r) => r.json());
+
+      if (res.ok && res.content) {
+        let content = res.content.replace(/```json\s*/gi, "").replace(/```/g, "").trim();
+        if (!content.startsWith("{")) {
+          const start = content.indexOf("{");
+          const end = content.lastIndexOf("}");
+          if (start >= 0 && end > start) content = content.slice(start, end + 1);
+        }
+        setStatsData(JSON.parse(content));
+        showToast("✅ Venue stats ready");
+      } else {
+        showToast("⚠️ Stats analysis failed");
+      }
+    } catch {
+      showToast("⚠️ Stats analysis error");
+    }
+    setAiLoading(false);
+  }
+
+  const StatRow = ({ label, value, color }: { label: string; value: any; color?: string }) => (
+    <div className="flex justify-between items-center py-2" style={{ borderBottom: "1px solid var(--b1)" }}>
+      <span className="text-[15px]" style={{ color: "var(--text-off)" }}>{label}</span>
+      <span className="text-[15px] font-bold" style={{ color: color || "#f0f0f5" }}>{typeof value === "number" ? value : (value || "—")}</span>
+    </div>
+  );
+
+  const ProgressBar = ({ label, value, color }: { label: string; value: number; color: string }) => (
+    <div className="mb-3">
+      <div className="flex justify-between text-[14px] mb-1">
+        <span style={{ color: "var(--text-off)" }}>{label}</span>
+        <span className="font-bold" style={{ color }}>{value}%</span>
+      </div>
+      <div className="h-2 rounded-full" style={{ background: "var(--panel-elevated)" }}>
+        <div className="h-full rounded-full" style={{ width: `${Math.min(100, value)}%`, background: color }} />
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <Section title="📈 VENUE STATS — SELECT MATCH">
+        <div className="flex gap-2 mb-3">
+          <button
+            onClick={loadMatches}
+            disabled={loading}
+            className="px-4 py-2 rounded-lg text-[14px] font-black"
+            style={{ background: "var(--cyan)", color: "#000", border: "none", fontFamily: "'Orbitron', sans-serif", minHeight: "44px" }}
+          >
+            {loading ? "⏳ LOADING" : "🔄 LOAD MATCHES"}
+          </button>
+        </div>
+        {matches.length > 0 && (
+          <div className="flex flex-col gap-2 max-h-[280px] overflow-y-auto">
+            {matches.slice(0, 15).map((m) => (
+              <div
+                key={m.id}
+                onClick={() => selectMatch(m)}
+                className="p-3 rounded-lg cursor-pointer"
+                style={{
+                  background: selectedMatch?.id === m.id ? "rgba(78,226,236,0.08)" : "var(--panel-elevated)",
+                  borderTop: `2px solid ${selectedMatch?.id === m.id ? "var(--cyan)" : "var(--b1)"}`,
+                  borderRight: `2px solid ${selectedMatch?.id === m.id ? "var(--cyan)" : "var(--b1)"}`,
+                  borderBottom: `2px solid ${selectedMatch?.id === m.id ? "var(--cyan)" : "var(--b1)"}`,
+                  borderLeft: `4px solid ${m.state === "live" ? "var(--pink)" : "var(--cyan)"}`,
+                }}
+              >
+                <div className="text-[15px] font-black" style={{ color: "#f0f0f5" }}>{m.team1Short} vs {m.team2Short}</div>
+                <div className="text-[13px]" style={{ color: "var(--text-off)" }}>{m.series} · {m.format}</div>
+                {m.venue && <div className="text-[12px]" style={{ color: "var(--muted)" }}>📍 {m.venue}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {selectedMatch && aiLoading && (
+        <Section title="⏳ ANALYZING...">
+          <Empty>🧠 AI analyzing venue, pitch, weather, and stats...</Empty>
+        </Section>
+      )}
+
+      {selectedMatch && !aiLoading && statsData && (
+        <>
+          {/* Venue Analysis */}
+          {statsData.venueAnalysis && (
+            <Section title="🏟️ VENUE & PITCH ANALYSIS">
+              <StatRow label="Pitch Type" value={statsData.venueAnalysis.pitchType} color={statsData.venueAnalysis.pitchType?.includes("Batting") ? "var(--green)" : statsData.venueAnalysis.pitchType?.includes("Bowling") ? "var(--pink)" : "var(--gold)"} />
+              <StatRow label="Avg First Innings" value={statsData.venueAnalysis.avgFirstInnings} color="var(--cyan)" />
+              <StatRow label="Avg Second Innings" value={statsData.venueAnalysis.avgSecondInnings} color="var(--cyan)" />
+              <StatRow label="Boundary Size" value={statsData.venueAnalysis.boundarySize} />
+              <StatRow label="Chasing Success" value={statsData.venueAnalysis.chasingSuccessRate ? `${statsData.venueAnalysis.chasingSuccessRate}%` : null} color="var(--green)" />
+              <StatRow label="Toss Advantage" value={statsData.venueAnalysis.tossAdvantage} />
+              <StatRow label="Dew Factor" value={statsData.venueAnalysis.dewFactor} color={statsData.venueAnalysis.dewFactor === "High" ? "var(--pink)" : "var(--gold)"} />
+              <StatRow label="Spin vs Pace" value={statsData.venueAnalysis.spinVsPace} />
+              <StatRow label="Powerplay" value={statsData.venueAnalysis.powerplayBehaviour} />
+              <StatRow label="Death Overs" value={statsData.venueAnalysis.deathOversBehaviour} />
+              {statsData.venueAnalysis.aiVenueRating != null && <ProgressBar label="AI Venue Rating" value={statsData.venueAnalysis.aiVenueRating} color="var(--cyan)" />}
+            </Section>
+          )}
+
+          {/* Weather */}
+          {statsData.weather && (
+            <Section title="🌤️ WEATHER REPORT">
+              <StatRow label="Temperature" value={statsData.weather.temperature} />
+              <StatRow label="Humidity" value={statsData.weather.humidity} />
+              <StatRow label="Rain Probability" value={statsData.weather.rainProbability ? `${statsData.weather.rainProbability}%` : null} color={statsData.weather.rainProbability > 50 ? "var(--pink)" : "var(--gold)"} />
+              <StatRow label="Wind Speed" value={statsData.weather.windSpeed} />
+              <StatRow label="Cloud Cover" value={statsData.weather.cloudCover} />
+              <StatRow label="Dew Probability" value={statsData.weather.dewProbability ? `${statsData.weather.dewProbability}%` : null} color="var(--gold)" />
+              {statsData.weather.fantasyImpactScore != null && <ProgressBar label="Fantasy Weather Impact" value={statsData.weather.fantasyImpactScore} color="var(--cyan)" />}
+              <StatRow label="Risk Indicator" value={statsData.weather.riskIndicator} color={statsData.weather.riskIndicator === "High" ? "var(--pink)" : statsData.weather.riskIndicator === "Medium" ? "var(--gold)" : "var(--green)"} />
+            </Section>
+          )}
+
+          {/* Win Probability */}
+          {statsData.winProbability && (
+            <Section title="🎯 WIN PROBABILITY">
+              {statsData.winProbability.team1WinPct != null && <ProgressBar label={selectedMatch?.team1Short || "Team 1"} value={statsData.winProbability.team1WinPct} color="var(--t1)" />}
+              {statsData.winProbability.team2WinPct != null && <ProgressBar label={selectedMatch?.team2Short || "Team 2"} value={statsData.winProbability.team2WinPct} color="var(--t2)" />}
+              <StatRow label="Match Confidence" value={statsData.winProbability.matchConfidence ? `${statsData.winProbability.matchConfidence}%` : null} color="var(--cyan)" />
+              <StatRow label="AI Prediction Confidence" value={statsData.winProbability.aiPredictionConfidence ? `${statsData.winProbability.aiPredictionConfidence}%` : null} color="var(--gold)" />
+            </Section>
+          )}
+
+          {/* Key Stats */}
+          {statsData.keyStats && (
+            <Section title="📊 KEY VENUE STATS">
+              <StatRow label="Highest Total" value={statsData.keyStats.highestTotal} color="var(--green)" />
+              <StatRow label="Lowest Total" value={statsData.keyStats.lowestTotal} color="var(--pink)" />
+              <StatRow label="Most Runs" value={statsData.keyStats.mostRunsScorer} color="var(--gold)" />
+              <StatRow label="Most Wickets" value={statsData.keyStats.mostWicketsTaker} color="var(--cyan)" />
+              <StatRow label="Best Captain Record" value={statsData.keyStats.bestCaptainRecord} />
+            </Section>
+          )}
+
+          {/* Venue History */}
+          {statsData.venueHistory && statsData.venueHistory.length > 0 && (
+            <Section title="📜 VENUE HISTORY">
+              <div className="space-y-2">
+                {statsData.venueHistory.map((h: any, i: number) => (
+                  <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", borderTop: "1px solid var(--b1)", borderRight: "1px solid var(--b1)", borderBottom: "1px solid var(--b1)", borderLeft: "4px solid var(--cyan)" }}>
+                    <div className="text-[15px] font-bold" style={{ color: "#f0f0f5" }}>{h.match}</div>
+                    <div className="text-[13px]" style={{ color: "var(--text-off)" }}>{h.date} · {h.result}</div>
+                    {h.score && <div className="text-[13px] mt-1" style={{ color: "var(--muted)", fontFamily: "'Share Tech Mono', monospace" }}>{h.score}</div>}
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
+        </>
+      )}
+    </>
   );
 }
 
