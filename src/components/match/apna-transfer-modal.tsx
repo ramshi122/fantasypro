@@ -117,8 +117,9 @@ export function ApnaTransferModal({
       const d = detail as any;
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setMatchNumericId(String(d.id || match.matchId || match.id || ""));
-      // eslint-disable-next-line react-hooks/set-state-in-effect/set-state-in-effect
-      setMatchDbId(String(d._id || ""));
+      // FIX: Original app uses numeric ID (d.id) as tgMatchId, NOT MongoDB _id
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMatchDbId(String(d.id || ""));
 
       // Build player ID map
       const allApps = ["dream11", "my11circle"];
