@@ -128,23 +128,23 @@ export function TitanResearch() {
       className="min-h-screen"
       style={{
         fontFamily: "'Barlow Condensed', sans-serif",
-        background: "#FFFFFF",
-        color: "#111111",
-        // Override V77 dark theme with Premium White theme (Research page only)
-        "--bg": "#FFFFFF",
-        "--panel": "#F5F7FA",
-        "--panel-elevated": "#FFFFFF",
-        "--b1": "#E5E7EB",
-        "--b2": "#D1D5DB",
-        "--t1": "#DC2626",
-        "--t2": "#2563EB",
-        "--gold": "#F59E0B",
-        "--cyan": "#2563EB",
-        "--green": "#16A34A",
-        "--pink": "#DC2626",
-        "--text-off": "#444444",
-        "--muted": "#6B7280",
-        "--sh-depth": "0 4px 20px rgba(0,0,0,0.08)",
+        background: "#0a0a1a",
+        color: "#f0f0f5",
+        // Match main app dark theme (#0a0a1a)
+        "--bg": "#0a0a1a",
+        "--panel": "#111520",
+        "--panel-elevated": "#1a2030",
+        "--b1": "#252d42",
+        "--b2": "#374360",
+        "--t1": "#FF6B35",
+        "--t2": "#E63946",
+        "--gold": "#FFD23F",
+        "--cyan": "#4EE2EC",
+        "--green": "#38E07B",
+        "--pink": "#FF3D8B",
+        "--text-off": "#d8dee9",
+        "--muted": "#64748b",
+        "--sh-depth": "0 10px 30px -5px rgba(0, 0, 0, 0.9)",
       } as React.CSSProperties}
     >
       <FontLoader />
@@ -217,7 +217,7 @@ function Nav({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
   return (
     <div
       className="grid grid-cols-5 gap-1 mb-3 p-1.5 rounded-2xl sticky top-1 z-50"
-      style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}
+      style={{ background: "var(--panel)", border: "1px solid var(--b1)", boxShadow: "var(--sh-depth)" }}
     >
       {items.map((it) => (
         <button
@@ -811,7 +811,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
                 onChange={(e) => setMatchSearch(e.target.value)}
                 placeholder="Search team or series..."
                 className="flex-1 px-3 py-2.5 rounded-xl text-white text-sm font-semibold outline-none"
-                style={{ background: "#F5F7FA", border: "1px solid var(--b2)" }}
+                style={{ background: "var(--panel-elevated)", border: "1px solid var(--b2)" }}
               />
               <Btn onClick={() => loadMatches()} primary>
                 {matchesLoading ? "..." : "🔍 SEARCH"}
@@ -873,20 +873,20 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
                   >
                     <div
                       className="text-[12px] font-black tracking-widest mb-1"
-                      style={{ color: "#DC2626", fontFamily: "'Orbitron', sans-serif" }}
+                      style={{ color: "var(--pink)", fontFamily: "'Orbitron', sans-serif" }}
                     >
                       🔴 LIVE SCORE
                     </div>
                     <div
                       className="text-lg font-black"
-                      style={{ fontFamily: "'Share Tech Mono', monospace", color: "#111111" }}
+                      style={{ fontFamily: "'Share Tech Mono', monospace", color: "#f0f0f5" }}
                     >
                       {details.liveScore}
                     </div>
                     {details.matchStatus && (
                       <div
                         className="text-[13px] mt-1.5"
-                        style={{ color: "#991B1B", fontFamily: "'Share Tech Mono', monospace" }}
+                        style={{ color: "var(--pink)", fontFamily: "'Share Tech Mono', monospace" }}
                       >
                         📊 {details.matchStatus}
                       </div>
@@ -894,7 +894,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
                     {details.shortStatus && (
                       <div
                         className="text-[12px] mt-0.5"
-                        style={{ color: "#DC2626", fontFamily: "'Share Tech Mono', monospace" }}
+                        style={{ color: "var(--pink)", fontFamily: "'Share Tech Mono', monospace" }}
                       >
                         {details.shortStatus}
                       </div>
@@ -933,32 +933,32 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
               <div className="space-y-2 text-xs" style={{ fontFamily: "'Share Tech Mono'" }}>
                 <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(255,193,7,0.06)", border: "1px solid var(--gold)" }}>
                   <span style={{ color: "var(--gold)" }}>①</span>
-                  <span style={{ color: "#111111" }}>Predicted Playing XI</span>
+                  <span style={{ color: "#f0f0f5" }}>Predicted Playing XI</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>Auto-loaded from Cricbuzz predicted squad</span>
                 </div>
                 <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(0,229,255,0.06)", border: "1px solid var(--cyan)" }}>
                   <span style={{ color: "var(--cyan)" }}>②</span>
-                  <span style={{ color: "#111111" }}>Early AI Teams</span>
+                  <span style={{ color: "#f0f0f5" }}>Early AI Teams</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>Tap "GENERATE EARLY AI TEAMS" below</span>
                 </div>
                 <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(0,230,118,0.06)", border: "1px solid var(--green)" }}>
                   <span style={{ color: "var(--green)" }}>③</span>
-                  <span style={{ color: "#111111" }}>Pitch & Weather Analysis</span>
+                  <span style={{ color: "#f0f0f5" }}>Pitch & Weather Analysis</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>Tap "PITCH & WEATHER ANALYSIS" below</span>
                 </div>
                 <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(255,193,7,0.06)", border: "1px solid var(--gold)" }}>
                   <span style={{ color: "var(--gold)" }}>④</span>
-                  <span style={{ color: "#111111" }}>Probable Captain/Vice-Captain</span>
+                  <span style={{ color: "#f0f0f5" }}>Probable Captain/Vice-Captain</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>See DT SADHYATHA section below</span>
                 </div>
                 <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(245,0,87,0.06)", border: "1px solid var(--pink)" }}>
                   <span style={{ color: "var(--pink)" }}>⑤</span>
-                  <span style={{ color: "#111111" }}>Risk Picks</span>
+                  <span style={{ color: "#f0f0f5" }}>Risk Picks</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>DT Chance &lt; 30% in DT SADHYATHA</span>
                 </div>
-                <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(37,99,235,0.06)", border: "1px solid #2563EB" }}>
-                  <span style={{ color: "#2563EB" }}>⑥</span>
-                  <span style={{ color: "#111111" }}>Differential Players</span>
+                <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(37,99,235,0.06)", border: "1px solid var(--cyan)" }}>
+                  <span style={{ color: "var(--cyan)" }}>⑥</span>
+                  <span style={{ color: "#f0f0f5" }}>Differential Players</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>Low selectionPct in DT SADHYATHA</span>
                 </div>
               </div>
@@ -971,41 +971,41 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
               <div className="space-y-2 text-xs" style={{ fontFamily: "'Share Tech Mono'" }}>
                 <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(0,230,118,0.06)", border: "1px solid var(--green)" }}>
                   <span style={{ color: "var(--green)" }}>①</span>
-                  <span style={{ color: "#111111" }}>Confirmed Playing XI</span>
+                  <span style={{ color: "#f0f0f5" }}>Confirmed Playing XI</span>
                   <span className="ml-auto" style={{ color: "var(--green)" }}>
                     {pool.filter(p => p.inXI === true).length} players auto-locked
                   </span>
                 </div>
                 <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(245,0,87,0.06)", border: "1px solid var(--pink)" }}>
                   <span style={{ color: "var(--pink)" }}>②</span>
-                  <span style={{ color: "#111111" }}>Bench Players Removed</span>
+                  <span style={{ color: "#f0f0f5" }}>Bench Players Removed</span>
                   <span className="ml-auto" style={{ color: "var(--pink)" }}>
                     {pool.filter(p => p.inXI === false).length} bench players filtered out
                   </span>
                 </div>
                 <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(255,193,7,0.06)", border: "1px solid var(--gold)" }}>
                   <span style={{ color: "var(--gold)" }}>③</span>
-                  <span style={{ color: "#111111" }}>Impact Player Analysis</span>
+                  <span style={{ color: "#f0f0f5" }}>Impact Player Analysis</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>Substitutes listed in Player Pool</span>
                 </div>
                 <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(0,229,255,0.06)", border: "1px solid var(--cyan)" }}>
                   <span style={{ color: "var(--cyan)" }}>④</span>
-                  <span style={{ color: "#111111" }}>Final AI Teams</span>
+                  <span style={{ color: "#f0f0f5" }}>Final AI Teams</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>Tap "GENERATE FINAL TEAMS" below</span>
                 </div>
                 <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(255,193,7,0.06)", border: "1px solid var(--gold)" }}>
                   <span style={{ color: "var(--gold)" }}>⑤</span>
-                  <span style={{ color: "#111111" }}>Updated Captain/Vice-Captain</span>
+                  <span style={{ color: "#f0f0f5" }}>Updated Captain/Vice-Captain</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>Auto-suggested from confirmed XI perf</span>
                 </div>
                 <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(0,229,255,0.06)", border: "1px solid var(--cyan)" }}>
                   <span style={{ color: "var(--cyan)" }}>⑥</span>
-                  <span style={{ color: "#111111" }}>Toss & Batting Order Analysis</span>
+                  <span style={{ color: "#f0f0f5" }}>Toss & Batting Order Analysis</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>See STRATEGY MATRIX below</span>
                 </div>
                 <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: "rgba(0,230,118,0.06)", border: "1px solid var(--green)" }}>
                   <span style={{ color: "var(--green)" }}>⑦</span>
-                  <span style={{ color: "#111111" }}>Safe + Grand League Final Teams</span>
+                  <span style={{ color: "#f0f0f5" }}>Safe + Grand League Final Teams</span>
                   <span className="ml-auto" style={{ color: "var(--muted)" }}>See BLUEPRINT CHEAT SHEET below</span>
                 </div>
               </div>
@@ -1097,7 +1097,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
               {pool.length === 0 && !detailsLoading && (
                 <div
                   className="rounded-xl p-4 text-sm space-y-2"
-                  style={{ background: "#FFFBEB", border: "1px dashed #F59E0B", color: "#92400E", fontFamily: "'Share Tech Mono'" }}
+                  style={{ background: "rgba(255,210,63,0.08)", border: "1px dashed #F59E0B", color: "var(--gold)", fontFamily: "'Share Tech Mono'" }}
                 >
                   <div className="font-black" style={{ color: "var(--gold)", fontFamily: "'Orbitron'" }}>
                     ⚠️ SQUAD NOT LOADED
@@ -1176,7 +1176,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
             {validation.warnings.length > 0 && (
               <div
                 className="rounded-lg p-3 text-sm space-y-1"
-                style={{ background: "#FEF2F2", border: "1px solid #DC2626", color: "#991B1B" }}
+                style={{ background: "rgba(245,0,87,0.08)", border: "1px solid var(--pink)", color: "var(--pink)" }}
               >
                 {validation.warnings.map((w, i) => (
                   <div key={i}>⚠️ {w}</div>
@@ -1264,7 +1264,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
             <Section title="📜 BLUEPRINT CHEAT SHEET">
               <div
                 className="rounded-xl p-4 text-sm space-y-2"
-                style={{ background: "rgba(255,193,7,0.08)", border: "1px dashed var(--gold)", color: "#92400E", fontFamily: "'Share Tech Mono'" }}
+                style={{ background: "rgba(255,193,7,0.08)", border: "1px dashed var(--gold)", color: "var(--gold)", fontFamily: "'Share Tech Mono'" }}
               >
                 <div className="font-black" style={{ color: "var(--gold)", fontFamily: "'Orbitron'" }}>
                   ⏳ CHEAT SHEET WILL APPEAR WHEN XI IS VALID
@@ -1291,7 +1291,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
             {coachText && (
               <div
                 className="mt-3 p-4 rounded-xl text-sm whitespace-pre-wrap leading-relaxed"
-                style={{ background: "#F5F7FA", border: "1px solid var(--gold)", color: "#111111" }}
+                style={{ background: "var(--panel-elevated)", border: "1px solid var(--gold)", color: "#f0f0f5" }}
               >
                 {coachText}
               </div>
@@ -1312,7 +1312,7 @@ function Header({ match }: { match: CricketMatch | null }) {
     <div
       className="rounded-2xl p-5 mb-4 text-center"
       style={{
-        background: "linear-gradient(160deg, #FFFFFF, #F5F7FA)",
+        background: "linear-gradient(160deg, #111520, #06090e)",
         border: "1px solid var(--b1)",
         borderBottom: "3px solid var(--gold)",
         boxShadow: "var(--sh-depth)",
@@ -1325,7 +1325,7 @@ function Header({ match }: { match: CricketMatch | null }) {
         <TeamLogo short={match?.team1Short ?? "T1"} color="var(--t1)" />
         <div
           className="px-4 py-2 rounded-xl font-black text-lg"
-          style={{ background: "#FFFFFF", border: "2px solid var(--muted)", fontFamily: "'Orbitron'" }}
+          style={{ background: "var(--panel)", border: "2px solid var(--muted)", fontFamily: "'Orbitron'" }}
         >
           VS
         </div>
@@ -1351,7 +1351,7 @@ function Header({ match }: { match: CricketMatch | null }) {
             boxShadow: "0 0 20px rgba(220,38,38,0.15)",
           }}
         >
-          <div className="text-[14px] font-black tracking-widest" style={{ color: "#DC2626", fontFamily: "'Orbitron'" }}>
+          <div className="text-[14px] font-black tracking-widest" style={{ color: "var(--pink)", fontFamily: "'Orbitron'" }}>
             🔴 LIVE SCORE
           </div>
           <div className="text-2xl font-black mt-1" style={{ fontFamily: "'Share Tech Mono'" }}>
@@ -1368,11 +1368,11 @@ function TeamLogo({ short, color }: { short: string; color: string }) {
     <div
       className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-black"
       style={{
-        background: "#FFFFFF",
+        background: "var(--panel)",
         border: `3px solid ${color}`,
         color,
         fontFamily: "'Orbitron', sans-serif",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+        boxShadow: "var(--sh-depth)",
       }}
     >
       {short.slice(0, 3)}
@@ -1395,18 +1395,18 @@ function Section({
   return (
     <div
       className="rounded-2xl p-5 mb-4"
-      style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", borderRadius: "18px" }}
+      style={{ background: "var(--panel)", border: "1px solid var(--b1)", boxShadow: "var(--sh-depth)", borderRadius: "18px" }}
     >
       <div
         className="flex items-center justify-between mb-3 pb-2 text-[18px] font-black"
-        style={{ color: "#111111", fontFamily: "'Orbitron', sans-serif", borderBottom: "2px solid #F5F7FA" }}
+        style={{ color: "#f0f0f5", fontFamily: "'Orbitron', sans-serif", borderBottom: "2px solid #F5F7FA" }}
       >
         <span>{title}</span>
         {actionLabel && (
           <button
             onClick={onAction}
             className="px-3 py-1 rounded-md text-[14px] font-black"
-            style={{ background: "#F5F7FA", border: "1px solid #E5E7EB", color: "#2563EB", fontFamily: "'Orbitron', sans-serif" }}
+            style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)", color: "var(--cyan)", fontFamily: "'Orbitron', sans-serif" }}
           >
             {actionLabel}
           </button>
@@ -1424,8 +1424,8 @@ function Btn({ children, onClick, primary }: { children: React.ReactNode; onClic
       className="w-full p-4 rounded-xl text-[16px] font-black uppercase tracking-wider mb-3"
       style={
         primary
-          ? { background: "#2563EB", color: "#FFFFFF", border: "none", fontFamily: "'Orbitron', sans-serif", minHeight: "50px", boxShadow: "0 4px 12px rgba(37,99,235,0.2)" }
-          : { background: "#FFFFFF", color: "#2563EB", border: "2px solid #2563EB", fontFamily: "'Orbitron', sans-serif", minHeight: "50px" }
+          ? { background: "var(--cyan)", color: "#000000", border: "none", fontFamily: "'Orbitron', sans-serif", minHeight: "50px", boxShadow: "0 4px 12px rgba(37,99,235,0.2)" }
+          : { background: "var(--panel)", color: "var(--cyan)", border: "2px solid var(--cyan)", fontFamily: "'Orbitron', sans-serif", minHeight: "50px" }
       }
     >
       {children}
@@ -1435,8 +1435,8 @@ function Btn({ children, onClick, primary }: { children: React.ReactNode; onClic
 
 function CfgBox({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="p-4 rounded-2xl mb-2" style={{ background: "#F5F7FA", border: "1px solid #E5E7EB" }}>
-      <div className="text-[14px] font-black uppercase mb-2" style={{ color: "#444444", fontFamily: "'Orbitron', sans-serif" }}>
+    <div className="p-4 rounded-2xl mb-2" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)" }}>
+      <div className="text-[14px] font-black uppercase mb-2" style={{ color: "var(--text-off)", fontFamily: "'Orbitron', sans-serif" }}>
         {label}
       </div>
       <div className="space-y-2">{children}</div>
@@ -1450,7 +1450,7 @@ function CBtn({ children, active, onClick }: { children: React.ReactNode; active
       onClick={onClick}
       className="w-full py-3 px-2 rounded-lg text-[15px] font-bold"
       style={{
-        background: active ? "#2563EB" : "#FFFFFF",
+        background: active ? "var(--cyan)" : "var(--panel-elevated)",
         color: active ? "#FFFFFF" : "#444444",
         border: `2px solid ${active ? "#2563EB" : "#E5E7EB"}`,
         fontFamily: "'Orbitron', sans-serif",
@@ -1463,7 +1463,7 @@ function CBtn({ children, active, onClick }: { children: React.ReactNode; active
 
 function Empty({ children }: { children: React.ReactNode }) {
   return (
-    <div className="p-6 text-center text-[15px] font-medium" style={{ color: "#6B7280", fontFamily: "'Share Tech Mono', monospace" }}>
+    <div className="p-6 text-center text-[15px] font-medium" style={{ color: "var(--muted)", fontFamily: "'Share Tech Mono', monospace" }}>
       {children}
     </div>
   );
@@ -1599,7 +1599,7 @@ function LineupFlowBanner({
 
 function StatPill({ label, value, color }: { label: string; value: string; color: string }) {
   return (
-    <div className="p-2.5 rounded-lg text-center" style={{ background: "#F5F7FA", border: "1px solid var(--b2)" }}>
+    <div className="p-2.5 rounded-lg text-center" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b2)" }}>
       <div className="text-[13px]" style={{ color: "var(--muted)" }}>
         {label}
       </div>
@@ -1622,7 +1622,7 @@ function MatchCard({ match, active, onClick }: { match: CricketMatch; active: bo
     >
       <div
         className="px-3 py-2 rounded-t-2xl flex justify-between text-[14px]"
-        style={{ background: "#F5F7FA", color: "var(--cyan)", fontFamily: "'Share Tech Mono'" }}
+        style={{ background: "var(--panel-elevated)", color: "var(--cyan)", fontFamily: "'Share Tech Mono'" }}
       >
         <span>{match.series}</span>
         <span>
@@ -1762,7 +1762,7 @@ function Dream11Tile({
         <div className="relative shrink-0">
           <div
             className="w-14 h-14 rounded-full overflow-hidden flex items-center justify-center text-[15px] font-black"
-            style={{ background: "#F5F7FA", border: `2px solid ${accent}`, color: "#111111", fontFamily: "'Orbitron'" }}
+            style={{ background: "var(--panel-elevated)", border: `2px solid ${accent}`, color: "#f0f0f5", fontFamily: "'Orbitron'" }}
           >
             {photo ? (
               <img src={photo} alt={p.name} className="w-full h-full object-cover" referrerPolicy="no-referrer"
@@ -1774,7 +1774,7 @@ function Dream11Tile({
           </div>
           <div
             className="absolute -bottom-1 -left-1 px-1 rounded text-[12px] font-black"
-            style={{ background: "#FFFFFF", color: teamColor, border: `1px solid ${teamColor}`, fontFamily: "'Orbitron'" }}
+            style={{ background: "var(--panel)", color: teamColor, border: `1px solid ${teamColor}`, fontFamily: "'Orbitron'" }}
           >
             {idx}
           </div>
@@ -1788,7 +1788,7 @@ function Dream11Tile({
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-[17px] font-black leading-tight truncate" style={{ color: "#111111" }}>
+          <div className="text-[17px] font-black leading-tight truncate" style={{ color: "#f0f0f5" }}>
             {p.name}
           </div>
           <div className="text-[13px] mt-0.5" style={{ color: "var(--muted)", fontFamily: "'Share Tech Mono'" }}>
@@ -1898,9 +1898,9 @@ function GenTeamCard({ idx, group, team, t1Short }: { idx: number; group: string
             <div
               key={p.id}
               className="px-2 py-1.5 rounded-lg flex items-center justify-between gap-2 text-xs font-bold"
-              style={{ background: "#F5F7FA", border: `1px solid ${p.team === t1Short ? "var(--t1)" : "var(--t2)"}`, color: "#111111" }}
+              style={{ background: "var(--panel-elevated)", border: `1px solid ${p.team === t1Short ? "var(--t1)" : "var(--t2)"}`, color: "#f0f0f5" }}
             >
-              <span className="truncate" style={{ color: "#111111", textShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>{p.name}</span>
+              <span className="truncate" style={{ color: "#f0f0f5", textShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>{p.name}</span>
               {isC && <span className="px-1.5 py-0.5 rounded text-[13px]" style={{ background: "var(--gold)", color: "#000" }}>C</span>}
               {isVc && <span className="px-1.5 py-0.5 rounded text-[13px]" style={{ background: "var(--cyan)", color: "#000" }}>VC</span>}
             </div>
@@ -1929,8 +1929,8 @@ function CheatSheet({
   const diff = [...sel].sort((a, b) => (a.stats?.matches ?? 999) - (b.stats?.matches ?? 999)).slice(0, 5);
   return (
     <Section title="📜 BLUEPRINT CHEAT SHEET">
-      <div className="rounded-xl p-3" style={{ background: "#FFFFFF", border: "2px solid var(--gold)" }}>
-        <div className="p-4 rounded-lg text-center mb-3" style={{ background: "#F5F7FA", border: "1px solid #333" }}>
+      <div className="rounded-xl p-3" style={{ background: "var(--panel)", border: "2px solid var(--gold)" }}>
+        <div className="p-4 rounded-lg text-center mb-3" style={{ background: "var(--panel-elevated)", border: "1px solid #333" }}>
           <div className="text-2xl font-black" style={{ fontFamily: "'Orbitron'",  }}>
             {match.team1Short} vs {match.team2Short}
           </div>
@@ -1967,7 +1967,7 @@ function CheatSheet({
           </PBox>
         </div>
 
-        <div className="mt-3 p-3 rounded-lg" style={{ background: "#F5F7FA", border: "1px solid #333" }}>
+        <div className="mt-3 p-3 rounded-lg" style={{ background: "var(--panel-elevated)", border: "1px solid #333" }}>
           <div className="text-xs font-black mb-1" style={{ color: "var(--gold)", fontFamily: "'Orbitron'" }}>STRATEGY</div>
           <div className="text-sm">
             BAT: <b>{batStrat.toUpperCase()}</b> · BOWL: <b>{bowlStrat.toUpperCase()}</b> · 1ST BAT: <b>{battingFirst.toUpperCase()}</b>
@@ -1980,7 +1980,7 @@ function CheatSheet({
 
 function PBox({ children, color, title, text }: { children: React.ReactNode; color: string; title: string; text?: string }) {
   return (
-    <div className="rounded-lg overflow-hidden" style={{ background: "#F5F7FA", border: "1px solid #333" }}>
+    <div className="rounded-lg overflow-hidden" style={{ background: "var(--panel-elevated)", border: "1px solid #333" }}>
       <div className={`px-3 py-2 text-sm font-black uppercase ${color}`} style={{ fontFamily: "'Orbitron'", color: text ?? "#fff" }}>
         {title}
       </div>
@@ -2003,7 +2003,7 @@ function PlayerCompare({ pool }: { pool: Player[] }) {
           value={a}
           onChange={(e) => setA(e.target.value)}
           className="p-2.5 rounded-lg text-xs"
-          style={{ background: "#F5F7FA", color: "#111111", border: "1px solid var(--b2)" }}
+          style={{ background: "var(--panel-elevated)", color: "#f0f0f5", border: "1px solid var(--b2)" }}
         >
           <option value="">— Select Player A —</option>
           {pool.map((p) => (
@@ -2014,7 +2014,7 @@ function PlayerCompare({ pool }: { pool: Player[] }) {
           value={b}
           onChange={(e) => setB(e.target.value)}
           className="p-2.5 rounded-lg text-xs"
-          style={{ background: "#F5F7FA", color: "#111111", border: "1px solid var(--b2)" }}
+          style={{ background: "var(--panel-elevated)", color: "#f0f0f5", border: "1px solid var(--b2)" }}
         >
           <option value="">— Select Player B —</option>
           {pool.map((p) => (
@@ -2108,7 +2108,7 @@ function LiveTV() {
   return (
     <>
       <Section title="📺 LIVE NEWS & SPORTS STREAMS">
-        <div className="rounded-xl overflow-hidden mb-3" style={{ background: "#FFFFFF", border: "2px solid var(--b2)" }}>
+        <div className="rounded-xl overflow-hidden mb-3" style={{ background: "var(--panel)", border: "2px solid var(--b2)" }}>
           <div className="relative w-full" style={{ aspectRatio: "16/9" }}>
             <iframe
               key={ch.id}
@@ -2189,7 +2189,7 @@ function DtChanceSection({
         <Empty>🤖 AI analyzing 2026 form for {pool.length} players…</Empty>
       )}
       {!!dtError && enriched.length === 0 && (
-        <div className="rounded-lg p-3 text-xs" style={{ background: "#FEF2F2", border: "1px solid #DC2626", color: "#991B1B" }}>
+        <div className="rounded-lg p-3 text-xs" style={{ background: "rgba(245,0,87,0.08)", border: "1px solid var(--pink)", color: "var(--pink)" }}>
           ⚠️ AI prediction failed: {dtError}
         </div>
       )}
@@ -2240,7 +2240,7 @@ function DtRow({ p, dt, isT1, locked, onClick, dim }: { p: Player; dt: DtPredict
       }}
     >
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-black truncate flex items-center gap-1.5" style={{ color: "#111111" }}>
+        <div className="text-sm font-black truncate flex items-center gap-1.5" style={{ color: "#f0f0f5" }}>
           {locked && <span style={{ color: "var(--gold)" }}>🔒</span>}
           {p.name}
         </div>
@@ -2691,7 +2691,7 @@ ${modulesPrompt}`;
             onClick={loadMatches}
             disabled={matchesLoading}
             className="px-4 py-2 rounded-lg text-[14px] font-black"
-            style={{ background: "#2563EB", color: "#FFFFFF", border: "none", fontFamily: "'Orbitron', sans-serif", minHeight: "44px" }}
+            style={{ background: "var(--cyan)", color: "#f0f0f5", border: "none", fontFamily: "'Orbitron', sans-serif", minHeight: "44px" }}
           >
             {matchesLoading ? "⏳ LOADING" : "🔄 LOAD MATCHES"}
           </button>
@@ -2704,19 +2704,19 @@ ${modulesPrompt}`;
                 onClick={() => selectMatch(m)}
                 className="p-3 rounded-lg cursor-pointer transition-all"
                 style={{
-                  background: selectedMatch?.id === m.id ? "#EFF6FF" : "#F5F7FA",
+                  background: selectedMatch?.id === m.id ? "rgba(78,226,236,0.08)" : "var(--panel-elevated)",
                   border: `2px solid ${selectedMatch?.id === m.id ? "#2563EB" : "#E5E7EB"}`,
                 }}
               >
                 <div className="flex items-center justify-between">
-                  <div className="text-[15px] font-black" style={{ color: "#111111" }}>
+                  <div className="text-[15px] font-black" style={{ color: "#f0f0f5" }}>
                     {m.team1Short} vs {m.team2Short}
                   </div>
                   {m.state === "live" && (
-                    <span className="text-[12px] font-black px-2 py-0.5 rounded" style={{ background: "#DC2626", color: "#FFFFFF" }}>● LIVE</span>
+                    <span className="text-[12px] font-black px-2 py-0.5 rounded" style={{ background: "#DC2626", color: "#f0f0f5" }}>● LIVE</span>
                   )}
                 </div>
-                <div className="text-[13px]" style={{ color: "#444444" }}>
+                <div className="text-[13px]" style={{ color: "var(--text-off)" }}>
                   {m.series} · {m.format}
                 </div>
               </div>
@@ -2736,7 +2736,7 @@ ${modulesPrompt}`;
                   onClick={() => setActiveModule(mod.n)}
                   className="p-3 rounded-lg text-[13px] font-black flex flex-col items-center gap-1 transition-all"
                   style={{
-                    background: activeModule === mod.n ? "#2563EB" : "#F5F7FA",
+                    background: activeModule === mod.n ? "var(--cyan)" : "var(--panel-elevated)",
                     color: activeModule === mod.n ? "#FFFFFF" : "#444444",
                     border: `2px solid ${activeModule === mod.n ? "#2563EB" : "#E5E7EB"}`,
                     fontFamily: "'Orbitron', sans-serif",
@@ -2753,10 +2753,10 @@ ${modulesPrompt}`;
           {(detailsLoading || analysisLoading) && (
             <Section title="⏳ AI ANALYZING...">
               <div className="p-6 text-center">
-                <div className="text-[16px] font-bold" style={{ color: "#2563EB", fontFamily: "'Orbitron', sans-serif" }}>
+                <div className="text-[16px] font-bold" style={{ color: "var(--cyan)", fontFamily: "'Orbitron', sans-serif" }}>
                   {analysisLoading ? "🧠 AI RUNNING 18 MODULES..." : "📋 FETCHING SQUAD..."}
                 </div>
-                <div className="text-[14px] mt-2" style={{ color: "#6B7280" }}>
+                <div className="text-[14px] mt-2" style={{ color: "var(--muted)" }}>
                   Analyzing venue, weather, toss, form, captains, GL picks, and more...
                 </div>
               </div>
@@ -2771,13 +2771,13 @@ ${modulesPrompt}`;
           {!detailsLoading && !analysisLoading && !analysis && details && (
             <Section title="⚠️ ANALYSIS NOT LOADED">
               <div className="p-4 text-center">
-                <div className="text-[15px] mb-3" style={{ color: "#444444" }}>
+                <div className="text-[15px] mb-3" style={{ color: "var(--text-off)" }}>
                   AI analysis didn't load. Tap below to retry.
                 </div>
                 <button
                   onClick={() => selectedMatch && details && runFullAnalysis(selectedMatch, details)}
                   className="px-6 py-3 rounded-lg text-[14px] font-black"
-                  style={{ background: "#2563EB", color: "#FFFFFF", border: "none", fontFamily: "'Orbitron', sans-serif", minHeight: "50px" }}
+                  style={{ background: "var(--cyan)", color: "#f0f0f5", border: "none", fontFamily: "'Orbitron', sans-serif", minHeight: "50px" }}
                 >
                   🔄 RETRY AI ANALYSIS
                 </button>
@@ -2796,8 +2796,8 @@ ${modulesPrompt}`;
 function AiModuleContent({ module, analysis, match, details }: { module: number; analysis: any; match: CricketMatch; details: any }) {
   // Helper: Premium white card
   const card = (title: string, children: React.ReactNode) => (
-    <div className="rounded-2xl p-5 mb-3" style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", borderRadius: "18px" }}>
-      <div className="text-[18px] font-black mb-3 pb-2" style={{ color: "#111111", fontFamily: "'Orbitron', sans-serif", borderBottom: "2px solid #F5F7FA" }}>
+    <div className="rounded-2xl p-5 mb-3" style={{ background: "var(--panel)", border: "1px solid var(--b1)", boxShadow: "var(--sh-depth)", borderRadius: "18px" }}>
+      <div className="text-[18px] font-black mb-3 pb-2" style={{ color: "#f0f0f5", fontFamily: "'Orbitron', sans-serif", borderBottom: "2px solid #F5F7FA" }}>
         {title}
       </div>
       {children}
@@ -2807,17 +2807,17 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
   // Helper: Stat row
   const statRow = (label: string, value: any, color = "#111111") => (
     <div className="flex justify-between items-center py-2 border-b" style={{ borderColor: "#F5F7FA" }}>
-      <span className="text-[15px]" style={{ color: "#444444" }}>{label}</span>
+      <span className="text-[15px]" style={{ color: "var(--text-off)" }}>{label}</span>
       <span className="text-[15px] font-bold" style={{ color }}>{typeof value === "number" ? value : (value || "—")}</span>
     </div>
   );
 
   // Helper: Player chip
   const playerChip = (name: string, badge?: string, badgeColor?: string) => (
-    <div className="px-3 py-2 rounded-lg flex items-center justify-between" style={{ background: "#F5F7FA", border: "1px solid #E5E7EB" }}>
-      <span className="text-[15px] font-bold" style={{ color: "#111111" }}>{name}</span>
+    <div className="px-3 py-2 rounded-lg flex items-center justify-between" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)" }}>
+      <span className="text-[15px] font-bold" style={{ color: "#f0f0f5" }}>{name}</span>
       {badge && (
-        <span className="text-[12px] font-black px-2 py-0.5 rounded" style={{ background: badgeColor || "#2563EB", color: "#FFFFFF" }}>
+        <span className="text-[12px] font-black px-2 py-0.5 rounded" style={{ background: badgeColor || "#2563EB", color: "#f0f0f5" }}>
           {badge}
         </span>
       )}
@@ -2828,10 +2828,10 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
   const progressBar = (label: string, value: number, color: string) => (
     <div className="mb-2">
       <div className="flex justify-between text-[14px] mb-1">
-        <span style={{ color: "#444444" }}>{label}</span>
+        <span style={{ color: "var(--text-off)" }}>{label}</span>
         <span className="font-bold" style={{ color }}>{value}%</span>
       </div>
-      <div className="h-2 rounded-full" style={{ background: "#F5F7FA" }}>
+      <div className="h-2 rounded-full" style={{ background: "var(--panel-elevated)" }}>
         <div className="h-full rounded-full" style={{ width: `${Math.min(100, value)}%`, background: color }} />
       </div>
     </div>
@@ -2882,7 +2882,7 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {card("🪙 TOSS AI CENTER", <>
         {t.tossWinProbability && (
           <div className="mb-3">
-            <div className="text-[15px] mb-2" style={{ color: "#444444" }}>Toss Win Probability:</div>
+            <div className="text-[15px] mb-2" style={{ color: "var(--text-off)" }}>Toss Win Probability:</div>
             {progressBar(match.team1Short, t.tossWinProbability.team1 || 0, "#DC2626")}
             {progressBar(match.team2Short, t.tossWinProbability.team2 || 0, "#2563EB")}
           </div>
@@ -2935,25 +2935,25 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {card("📊 PLAYER FORM CENTER", <>
         <div className="space-y-3">
           {pf.map((p: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg" style={{ background: "#F5F7FA", border: "1px solid #E5E7EB" }}>
+            <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)" }}>
               <div className="flex justify-between items-center mb-2">
-                <span className="text-[16px] font-black" style={{ color: "#111111" }}>{p.name}</span>
-                <span className="text-[14px] font-bold px-2 py-0.5 rounded" style={{ background: p.aiRating >= 75 ? "#16A34A" : p.aiRating >= 50 ? "#F59E0B" : "#DC2626", color: "#FFFFFF" }}>
+                <span className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>{p.name}</span>
+                <span className="text-[14px] font-bold px-2 py-0.5 rounded" style={{ background: p.aiRating >= 75 ? "#16A34A" : p.aiRating >= 50 ? "#F59E0B" : "#DC2626", color: "#f0f0f5" }}>
                   AI {p.aiRating || 0}
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-[14px]">
-                <div style={{ color: "#444444" }}>Last 5: <b style={{ color: "#111111" }}>{(p.last5Scores || []).join(", ") || "—"}</b></div>
-                <div style={{ color: "#444444" }}>Bat Form: <b style={{ color: p.battingForm === "Good" ? "#16A34A" : p.battingForm === "Poor" ? "#DC2626" : "#F59E0B" }}>{p.battingForm || "—"}</b></div>
-                <div style={{ color: "#444444" }}>Bowl Form: <b style={{ color: p.bowlingForm === "Good" ? "#16A34A" : p.bowlingForm === "Poor" ? "#DC2626" : "#F59E0B" }}>{p.bowlingForm || "—"}</b></div>
-                <div style={{ color: "#444444" }}>SR: <b style={{ color: "#2563EB" }}>{p.strikeRate || "—"}</b></div>
-                <div style={{ color: "#444444" }}>Eco: <b style={{ color: "#2563EB" }}>{p.economyRate || "—"}</b></div>
-                <div style={{ color: "#444444" }}>Fantasy Avg: <b style={{ color: "#16A34A" }}>{p.fantasyAverage || "—"}</b></div>
-                <div style={{ color: "#444444" }}>Consistency: <b style={{ color: "#111111" }}>{p.consistencyScore || "—"}%</b></div>
-                <div style={{ color: "#444444" }}>Risk: <b style={{ color: p.riskRating >= 70 ? "#DC2626" : p.riskRating >= 40 ? "#F59E0B" : "#16A34A" }}>{p.riskRating || "—"}</b></div>
+                <div style={{ color: "var(--text-off)" }}>Last 5: <b style={{ color: "#f0f0f5" }}>{(p.last5Scores || []).join(", ") || "—"}</b></div>
+                <div style={{ color: "var(--text-off)" }}>Bat Form: <b style={{ color: p.battingForm === "Good" ? "#16A34A" : p.battingForm === "Poor" ? "#DC2626" : "#F59E0B" }}>{p.battingForm || "—"}</b></div>
+                <div style={{ color: "var(--text-off)" }}>Bowl Form: <b style={{ color: p.bowlingForm === "Good" ? "#16A34A" : p.bowlingForm === "Poor" ? "#DC2626" : "#F59E0B" }}>{p.bowlingForm || "—"}</b></div>
+                <div style={{ color: "var(--text-off)" }}>SR: <b style={{ color: "var(--cyan)" }}>{p.strikeRate || "—"}</b></div>
+                <div style={{ color: "var(--text-off)" }}>Eco: <b style={{ color: "var(--cyan)" }}>{p.economyRate || "—"}</b></div>
+                <div style={{ color: "var(--text-off)" }}>Fantasy Avg: <b style={{ color: "var(--green)" }}>{p.fantasyAverage || "—"}</b></div>
+                <div style={{ color: "var(--text-off)" }}>Consistency: <b style={{ color: "#f0f0f5" }}>{p.consistencyScore || "—"}%</b></div>
+                <div style={{ color: "var(--text-off)" }}>Risk: <b style={{ color: p.riskRating >= 70 ? "#DC2626" : p.riskRating >= 40 ? "#F59E0B" : "#16A34A" }}>{p.riskRating || "—"}</b></div>
               </div>
-              {p.venueRecord && <div className="text-[13px] mt-2" style={{ color: "#6B7280" }}>📍 {p.venueRecord}</div>}
-              {p.oppositionRecord && <div className="text-[13px]" style={{ color: "#6B7280" }}>⚔️ {p.oppositionRecord}</div>}
+              {p.venueRecord && <div className="text-[13px] mt-2" style={{ color: "var(--muted)" }}>📍 {p.venueRecord}</div>}
+              {p.oppositionRecord && <div className="text-[13px]" style={{ color: "var(--muted)" }}>⚔️ {p.oppositionRecord}</div>}
             </div>
           ))}
         </div>
@@ -2968,17 +2968,17 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {cl.fixPlayers && cl.fixPlayers.length > 0 && card("🔒 7 AI FIX PLAYERS", <>
         <div className="space-y-2">
           {cl.fixPlayers.slice(0, 7).map((p: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg" style={{ background: "#F5F7FA", border: "1px solid #E5E7EB", borderLeft: "4px solid #16A34A" }}>
+            <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)", borderLeft: "4px solid #16A34A" }}>
               <div className="flex justify-between items-center mb-1">
-                <span className="text-[16px] font-black" style={{ color: "#111111" }}>{p.name}</span>
-                <span className="text-[14px] font-bold px-2 py-0.5 rounded" style={{ background: "#16A34A", color: "#FFFFFF" }}>LOCK {p.lockPct || 0}%</span>
+                <span className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>{p.name}</span>
+                <span className="text-[14px] font-bold px-2 py-0.5 rounded" style={{ background: "#16A34A", color: "#f0f0f5" }}>LOCK {p.lockPct || 0}%</span>
               </div>
-              <div className="grid grid-cols-3 gap-2 text-[13px]" style={{ color: "#444444" }}>
+              <div className="grid grid-cols-3 gap-2 text-[13px]" style={{ color: "var(--text-off)" }}>
                 <div>Role: <b>{p.role}</b></div>
-                <div>Credits: <b style={{ color: "#2563EB" }}>{p.credits}</b></div>
-                <div>Sel: <b style={{ color: "#16A34A" }}>{p.selectionPct}%</b></div>
+                <div>Credits: <b style={{ color: "var(--cyan)" }}>{p.credits}</b></div>
+                <div>Sel: <b style={{ color: "var(--green)" }}>{p.selectionPct}%</b></div>
               </div>
-              <div className="text-[13px] mt-1" style={{ color: "#6B7280" }}>💡 {p.reason}</div>
+              <div className="text-[13px] mt-1" style={{ color: "var(--muted)" }}>💡 {p.reason}</div>
             </div>
           ))}
         </div>
@@ -2986,13 +2986,13 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {cl.topCaptains && cl.topCaptains.length > 0 && card("👑 TOP 6 CAPTAIN PICKS", <>
         <div className="space-y-2">
           {cl.topCaptains.slice(0, 6).map((c: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "#F5F7FA", border: "1px solid #E5E7EB", borderLeft: "4px solid #F59E0B" }}>
+            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)", borderLeft: "4px solid #F59E0B" }}>
               <div>
-                <div className="text-[16px] font-black" style={{ color: "#111111" }}>#{c.rank} {c.name}</div>
-                <div className="text-[13px]" style={{ color: "#6B7280" }}>{c.reason}</div>
+                <div className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>#{c.rank} {c.name}</div>
+                <div className="text-[13px]" style={{ color: "var(--muted)" }}>{c.reason}</div>
               </div>
               <div className="text-right">
-                <div className="text-[15px] font-black" style={{ color: "#F59E0B" }}>{c.captainScore}</div>
+                <div className="text-[15px] font-black" style={{ color: "var(--gold)" }}>{c.captainScore}</div>
                 <div className="text-[12px]" style={{ color: c.risk === "High" ? "#DC2626" : c.risk === "Medium" ? "#F59E0B" : "#16A34A" }}>{c.risk}</div>
               </div>
             </div>
@@ -3002,13 +3002,13 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {cl.topViceCaptains && cl.topViceCaptains.length > 0 && card("⚡ TOP 6 VICE CAPTAIN PICKS", <>
         <div className="space-y-2">
           {cl.topViceCaptains.slice(0, 6).map((c: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "#F5F7FA", border: "1px solid #E5E7EB", borderLeft: "4px solid #2563EB" }}>
+            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)", borderLeft: "4px solid #2563EB" }}>
               <div>
-                <div className="text-[16px] font-black" style={{ color: "#111111" }}>#{c.rank} {c.name}</div>
-                <div className="text-[13px]" style={{ color: "#6B7280" }}>{c.reason}</div>
+                <div className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>#{c.rank} {c.name}</div>
+                <div className="text-[13px]" style={{ color: "var(--muted)" }}>{c.reason}</div>
               </div>
               <div className="text-right">
-                <div className="text-[15px] font-black" style={{ color: "#2563EB" }}>{c.vcScore}</div>
+                <div className="text-[15px] font-black" style={{ color: "var(--cyan)" }}>{c.vcScore}</div>
                 <div className="text-[12px]" style={{ color: c.risk === "High" ? "#DC2626" : c.risk === "Medium" ? "#F59E0B" : "#16A34A" }}>{c.risk}</div>
               </div>
             </div>
@@ -3051,26 +3051,26 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {card("🏆 GRAND LEAGUE RESEARCH", <>
         {gl.lowOwnership && gl.lowOwnership.length > 0 && (
           <div className="mb-3">
-            <div className="text-[15px] font-bold mb-2" style={{ color: "#7C3AED" }}>📉 LOW OWNERSHIP</div>
+            <div className="text-[15px] font-bold mb-2" style={{ color: "#a78bfa" }}>📉 LOW OWNERSHIP</div>
             <div className="space-y-2">{gl.lowOwnership.map((p: string, i: number) => <div key={i}>{playerChip(p)}</div>)}</div>
           </div>
         )}
         {gl.differentialPicks && gl.differentialPicks.length > 0 && (
           <div className="mb-3">
-            <div className="text-[15px] font-bold mb-2" style={{ color: "#7C3AED" }}>💎 DIFFERENTIAL PICKS</div>
+            <div className="text-[15px] font-bold mb-2" style={{ color: "#a78bfa" }}>💎 DIFFERENTIAL PICKS</div>
             <div className="space-y-2">{gl.differentialPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "DIFF", "#7C3AED")}</div>)}</div>
           </div>
         )}
         {gl.hiddenGems && gl.hiddenGems.length > 0 && (
           <div className="mb-3">
-            <div className="text-[15px] font-bold mb-2" style={{ color: "#16A34A" }}>🔮 HIDDEN GEMS</div>
+            <div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>🔮 HIDDEN GEMS</div>
             <div className="space-y-2">{gl.hiddenGems.map((p: string, i: number) => <div key={i}>{playerChip(p, "GEM", "#16A34A")}</div>)}</div>
           </div>
         )}
         {gl.jackpotCombinations && gl.jackpotCombinations.length > 0 && (
           <div className="mb-3">
-            <div className="text-[15px] font-bold mb-2" style={{ color: "#F59E0B" }}>🎰 JACKPOT COMBINATIONS</div>
-            <div className="space-y-2">{gl.jackpotCombinations.map((c: string, i: number) => <div key={i} className="p-2 rounded-lg text-[14px]" style={{ background: "#FFFBEB", border: "1px solid #F59E0B", color: "#92400E" }}>{c}</div>)}</div>
+            <div className="text-[15px] font-bold mb-2" style={{ color: "var(--gold)" }}>🎰 JACKPOT COMBINATIONS</div>
+            <div className="space-y-2">{gl.jackpotCombinations.map((c: string, i: number) => <div key={i} className="p-2 rounded-lg text-[14px]" style={{ background: "rgba(255,210,63,0.08)", border: "1px solid var(--gold)", color: "var(--gold)" }}>{c}</div>)}</div>
           </div>
         )}
         {statRow("Mega GL Strategy", gl.megaGLStrategy)}
@@ -3085,21 +3085,21 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     return <>
       {card("⚖️ TEAM BALANCE ANALYZER", <>
         <div className="grid grid-cols-2 gap-2 mb-3">
-          <div className="p-3 rounded-lg text-center" style={{ background: "#F5F7FA", border: "1px solid #E5E7EB" }}>
-            <div className="text-[14px]" style={{ color: "#6B7280" }}>Batters</div>
-            <div className="text-[20px] font-black" style={{ color: "#111111" }}>{tb.batters || 0}</div>
+          <div className="p-3 rounded-lg text-center" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)" }}>
+            <div className="text-[14px]" style={{ color: "var(--muted)" }}>Batters</div>
+            <div className="text-[20px] font-black" style={{ color: "#f0f0f5" }}>{tb.batters || 0}</div>
           </div>
-          <div className="p-3 rounded-lg text-center" style={{ background: "#F5F7FA", border: "1px solid #E5E7EB" }}>
-            <div className="text-[14px]" style={{ color: "#6B7280" }}>Bowlers</div>
-            <div className="text-[20px] font-black" style={{ color: "#111111" }}>{tb.bowlers || 0}</div>
+          <div className="p-3 rounded-lg text-center" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)" }}>
+            <div className="text-[14px]" style={{ color: "var(--muted)" }}>Bowlers</div>
+            <div className="text-[20px] font-black" style={{ color: "#f0f0f5" }}>{tb.bowlers || 0}</div>
           </div>
-          <div className="p-3 rounded-lg text-center" style={{ background: "#F5F7FA", border: "1px solid #E5E7EB" }}>
-            <div className="text-[14px]" style={{ color: "#6B7280" }}>All-rounders</div>
-            <div className="text-[20px] font-black" style={{ color: "#111111" }}>{tb.allrounders || 0}</div>
+          <div className="p-3 rounded-lg text-center" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)" }}>
+            <div className="text-[14px]" style={{ color: "var(--muted)" }}>All-rounders</div>
+            <div className="text-[20px] font-black" style={{ color: "#f0f0f5" }}>{tb.allrounders || 0}</div>
           </div>
-          <div className="p-3 rounded-lg text-center" style={{ background: "#F5F7FA", border: "1px solid #E5E7EB" }}>
-            <div className="text-[14px]" style={{ color: "#6B7280" }}>Wicketkeepers</div>
-            <div className="text-[20px] font-black" style={{ color: "#111111" }}>{tb.wicketkeepers || 0}</div>
+          <div className="p-3 rounded-lg text-center" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)" }}>
+            <div className="text-[14px]" style={{ color: "var(--muted)" }}>Wicketkeepers</div>
+            <div className="text-[20px] font-black" style={{ color: "#f0f0f5" }}>{tb.wicketkeepers || 0}</div>
           </div>
         </div>
         {progressBar("Credits Used", tb.creditsUsed || 0, "#2563EB")}
@@ -3131,25 +3131,25 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     return <>
       {card("💎 FANTASY VALUE PICKS", <>
         {fp.budgetPicks && fp.budgetPicks.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#16A34A" }}>💰 BUDGET PICKS</div><div className="space-y-2">{fp.budgetPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "BUDGET", "#16A34A")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>💰 BUDGET PICKS</div><div className="space-y-2">{fp.budgetPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "BUDGET", "#16A34A")}</div>)}</div></div>
         )}
         {fp.valuePicks && fp.valuePicks.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#2563EB" }}>⭐ VALUE PICKS</div><div className="space-y-2">{fp.valuePicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "VALUE", "#2563EB")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--cyan)" }}>⭐ VALUE PICKS</div><div className="space-y-2">{fp.valuePicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "VALUE", "#2563EB")}</div>)}</div></div>
         )}
         {fp.hiddenGems && fp.hiddenGems.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#7C3AED" }}>🔮 HIDDEN GEMS</div><div className="space-y-2">{fp.hiddenGems.map((p: string, i: number) => <div key={i}>{playerChip(p, "GEM", "#7C3AED")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#a78bfa" }}>🔮 HIDDEN GEMS</div><div className="space-y-2">{fp.hiddenGems.map((p: string, i: number) => <div key={i}>{playerChip(p, "GEM", "#7C3AED")}</div>)}</div></div>
         )}
         {fp.mustHave && fp.mustHave.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#DC2626" }}>🔥 MUST HAVE</div><div className="space-y-2">{fp.mustHave.map((p: string, i: number) => <div key={i}>{playerChip(p, "MUST", "#DC2626")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--pink)" }}>🔥 MUST HAVE</div><div className="space-y-2">{fp.mustHave.map((p: string, i: number) => <div key={i}>{playerChip(p, "MUST", "#DC2626")}</div>)}</div></div>
         )}
         {fp.avoidPlayers && fp.avoidPlayers.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#DC2626" }}>❌ AVOID</div><div className="space-y-2">{fp.avoidPlayers.map((p: string, i: number) => <div key={i}>{playerChip(p, "AVOID", "#DC2626")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--pink)" }}>❌ AVOID</div><div className="space-y-2">{fp.avoidPlayers.map((p: string, i: number) => <div key={i}>{playerChip(p, "AVOID", "#DC2626")}</div>)}</div></div>
         )}
         {fp.safePicks && fp.safePicks.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#16A34A" }}>🛡️ SAFE PICKS</div><div className="space-y-2">{fp.safePicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "SAFE", "#16A34A")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>🛡️ SAFE PICKS</div><div className="space-y-2">{fp.safePicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "SAFE", "#16A34A")}</div>)}</div></div>
         )}
         {fp.differentialPicks && fp.differentialPicks.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#7C3AED" }}>💎 DIFFERENTIAL PICKS</div><div className="space-y-2">{fp.differentialPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "DIFF", "#7C3AED")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#a78bfa" }}>💎 DIFFERENTIAL PICKS</div><div className="space-y-2">{fp.differentialPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "DIFF", "#7C3AED")}</div>)}</div></div>
         )}
       </>)}
     </>;
@@ -3172,7 +3172,7 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {lt.recentOvers && lt.recentOvers.length > 0 && card("📈 RECENT OVERS", <>
         <div className="space-y-2">
           {lt.recentOvers.map((over: string, i: number) => (
-            <div key={i} className="p-2 rounded-lg text-[15px] font-mono" style={{ background: "#F5F7FA", border: "1px solid #E5E7EB", color: "#111111" }}>
+            <div key={i} className="p-2 rounded-lg text-[15px] font-mono" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)", color: "#f0f0f5" }}>
               Over {i+1}: {over}
             </div>
           ))}
@@ -3187,20 +3187,20 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     return <>
       {card("📋 AI CHEAT SHEET", <>
         {cs.mustPick && cs.mustPick.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#16A34A" }}>✅ MUST PICK</div><div className="space-y-2">{cs.mustPick.map((p: string, i: number) => <div key={i}>{playerChip(p, "MUST", "#16A34A")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>✅ MUST PICK</div><div className="space-y-2">{cs.mustPick.map((p: string, i: number) => <div key={i}>{playerChip(p, "MUST", "#16A34A")}</div>)}</div></div>
         )}
         {cs.avoid && cs.avoid.length > 0 && (
-          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#DC2626" }}>❌ AVOID</div><div className="space-y-2">{cs.avoid.map((p: string, i: number) => <div key={i}>{playerChip(p, "AVOID", "#DC2626")}</div>)}</div></div>
+          <div className="mb-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--pink)" }}>❌ AVOID</div><div className="space-y-2">{cs.avoid.map((p: string, i: number) => <div key={i}>{playerChip(p, "AVOID", "#DC2626")}</div>)}</div></div>
         )}
         {statRow("Safe Combination", cs.safeCombination)}
         {statRow("Grand League Combination", cs.grandLeagueCombination)}
         {statRow("Captain Lock", cs.captainLock, "#F59E0B")}
         {statRow("Vice Captain Lock", cs.viceCaptainLock, "#2563EB")}
         {cs.differentialPicks && cs.differentialPicks.length > 0 && (
-          <div className="mb-3 mt-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#7C3AED" }}>💎 DIFFERENTIAL PICKS</div><div className="space-y-2">{cs.differentialPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "DIFF", "#7C3AED")}</div>)}</div></div>
+          <div className="mb-3 mt-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#a78bfa" }}>💎 DIFFERENTIAL PICKS</div><div className="space-y-2">{cs.differentialPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "DIFF", "#7C3AED")}</div>)}</div></div>
         )}
         {cs.hiddenPicks && cs.hiddenPicks.length > 0 && (
-          <div className="mt-3"><div className="text-[15px] font-bold mb-2" style={{ color: "#16A34A" }}>🔮 HIDDEN PICKS</div><div className="space-y-2">{cs.hiddenPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "HIDDEN", "#16A34A")}</div>)}</div></div>
+          <div className="mt-3"><div className="text-[15px] font-bold mb-2" style={{ color: "var(--green)" }}>🔮 HIDDEN PICKS</div><div className="space-y-2">{cs.hiddenPicks.map((p: string, i: number) => <div key={i}>{playerChip(p, "HIDDEN", "#16A34A")}</div>)}</div></div>
         )}
       </>)}
     </>;
@@ -3212,9 +3212,9 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     return <>
       {card("⚡ FINAL AI VERDICT", <>
         <div className="text-center mb-4">
-          <div className="text-[14px]" style={{ color: "#6B7280" }}>Overall Match Rating</div>
+          <div className="text-[14px]" style={{ color: "var(--muted)" }}>Overall Match Rating</div>
           <div className="text-[48px] font-black" style={{ color: fv.overallMatchRating >= 75 ? "#16A34A" : fv.overallMatchRating >= 50 ? "#F59E0B" : "#DC2626", fontFamily: "'Orbitron', sans-serif" }}>
-            {fv.overallMatchRating || 0}<span className="text-[20px]" style={{ color: "#6B7280" }}>/100</span>
+            {fv.overallMatchRating || 0}<span className="text-[20px]" style={{ color: "var(--muted)" }}>/100</span>
           </div>
         </div>
         {progressBar("AI Confidence", fv.aiConfidence || 0, "#2563EB")}
@@ -3223,9 +3223,9 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
         {progressBar("Risk Meter", fv.riskMeter || 0, "#DC2626")}
         {statRow("Fantasy Difficulty", fv.fantasyDifficulty, fv.fantasyDifficulty === "Easy" ? "#16A34A" : fv.fantasyDifficulty === "Hard" ? "#DC2626" : "#F59E0B")}
         {statRow("Winning Probability", fv.winningProbability)}
-        <div className="mt-3 p-3 rounded-lg" style={{ background: "#EFF6FF", border: "1px solid #2563EB" }}>
-          <div className="text-[14px] font-bold mb-1" style={{ color: "#2563EB" }}>🎯 FINAL RECOMMENDATION</div>
-          <div className="text-[15px]" style={{ color: "#111111" }}>{fv.finalRecommendation}</div>
+        <div className="mt-3 p-3 rounded-lg" style={{ background: "rgba(78,226,236,0.08)", border: "1px solid var(--cyan)" }}>
+          <div className="text-[14px] font-bold mb-1" style={{ color: "var(--cyan)" }}>🎯 FINAL RECOMMENDATION</div>
+          <div className="text-[15px]" style={{ color: "#f0f0f5" }}>{fv.finalRecommendation}</div>
         </div>
       </>)}
     </>;
@@ -3238,12 +3238,12 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
       {card("⚠️ PLAYERS TO AVOID (Max 5)", <>
         <div className="space-y-2">
           {pa.slice(0, 5).map((p: any, i: number) => (
-            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "#FEF2F2", border: "1px solid #DC2626", borderLeft: "4px solid #DC2626" }}>
-              <span className="text-[16px] font-black" style={{ color: "#111111" }}>{p.name}</span>
-              <span className="text-[13px] font-bold px-2 py-0.5 rounded" style={{ background: "#DC2626", color: "#FFFFFF" }}>{p.reason}</span>
+            <div key={i} className="p-3 rounded-lg flex justify-between items-center" style={{ background: "rgba(245,0,87,0.08)", border: "1px solid var(--pink)", borderLeft: "4px solid #DC2626" }}>
+              <span className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>{p.name}</span>
+              <span className="text-[13px] font-bold px-2 py-0.5 rounded" style={{ background: "#DC2626", color: "#f0f0f5" }}>{p.reason}</span>
             </div>
           ))}
-          {pa.length === 0 && <div className="text-[15px] text-center py-4" style={{ color: "#6B7280" }}>No players to avoid — all picks look safe.</div>}
+          {pa.length === 0 && <div className="text-[15px] text-center py-4" style={{ color: "var(--muted)" }}>No players to avoid — all picks look safe.</div>}
         </div>
       </>)}
     </>;
@@ -3258,16 +3258,16 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
           {lc.map((p: any, i: number) => {
             const color = p.level === "Very High" ? "#16A34A" : p.level === "High" ? "#2563EB" : p.level === "Medium" ? "#F59E0B" : "#DC2626";
             return (
-              <div key={i} className="p-3 rounded-lg" style={{ background: "#F5F7FA", border: "1px solid #E5E7EB" }}>
+              <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", border: "1px solid var(--b1)" }}>
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-[16px] font-black" style={{ color: "#111111" }}>{p.name}</span>
-                  <span className="text-[13px] font-black px-2 py-0.5 rounded" style={{ background: color, color: "#FFFFFF" }}>{p.level}</span>
+                  <span className="text-[16px] font-black" style={{ color: "#f0f0f5" }}>{p.name}</span>
+                  <span className="text-[13px] font-black px-2 py-0.5 rounded" style={{ background: color, color: "#f0f0f5" }}>{p.level}</span>
                 </div>
                 {progressBar("Lock Score", p.score || 0, color)}
               </div>
             );
           })}
-          {lc.length === 0 && <div className="text-[15px] text-center py-4" style={{ color: "#6B7280" }}>No lock confidence data yet.</div>}
+          {lc.length === 0 && <div className="text-[15px] text-center py-4" style={{ color: "var(--muted)" }}>No lock confidence data yet.</div>}
         </div>
       </>)}
     </>;
@@ -3282,22 +3282,22 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
           {cm.map((combo: any, i: number) => {
             const color = combo.combination === "Safe" ? "#16A34A" : combo.combination === "Balanced" ? "#2563EB" : combo.combination === "Grand League" ? "#F59E0B" : "#7C3AED";
             return (
-              <div key={i} className="p-3 rounded-lg" style={{ background: "#F5F7FA", border: `2px solid ${color}` }}>
+              <div key={i} className="p-3 rounded-lg" style={{ background: "var(--panel-elevated)", border: `2px solid ${color}` }}>
                 <div className="text-[15px] font-black mb-2" style={{ color }}>{combo.combination}</div>
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="p-2 rounded text-center" style={{ background: "#FFFBEB", border: "1px solid #F59E0B" }}>
-                    <div className="text-[12px]" style={{ color: "#6B7280" }}>Captain</div>
-                    <div className="text-[15px] font-black" style={{ color: "#111111" }}>{combo.captain}</div>
+                  <div className="p-2 rounded text-center" style={{ background: "rgba(255,210,63,0.08)", border: "1px solid var(--gold)" }}>
+                    <div className="text-[12px]" style={{ color: "var(--muted)" }}>Captain</div>
+                    <div className="text-[15px] font-black" style={{ color: "#f0f0f5" }}>{combo.captain}</div>
                   </div>
-                  <div className="p-2 rounded text-center" style={{ background: "#EFF6FF", border: "1px solid #2563EB" }}>
-                    <div className="text-[12px]" style={{ color: "#6B7280" }}>Vice Captain</div>
-                    <div className="text-[15px] font-black" style={{ color: "#111111" }}>{combo.viceCaptain}</div>
+                  <div className="p-2 rounded text-center" style={{ background: "rgba(78,226,236,0.08)", border: "1px solid var(--cyan)" }}>
+                    <div className="text-[12px]" style={{ color: "var(--muted)" }}>Vice Captain</div>
+                    <div className="text-[15px] font-black" style={{ color: "#f0f0f5" }}>{combo.viceCaptain}</div>
                   </div>
                 </div>
               </div>
             );
           })}
-          {cm.length === 0 && <div className="text-[15px] text-center py-4" style={{ color: "#6B7280" }}>No captain matrix data yet.</div>}
+          {cm.length === 0 && <div className="text-[15px] text-center py-4" style={{ color: "var(--muted)" }}>No captain matrix data yet.</div>}
         </div>
       </>)}
     </>;
@@ -3309,13 +3309,13 @@ function AiModuleContent({ module, analysis, match, details }: { module: number;
     return <>
       {card("🧠 AI INSIGHTS", <>
         <div className="space-y-3">
-          {ai.topDifferential && <div className="p-3 rounded-lg" style={{ background: "#F5F3FF", border: "1px solid #7C3AED", borderLeft: "4px solid #7C3AED" }}><div className="text-[14px] font-bold" style={{ color: "#7C3AED" }}>💎 TOP DIFFERENTIAL</div><div className="text-[15px]" style={{ color: "#111111" }}>{ai.topDifferential}</div></div>}
-          {ai.highestCeiling && <div className="p-3 rounded-lg" style={{ background: "#FFFBEB", border: "1px solid #F59E0B", borderLeft: "4px solid #F59E0B" }}><div className="text-[14px] font-bold" style={{ color: "#F59E0B" }}>🚀 HIGHEST CEILING</div><div className="text-[15px]" style={{ color: "#111111" }}>{ai.highestCeiling}</div></div>}
-          {ai.safestPlayer && <div className="p-3 rounded-lg" style={{ background: "#F0FDF4", border: "1px solid #16A34A", borderLeft: "4px solid #16A34A" }}><div className="text-[14px] font-bold" style={{ color: "#16A34A" }}>🛡️ SAFEST PLAYER</div><div className="text-[15px]" style={{ color: "#111111" }}>{ai.safestPlayer}</div></div>}
-          {ai.mostDangerousBowler && <div className="p-3 rounded-lg" style={{ background: "#FEF2F2", border: "1px solid #DC2626", borderLeft: "4px solid #DC2626" }}><div className="text-[14px] font-bold" style={{ color: "#DC2626" }}>⚡ MOST DANGEROUS BOWLER</div><div className="text-[15px]" style={{ color: "#111111" }}>{ai.mostDangerousBowler}</div></div>}
-          {ai.explosiveBatter && <div className="p-3 rounded-lg" style={{ background: "#FFF7ED", border: "1px solid #EA580C", borderLeft: "4px solid #EA580C" }}><div className="text-[14px] font-bold" style={{ color: "#EA580C" }}>💥 EXPLOSIVE BATTER</div><div className="text-[15px]" style={{ color: "#111111" }}>{ai.explosiveBatter}</div></div>}
-          {ai.deathOversSpecialist && <div className="p-3 rounded-lg" style={{ background: "#EFF6FF", border: "1px solid #2563EB", borderLeft: "4px solid #2563EB" }}><div className="text-[14px] font-bold" style={{ color: "#2563EB" }}>🎯 DEATH OVERS SPECIALIST</div><div className="text-[15px]" style={{ color: "#111111" }}>{ai.deathOversSpecialist}</div></div>}
-          {ai.powerplaySpecialist && <div className="p-3 rounded-lg" style={{ background: "#F0F9FF", border: "1px solid #0EA5E9", borderLeft: "4px solid #0EA5E9" }}><div className="text-[14px] font-bold" style={{ color: "#0EA5E9" }}>⚡ POWERPLAY SPECIALIST</div><div className="text-[15px]" style={{ color: "#111111" }}>{ai.powerplaySpecialist}</div></div>}
+          {ai.topDifferential && <div className="p-3 rounded-lg" style={{ background: "rgba(124,58,237,0.08)", border: "1px solid #7C3AED", borderLeft: "4px solid #7C3AED" }}><div className="text-[14px] font-bold" style={{ color: "#a78bfa" }}>💎 TOP DIFFERENTIAL</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.topDifferential}</div></div>}
+          {ai.highestCeiling && <div className="p-3 rounded-lg" style={{ background: "rgba(255,210,63,0.08)", border: "1px solid var(--gold)", borderLeft: "4px solid #F59E0B" }}><div className="text-[14px] font-bold" style={{ color: "var(--gold)" }}>🚀 HIGHEST CEILING</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.highestCeiling}</div></div>}
+          {ai.safestPlayer && <div className="p-3 rounded-lg" style={{ background: "rgba(56,224,123,0.08)", border: "1px solid var(--green)", borderLeft: "4px solid #16A34A" }}><div className="text-[14px] font-bold" style={{ color: "var(--green)" }}>🛡️ SAFEST PLAYER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.safestPlayer}</div></div>}
+          {ai.mostDangerousBowler && <div className="p-3 rounded-lg" style={{ background: "rgba(245,0,87,0.08)", border: "1px solid var(--pink)", borderLeft: "4px solid #DC2626" }}><div className="text-[14px] font-bold" style={{ color: "var(--pink)" }}>⚡ MOST DANGEROUS BOWLER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.mostDangerousBowler}</div></div>}
+          {ai.explosiveBatter && <div className="p-3 rounded-lg" style={{ background: "rgba(234,88,12,0.08)", border: "1px solid #EA580C", borderLeft: "4px solid #EA580C" }}><div className="text-[14px] font-bold" style={{ color: "#EA580C" }}>💥 EXPLOSIVE BATTER</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.explosiveBatter}</div></div>}
+          {ai.deathOversSpecialist && <div className="p-3 rounded-lg" style={{ background: "rgba(78,226,236,0.08)", border: "1px solid var(--cyan)", borderLeft: "4px solid #2563EB" }}><div className="text-[14px] font-bold" style={{ color: "var(--cyan)" }}>🎯 DEATH OVERS SPECIALIST</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.deathOversSpecialist}</div></div>}
+          {ai.powerplaySpecialist && <div className="p-3 rounded-lg" style={{ background: "rgba(14,165,233,0.08)", border: "1px solid #0EA5E9", borderLeft: "4px solid #0EA5E9" }}><div className="text-[14px] font-bold" style={{ color: "#0EA5E9" }}>⚡ POWERPLAY SPECIALIST</div><div className="text-[15px]" style={{ color: "#f0f0f5" }}>{ai.powerplaySpecialist}</div></div>}
         </div>
       </>)}
     </>;
