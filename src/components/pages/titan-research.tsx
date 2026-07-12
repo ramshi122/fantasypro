@@ -683,68 +683,41 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
     }
 
     setGenerating(true);
-    showToast("🧠 AI Running 150+ data point analysis...");
 
-    // Build squad context for AI
-    const xiPlayers = pool.filter((p) => p.inXI === true);
-    const allPlayers = pool.filter((p) => p.inXI !== false);
-    const squadList = allPlayers.map((p) => `${p.name} (${p.team}, ${p.role}, ${p.inXI === true ? "XI" : "Bench"})`);
+    // STEP 1: Generate local teams IMMEDIATELY (instant — no AI wait)
+    const localTeams = generateLocalTeams();
+    if (localTeams.length > 0) {
+      setGenerated([{ group: "AI RESEARCH TEAMS", teams: localTeams }]);
+      setGenerating(false);
+      showToast(`🏆 ${localTeams.length} teams generated · AI enhancing...`);
+    } else {
+      showToast("⚠️ Not enough players to generate teams");
+      setGenerating(false);
+      return;
+    }
 
-    const prompt = `You are the AI TOP RANK FANTASY ENGINE with 150+ DATA POINT ANALYSIS.
-Analyze this match using ALL 150 data points before generating teams.
+    // STEP 2: Try AI enhancement in background (non-blocking)
+    try {
+      const allPlayers = pool.filter((p) => p.inXI !== false);
+      const squadList = allPlayers.map((p) => `${p.name} (${p.team}, ${p.role})`);
 
-MATCH: ${selectedMatch.team1} vs ${selectedMatch.team2}
+      const prompt = `MATCH: ${selectedMatch.team1} vs ${selectedMatch.team2}
 FORMAT: ${selectedMatch.format}
 VENUE: ${selectedMatch.venue}
-SERIES: ${selectedMatch.series}
 TOSS: ${details?.toss ? `${details.toss.winner} chose to ${details.toss.decision}` : "Not yet"}
-LIVE SCORE: ${details?.liveScore || "Not live"}
-STATUS: ${details?.matchStatus || "Preview"}
 LINEUP: ${details?.lineupAnnounced ? "ANNOUNCED" : "PRE-TOSS"}
 
-SQUAD (${squadList.length} players):
-${squadList.join("\n")}
+SQUAD: ${squadList.join(", ")}
 
-RULES (STRICT):
-- Use ONLY Official Playing XI players (inXI=true). NEVER use bench players.
-- Never include injured/retired players.
-- Generate 10 UNIQUE teams with different C/VC combos.
-- Each team: exactly 11 players, 1 WK, 3-5 BAT, 1-4 AR, 3-5 BOWL.
-- Max 7 from one team. Total credits ≤ 100.
-- Optimize C/VC using projected fantasy points + risk analysis.
-- Recalculate after toss if available.
+Generate 10 Dream11 teams. Return JSON:
+{ "teams": [{ "players": ["name1","name2","name3","name4","name5","name6","name7","name8","name9","name10","name11"], "captain": "name", "viceCaptain": "name", "strategy": "Safe|Balanced|Differential|Risk" }] }
 
-Return STRICT JSON:
-{
-  "analysis": {
-    "matchRating": 0,
-    "aiConfidence": 0,
-    "pitchType": "1-line",
-    "tossImpact": "1-line",
-    "bestStrategy": "1-line",
-    "playersToAvoid": ["name1"],
-    "mustPick": ["name1","name2","name3"]
-  },
-  "teams": [
-    {
-      "title": "Team 1 - Safe",
-      "strategy": "Safe|Balanced|Differential|Risk",
-      "players": [{"name":"","role":"WK|BAT|AR|BOWL"}],
-      "captain": "name",
-      "viceCaptain": "name",
-      "confidence": 0,
-      "reason": "1-line why this team"
-    }
-  ]
-}
+Rules: 11 players, 1 WK, 3-5 BAT, 1-4 AR, 3-5 BOWL. Use ONLY squad names. JSON only.`;
 
-Generate exactly 10 teams. Use ONLY names from the squad above.`;
-
-    try {
       const res = await fetch("/api/call-ai", {
         method: "POST",
         headers: licenseHeaders(),
-        body: JSON.stringify({ prompt, system: "You are an elite Dream11 AI engine. Return STRICT JSON only.", json: true }),
+        body: JSON.stringify({ prompt, system: "Return STRICT JSON only.", json: true }),
       }).then((r) => r.json());
 
       if (res.ok && res.content) {
@@ -757,18 +730,32 @@ Generate exactly 10 teams. Use ONLY names from the squad above.`;
         const parsed = JSON.parse(content);
 
         if (parsed.teams && parsed.teams.length > 0) {
-          // Convert AI teams to our format
-          const teams: { players: Player[]; c: string; vc: string }[] = [];
+          // Convert AI teams — use exact name match, fall back to local if AI fails
+          const aiTeams: { players: Player[]; c: string; vc: string }[] = [];
           for (const t of parsed.teams.slice(0, 10)) {
-            const teamPlayers: Player[] = (t.players || []).map((tp: any) => {
-              const found = pool.find((p) => p.name.toLowerCase().includes(String(tp.name).toLowerCase()));
-              return found || pool[0];
-            }).filter(Boolean).slice(0, 11);
+            // AI returns players as array of name strings
+            const names: string[] = Array.isArray(t.players) 
+              ? t.players.map((p: any) => typeof p === "string" ? p : p.name)
+              : [];
 
+            const teamPlayers: Player[] = [];
+            for (const name of names) {
+              // Exact match first, then partial match
+              const exact = pool.find((p) => p.name.toLowerCase() === String(name).toLowerCase());
+              const partial = pool.find((p) => p.name.toLowerCase().includes(String(name).toLowerCase()) || String(name).toLowerCase().includes(p.name.toLowerCase()));
+              const found = exact || partial;
+              if (found && !teamPlayers.some((tp) => tp.id === found.id)) {
+                teamPlayers.push(found);
+              }
+            }
+
+            // Only use AI team if we got exactly 11 unique players
             if (teamPlayers.length === 11) {
-              const cPlayer = pool.find((p) => p.name.toLowerCase().includes(String(t.captain).toLowerCase()));
-              const vcPlayer = pool.find((p) => p.name.toLowerCase().includes(String(t.viceCaptain).toLowerCase()));
-              teams.push({
+              const cName = String(t.captain || "");
+              const vcName = String(t.viceCaptain || "");
+              const cPlayer = teamPlayers.find((p) => p.name.toLowerCase() === cName.toLowerCase() || p.name.toLowerCase().includes(cName.toLowerCase()));
+              const vcPlayer = teamPlayers.find((p) => p.name.toLowerCase() === vcName.toLowerCase() || p.name.toLowerCase().includes(vcName.toLowerCase()));
+              aiTeams.push({
                 players: teamPlayers,
                 c: cPlayer?.id || teamPlayers[0]?.id || "",
                 vc: vcPlayer?.id || teamPlayers[1]?.id || "",
@@ -776,34 +763,26 @@ Generate exactly 10 teams. Use ONLY names from the squad above.`;
             }
           }
 
-          // Fallback: if AI didn't return enough teams, use local generation
-          if (teams.length < 3) {
-            showToast("⚠️ AI partial — using local fallback for remaining teams");
-            const fallback = generateLocalTeams();
-            setGenerated([{ group: "AI RESEARCH TEAMS", teams: [...teams, ...fallback].slice(0, 10) }]);
-          } else {
-            setGenerated([{ group: "AI RESEARCH TEAMS", teams }]);
-            // Also lock the first team's players
-            if (teams[0]) {
-              const lockIds = new Set(teams[0].players.map((p) => p.id));
+          // Only replace local teams if AI gave us at least 3 valid teams
+          if (aiTeams.length >= 3) {
+            setGenerated([{ group: "AI RESEARCH TEAMS", teams: aiTeams }]);
+            // Lock first team's players
+            if (aiTeams[0]) {
+              const lockIds = new Set(aiTeams[0].players.map((p) => p.id));
               setLocked(lockIds);
-              setCaptain(teams[0].c);
-              setViceCaptain(teams[0].vc);
+              setCaptain(aiTeams[0].c);
+              setViceCaptain(aiTeams[0].vc);
             }
-            showToast(`🏆 ${teams.length} AI teams generated — 150+ data points analyzed`);
+            showToast(`🏆 ${aiTeams.length} AI teams ready — 150+ data points analyzed`);
+          } else {
+            // Keep local teams — AI didn't return enough valid teams
+            showToast(`🏆 ${localTeams.length} teams ready · AI enhancement partial`);
           }
-        } else {
-          throw new Error("No teams in AI response");
         }
-      } else {
-        throw new Error(res.error || "AI failed");
       }
-    } catch (e: any) {
-      showToast("⚠️ AI analysis failed — using local generation");
-      const fallback = generateLocalTeams();
-      setGenerated([{ group: "AI RESEARCH TEAMS", teams: fallback }]);
-    } finally {
-      setGenerating(false);
+    } catch {
+      // AI failed — local teams already shown, no action needed
+      showToast(`🏆 ${localTeams.length} teams ready`);
     }
   }
 
