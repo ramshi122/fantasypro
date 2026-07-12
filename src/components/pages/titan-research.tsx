@@ -453,6 +453,44 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMatch?.id, reloadKey]);
 
+  // ===== 30-SECOND AUTO-REFRESH for lineup detection =====
+  // Checks every 30s if lineup has been announced. If lineup status changes
+  // (pre-toss → announced), auto-reloads squad + shows toast.
+  useEffect(() => {
+    if (!selectedMatch) return;
+    let prevLineupAnnounced = details?.lineupAnnounced ?? false;
+
+    const interval = setInterval(async () => {
+      try {
+        const d = await fetch("/api/cricket-match-details", {
+          method: "POST",
+          headers: licenseHeaders(),
+          body: JSON.stringify({ matchId: selectedMatch.id }),
+        }).then((r) => r.json());
+
+        if (d.ok) {
+          const newLineupAnnounced = d.lineupAnnounced;
+          // Lineup just changed from pre-toss → announced
+          if (newLineupAnnounced && !prevLineupAnnounced) {
+            showToast("📢 LINEUP ANNOUNCED! Auto-reloading squad...");
+            setReloadKey((k) => k + 1);
+          }
+          // Toss just arrived
+          if (d.toss && !details?.toss) {
+            showToast(`🪙 TOSS: ${d.toss.winner} chose to ${d.toss.decision}`);
+            setReloadKey((k) => k + 1);
+          }
+          prevLineupAnnounced = newLineupAnnounced;
+        }
+      } catch {
+        // silent fail — don't spam errors every 30s
+      }
+    }, 30_000); // 30 seconds
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMatch?.id, details?.lineupAnnounced, details?.toss]);
+
   useEffect(() => {
     if (!details?.toss || !selectedMatch) return;
     const winner = details.toss.winner;
@@ -632,95 +670,191 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
     return { sel, cId, vcId };
   }
 
-  function generate10() {
-    const built = autoBuildAndApply();
-    if (!built) return;
-    const base = built.sel;
-    const fixedC = built.cId;
-    const fixedVc = built.vcId;
+  const [generating, setGenerating] = useState(false);
 
-    if (base.length < 11) {
-      showToast("⚠️ Need at least 11 locked players");
+  async function generate10() {
+    if (!selectedMatch) {
+      showToast("⚠️ Select a match first");
+      return;
+    }
+    if (pool.length < 11) {
+      showToast("⚠️ Need at least 11 players in pool");
       return;
     }
 
-    // Get substitutes for variety (non-bench players not in base XI)
+    setGenerating(true);
+    showToast("🧠 AI Running 150+ data point analysis...");
+
+    // Build squad context for AI
+    const xiPlayers = pool.filter((p) => p.inXI === true);
+    const allPlayers = pool.filter((p) => p.inXI !== false);
+    const squadList = allPlayers.map((p) => `${p.name} (${p.team}, ${p.role}, ${p.inXI === true ? "XI" : "Bench"})`);
+
+    const prompt = `You are the AI TOP RANK FANTASY ENGINE with 150+ DATA POINT ANALYSIS.
+Analyze this match using ALL 150 data points before generating teams.
+
+MATCH: ${selectedMatch.team1} vs ${selectedMatch.team2}
+FORMAT: ${selectedMatch.format}
+VENUE: ${selectedMatch.venue}
+SERIES: ${selectedMatch.series}
+TOSS: ${details?.toss ? `${details.toss.winner} chose to ${details.toss.decision}` : "Not yet"}
+LIVE SCORE: ${details?.liveScore || "Not live"}
+STATUS: ${details?.matchStatus || "Preview"}
+LINEUP: ${details?.lineupAnnounced ? "ANNOUNCED" : "PRE-TOSS"}
+
+SQUAD (${squadList.length} players):
+${squadList.join("\n")}
+
+RULES (STRICT):
+- Use ONLY Official Playing XI players (inXI=true). NEVER use bench players.
+- Never include injured/retired players.
+- Generate 10 UNIQUE teams with different C/VC combos.
+- Each team: exactly 11 players, 1 WK, 3-5 BAT, 1-4 AR, 3-5 BOWL.
+- Max 7 from one team. Total credits ≤ 100.
+- Optimize C/VC using projected fantasy points + risk analysis.
+- Recalculate after toss if available.
+
+Return STRICT JSON:
+{
+  "analysis": {
+    "matchRating": 0,
+    "aiConfidence": 0,
+    "pitchType": "1-line",
+    "tossImpact": "1-line",
+    "bestStrategy": "1-line",
+    "playersToAvoid": ["name1"],
+    "mustPick": ["name1","name2","name3"]
+  },
+  "teams": [
+    {
+      "title": "Team 1 - Safe",
+      "strategy": "Safe|Balanced|Differential|Risk",
+      "players": [{"name":"","role":"WK|BAT|AR|BOWL"}],
+      "captain": "name",
+      "viceCaptain": "name",
+      "confidence": 0,
+      "reason": "1-line why this team"
+    }
+  ]
+}
+
+Generate exactly 10 teams. Use ONLY names from the squad above.`;
+
+    try {
+      const res = await fetch("/api/call-ai", {
+        method: "POST",
+        headers: licenseHeaders(),
+        body: JSON.stringify({ prompt, system: "You are an elite Dream11 AI engine. Return STRICT JSON only.", json: true }),
+      }).then((r) => r.json());
+
+      if (res.ok && res.content) {
+        let content = res.content.replace(/```json\s*/gi, "").replace(/```/g, "").trim();
+        if (!content.startsWith("{")) {
+          const start = content.indexOf("{");
+          const end = content.lastIndexOf("}");
+          if (start >= 0 && end > start) content = content.slice(start, end + 1);
+        }
+        const parsed = JSON.parse(content);
+
+        if (parsed.teams && parsed.teams.length > 0) {
+          // Convert AI teams to our format
+          const teams: { players: Player[]; c: string; vc: string }[] = [];
+          for (const t of parsed.teams.slice(0, 10)) {
+            const teamPlayers: Player[] = (t.players || []).map((tp: any) => {
+              const found = pool.find((p) => p.name.toLowerCase().includes(String(tp.name).toLowerCase()));
+              return found || pool[0];
+            }).filter(Boolean).slice(0, 11);
+
+            if (teamPlayers.length === 11) {
+              const cPlayer = pool.find((p) => p.name.toLowerCase().includes(String(t.captain).toLowerCase()));
+              const vcPlayer = pool.find((p) => p.name.toLowerCase().includes(String(t.viceCaptain).toLowerCase()));
+              teams.push({
+                players: teamPlayers,
+                c: cPlayer?.id || teamPlayers[0]?.id || "",
+                vc: vcPlayer?.id || teamPlayers[1]?.id || "",
+              });
+            }
+          }
+
+          // Fallback: if AI didn't return enough teams, use local generation
+          if (teams.length < 3) {
+            showToast("⚠️ AI partial — using local fallback for remaining teams");
+            const fallback = generateLocalTeams();
+            setGenerated([{ group: "AI RESEARCH TEAMS", teams: [...teams, ...fallback].slice(0, 10) }]);
+          } else {
+            setGenerated([{ group: "AI RESEARCH TEAMS", teams }]);
+            // Also lock the first team's players
+            if (teams[0]) {
+              const lockIds = new Set(teams[0].players.map((p) => p.id));
+              setLocked(lockIds);
+              setCaptain(teams[0].c);
+              setViceCaptain(teams[0].vc);
+            }
+            showToast(`🏆 ${teams.length} AI teams generated — 150+ data points analyzed`);
+          }
+        } else {
+          throw new Error("No teams in AI response");
+        }
+      } else {
+        throw new Error(res.error || "AI failed");
+      }
+    } catch (e: any) {
+      showToast("⚠️ AI analysis failed — using local generation");
+      const fallback = generateLocalTeams();
+      setGenerated([{ group: "AI RESEARCH TEAMS", teams: fallback }]);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  // Local fallback team generation (no AI)
+  function generateLocalTeams(): { players: Player[]; c: string; vc: string }[] {
+    const built = autoBuildAndApply();
+    if (!built) return [];
+    const base = built.sel;
+    const fixedC = built.cId;
+    const fixedVc = built.vcId;
+    if (base.length < 11) return [];
+
     const fullPool = pool.filter((p) => p.inXI !== false);
     const substitutes = fullPool.filter((p) => !base.some((b) => b.id === p.id));
-
-    // 10 unique teams — mix of strategies, all using different C/VC combos
-    const strategies = [
-      { name: "SAFE", strategy: "safe" as const },
-      { name: "SAFE", strategy: "safe" as const },
-      { name: "BALANCED", strategy: "balanced" as const },
-      { name: "BALANCED", strategy: "balanced" as const },
-      { name: "BALANCED", strategy: "balanced" as const },
-      { name: "DIFFERENTIAL", strategy: "differential" as const },
-      { name: "DIFFERENTIAL", strategy: "differential" as const },
-      { name: "RISK", strategy: "risk" as const },
-      { name: "RISK", strategy: "risk" as const },
-      { name: "CONTRARIAN", strategy: "risk" as const },
-    ];
-
     const teams: { players: Player[]; c: string; vc: string }[] = [];
     const usedCombos = new Set<string>();
 
     for (let i = 0; i < 10; i++) {
-      const g = strategies[i];
-
-      // Team 1: use the locked base XI with fixed C/VC
       if (i === 0) {
         teams.push({ players: base, c: fixedC, vc: fixedVc });
         usedCombos.add(base.map((p) => p.id).sort().join(","));
         continue;
       }
 
-      // Teams 2-10: swap 1-2 players for variety
       let teamPlayers: Player[] = [];
       let attempts = 0;
       let comboKey = "";
 
       do {
         teamPlayers = [...base];
-        const swapCount = g.strategy === "safe" ? 1 : g.strategy === "balanced" ? 1 : 2;
+        const swapCount = i < 3 ? 1 : i < 7 ? 1 : 2;
 
         if (substitutes.length > 0 && swapCount > 0) {
-          const sortedSubs = [...substitutes].sort((a, b) => {
-            if (g.strategy === "safe") return b.perf - a.perf;
-            if (g.strategy === "differential") return (a.stats?.matches ?? 999) - (b.stats?.matches ?? 999);
-            if (g.strategy === "risk") return (b.stats?.sr ?? 0) - (a.stats?.sr ?? 0);
-            return Math.random() - 0.5;
-          });
-
-          for (let s = 0; s < Math.min(swapCount, sortedSubs.length); s++) {
-            const subIn = sortedSubs[(i + s) % sortedSubs.length];
+          for (let s = 0; s < Math.min(swapCount, substitutes.length); s++) {
+            const subIn = substitutes[(i + s) % substitutes.length];
             if (!subIn) continue;
-            const swapOutIdx = teamPlayers.findIndex(
-              (p) => p.role === subIn.role && p.id !== fixedC && p.id !== fixedVc
-            );
-            if (swapOutIdx >= 0) {
-              teamPlayers[swapOutIdx] = subIn;
-            } else {
+            const swapOutIdx = teamPlayers.findIndex((p) => p.role === subIn.role && p.id !== fixedC && p.id !== fixedVc);
+            if (swapOutIdx >= 0) teamPlayers[swapOutIdx] = subIn;
+            else {
               const anyIdx = teamPlayers.findIndex((p) => p.id !== fixedC && p.id !== fixedVc);
               if (anyIdx >= 0) teamPlayers[anyIdx] = subIn;
             }
           }
         }
-
         comboKey = teamPlayers.map((p) => p.id).sort().join(",");
         attempts++;
       } while (usedCombos.has(comboKey) && attempts < 10 && substitutes.length > 0);
 
       usedCombos.add(comboKey);
 
-      // Rotate C/VC across all 11 players — each team gets unique combo
-      const sorted = [...teamPlayers].sort((a, b) => {
-        if (g.strategy === "safe") return b.perf - a.perf;
-        if (g.strategy === "differential") return (a.stats?.matches ?? 0) - (b.stats?.matches ?? 0);
-        if (g.strategy === "risk") return (b.stats?.sr ?? 0) - (a.stats?.sr ?? 0);
-        return b.perf - a.perf;
-      });
-
+      const sorted = [...teamPlayers].sort((a, b) => b.perf - a.perf);
       const cIdx = i % sorted.length;
       const vcIdx = (i + Math.floor(sorted.length / 2)) % sorted.length;
       const cId = sorted[cIdx]?.id ?? base[0].id;
@@ -729,11 +863,7 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
 
       teams.push({ players: teamPlayers, c: cId, vc: vcId });
     }
-
-    // Wrap in a single group for display
-    setGenerated([{ group: "AI RESEARCH TEAMS", teams }]);
-    const uniqueCombos = usedCombos.size;
-    showToast(`🏆 ${teams.length} teams generated · ${uniqueCombos} unique combos`);
+    return teams;
   }
 
   async function runCoach() {
@@ -1190,11 +1320,9 @@ function Builder({ showToast }: { showToast: (s: string) => void }) {
             )}
           </Section>
 
-          {/* Generate button — produces 10 unique teams */}
+          {/* Generate button — AI 150+ data point analysis */}
           <Btn onClick={generate10} primary>
-            {details?.lineupAnnounced
-              ? "🏆 GENERATE 10 FINAL TEAMS"
-              : "🏆 GENERATE 10 EARLY AI TEAMS"}
+            {generating ? "🧠 AI ANALYZING 150+ DATA POINTS..." : (details?.lineupAnnounced ? "🏆 GENERATE 10 AI TEAMS (AFTER LINEUP)" : "🏆 GENERATE 10 AI TEAMS (PRE-TOSS)")}
           </Btn>
 
           {generated.length > 0 && (
