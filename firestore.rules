@@ -1,68 +1,29 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
     // ============================================================
-    // SECURITY: admin_data — REAL-TIME SYNC (read + write from client)
+    // LICENSE KEYS — Admin can read + write from client
     // ============================================================
-    // Admin APK writes license keys, devices, logs, etc. here for
-    // cross-device real-time sync. User APK reads for license lookup.
-    match /admin_data/{docId} {
-      allow read: if true;            // License lookup + real-time sync
-      allow create: if true;          // Admin generates keys (client-side)
-      allow update: if true;          // Admin updates (suspend, activate, device binding)
-      allow delete: if true;          // Admin deletes keys
-    }
-
-    // ============================================================
-    // SECURITY: license_keys — Admin can read + write from client
-    // ============================================================
-    // Client can READ for verification.
-    // Client can CREATE/UPDATE — admin panel generates keys from client-side.
-    // (Admin panel is password-protected, key format is validated)
+    // User APK reads here on activation.
+    // Admin APK writes here on key generation, suspend, activate, delete.
+    // 1 KEY = 1 DEVICE policy enforced in code (deviceIds[] array).
     match /license_keys/{keyId} {
-      allow read: if true;            // Verification reads
+      allow read: if true;            // Verification reads (user + admin)
       allow create: if true;          // Admin generates keys (client-side)
       allow update: if true;          // Admin updates (suspend, activate, device binding)
       allow delete: if true;          // Admin deletes keys
     }
 
     // ============================================================
-    // SECURITY: admin_generated_keys — Admin can write from client
+    // ADMIN GENERATED KEYS — discovery log (cross-device)
     // ============================================================
+    // When admin phone A generates a key, it records it here so
+    // admin phone B can discover the new key and pull it locally.
     match /admin_generated_keys/{keyId} {
-      allow read: if true;            // Cross-device discovery
-      allow create: if true;          // Admin records generated keys
-      allow update: if false;         // No updates needed
-      allow delete: if false;         // No deletes needed
-    }
-
-    // ============================================================
-    // Payment orders — READ-ONLY from client
-    // ============================================================
-    match /payment_orders/{orderId} {
       allow read: if true;
-      allow create: if false;
-      allow update: if false;
-      allow delete: if false;
-    }
-
-    // ============================================================
-    // Users collection — READ-ONLY from client
-    // ============================================================
-    match /users/{userId} {
-      allow read: if true;
-      allow create: if false;
-      allow update: if false;
-      allow delete: if false;
-    }
-
-    // ============================================================
-    // Referrals collection — READ-ONLY from client
-    // ============================================================
-    match /referrals/{referralId} {
-      allow read: if true;
-      allow create: if false;
+      allow create: if true;
       allow update: if false;
       allow delete: if false;
     }

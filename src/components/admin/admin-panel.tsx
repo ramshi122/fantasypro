@@ -36,6 +36,7 @@ import {
   Unlock,
   User,
   Users,
+  Wifi,
   X,
   Zap,
 } from "lucide-react";
@@ -538,6 +539,29 @@ function LicensesTab() {
           >
             <ShieldCheck className="w-3 h-3 mr-1" />
             Sync Firebase
+          </Button>
+          <Button
+            size="sm"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs"
+            onClick={async () => {
+              toast.info("Testing Firestore connection (write → read → delete)...");
+              try {
+                const { testFirestoreConnection } = await import("@/lib/firebase-license");
+                const result = await testFirestoreConnection();
+                if (result.writeOk && result.readOk && result.deleteOk) {
+                  toast.success("✅ Firestore OK — write/read/delete all working. Keys will sync to other phones.");
+                } else {
+                  toast.error("❌ " + result.message);
+                  console.error("[Admin TestConn] Full result:", result);
+                }
+              } catch (err: any) {
+                toast.error("❌ Test failed: " + (err?.message || err));
+              }
+            }}
+            title="Write a test key to Firestore, read it back, delete it — verifies rules + connectivity"
+          >
+            <Wifi className="w-3 h-3 mr-1" />
+            Test Firestore
           </Button>
           <Button
             size="sm"
