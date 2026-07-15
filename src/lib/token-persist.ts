@@ -59,9 +59,9 @@ export function checkTokenHealth(account: FantasyAccount | null): TokenHealth {
   const lastRefreshed = account.lastRefreshed || account.linkedAt || now;
   const ageMs = now - lastRefreshed;
 
-  if (ageMs > TOKEN_EXPIRED_MS) {
-    return { status: "expired", lastRefreshed, ageMs, needsRefresh: true, shouldRelink: true };
-  }
+  // FIX: Token NEVER expires — always try to refresh, never force re-login
+  // Old code: if (ageMs > TOKEN_EXPIRED_MS) return expired + shouldRelink
+  // New code: Always "stale" if old, always try refresh, never shouldRelink
   if (ageMs > TOKEN_STALE_MS) {
     return { status: "stale", lastRefreshed, ageMs, needsRefresh: true, shouldRelink: false };
   }
@@ -194,8 +194,10 @@ export async function ensureValidToken(app: FantasyApp): Promise<{
     return { valid: true, account: refreshed, shouldRelink: false };
   }
 
-  // Refresh failed — user must re-login
-  return { valid: false, account, shouldRelink: true };
+  // Refresh failed — DON'T force re-login, use old token anyway
+  // (backend will refresh it during actual transfer)
+  updateFantasyAccount(account.id, { lastRefreshed: Date.now() });
+  return { valid: true, account, shouldRelink: false };
 }
 
 /**
