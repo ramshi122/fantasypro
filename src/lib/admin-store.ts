@@ -498,9 +498,32 @@ export const useAdmin = create<AdminState>()((set, get) => ({
             initNetworkReconnectListener();
 
             unsub = subscribeToAdminData({
-              onKeysUpdate: (keys) => {
-                lsSet(LS_KEYS, keys);
-                set({ keys, lastSyncedAt: Date.now() });
+              onKeysUpdate: (firestoreKeys) => {
+                // MERGE Firestore keys with local keys — don't replace.
+                // This prevents the onSnapshot listener from clobbering
+                // locally-generated keys that haven't synced to Firestore yet.
+                //
+                // Strategy:
+                //   1. Start with firestoreKeys (source of truth for status/expiry/deviceIds)
+                //   2. Add any LOCAL keys that are NOT in firestoreKeys
+                //      (these are keys generated in the last few seconds that
+                //       haven't finished syncing to Firestore yet)
+                //   3. Deduplicate by key string (uppercase)
+                set((s) => {
+                  const localKeys = s.keys;
+                  const firestoreKeySet = new Set(
+                    firestoreKeys.map((k: LicenseKey) => k.key.toUpperCase())
+                  );
+                  // Local-only keys = keys in local store but NOT in Firestore snapshot
+                  const localOnlyKeys = localKeys.filter(
+                    (k) => !firestoreKeySet.has(k.key.toUpperCase())
+                  );
+                  // Merge: Firestore keys first (source of truth), then local-only keys
+                  const merged = [...firestoreKeys, ...localOnlyKeys];
+                  lsSet(LS_KEYS, merged);
+                  console.log("[Admin Sync] 📡 Keys merged: " + firestoreKeys.length + " from Firestore + " + localOnlyKeys.length + " local-only = " + merged.length + " total");
+                  return { keys: merged, lastSyncedAt: Date.now() };
+                });
               },
               onDevicesUpdate: (devices) => {
                 lsSet(LS_DEVICES, devices);
