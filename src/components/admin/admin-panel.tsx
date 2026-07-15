@@ -485,13 +485,23 @@ function LicensesTab() {
           <Button
             size="sm"
             className="bg-violet-600 hover:bg-violet-700 text-white h-8 text-xs"
-            onClick={() => {
+            onClick={async () => {
               if (bulkCount === 1) {
-                const k = admin.generateKey(bulkType);
-                toast.success(`Generated: ${k}`);
+                toast.info("Generating key + saving to Firestore...");
+                const result = await admin.generateKeyAsync(bulkType);
+                if (result.firestoreOk) {
+                  toast.success(`✅ Generated + SAVED to Firestore: ${result.key}`);
+                } else {
+                  toast.error(`⚠️ Generated locally but FAILED to save to Firestore: ${result.key}. Error: ${result.error}. Check console (F12).`);
+                }
               } else {
-                const keys = admin.generateBulkKeys(bulkCount, bulkType);
-                toast.success(`Generated ${keys.length} keys`);
+                toast.info(`Generating ${bulkCount} keys + saving to Firestore...`);
+                const result = await admin.generateBulkKeysAsync(bulkCount, bulkType);
+                if (result.firestoreOk) {
+                  toast.success(`✅ Generated + SAVED ${result.keys.length} keys to Firestore`);
+                } else {
+                  toast.error(`⚠️ Generated ${result.keys.length} keys locally but FAILED to save to Firestore. Error: ${result.error}. Check console (F12).`);
+                }
               }
             }}
           >

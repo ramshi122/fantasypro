@@ -54,11 +54,14 @@ import type { KeyType, KeyStatus, LicenseKey } from "./admin-store";
 const COLL_KEYS = "license_keys";
 
 export function initFirebase(_config?: string): boolean {
-  return !!db;
+  return isFirebaseReady();
 }
 
 export function isFirebaseReady(): boolean {
-  return !!db;
+  // Check that db is a REAL Firestore instance, not just an empty fallback object.
+  // Firebase init can fail silently and set db = {} as Firestore.
+  // A real Firestore instance has a `_queue` property and type methods.
+  return !!db && typeof (db as any).collection === "function" || (!!db && Object.keys(db as object).length > 0);
 }
 
 /**

@@ -147,7 +147,9 @@ interface AdminState {
 
   // License actions
   generateKey: (type: KeyType) => string;
+  generateKeyAsync: (type: KeyType) => Promise<{ key: string; firestoreOk: boolean; error?: string }>;
   generateBulkKeys: (count: number, type: KeyType) => string[];
+  generateBulkKeysAsync: (count: number, type: KeyType) => Promise<{ keys: string[]; firestoreOk: boolean; error?: string }>;
   activateKey: (key: string) => void;
   suspendKey: (key: string) => void;
   deleteKey: (key: string) => void;
@@ -618,6 +620,41 @@ export const useAdmin = create<AdminState>()((set, get) => ({
         return key;
       },
 
+      generateKeyAsync: async (type) => {
+        const prefix = get().settings.licensePrefix;
+        const key = generateLicenseKey(prefix);
+        const newKey: LicenseKey = {
+          key,
+          type,
+          status: "active",
+          createdAt: Date.now(),
+          expiresAt: getExpiryForType(type),
+          deviceIds: [],
+          verifications: 0,
+        };
+        // 1. Update in-memory state + localStorage IMMEDIATELY
+        set((s) => {
+          const next = [newKey, ...s.keys];
+          lsSet(LS_KEYS, next);
+          return { keys: next };
+        });
+        get().addLog("admin_action", `Generated ${type} key: ${key}`);
+        // 2. AWAIT Firestore write — don't return until we know if it succeeded.
+        try {
+          const { syncKeyToFirestore } = await import("./firebase-license");
+          const firestoreOk = await syncKeyToFirestore(newKey);
+          if (firestoreOk) {
+            console.log("[Unified Sync] ✅ Key saved to Firestore:", key);
+          } else {
+            console.error("[Unified Sync] ❌ Key FAILED to save to Firestore:", key);
+          }
+          return { key, firestoreOk, error: firestoreOk ? undefined : "Firestore write failed — check console" };
+        } catch (err: any) {
+          console.error("[Unified Sync] ❌ Key save exception:", err);
+          return { key, firestoreOk: false, error: err?.message || "Unknown error" };
+        }
+      },
+
       generateBulkKeys: (count, type) => {
         const prefix = get().settings.licensePrefix;
         const newKeys: LicenseKey[] = [];
@@ -649,6 +686,44 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           });
         });
         return newKeys.map((k) => k.key);
+      },
+
+      generateBulkKeysAsync: async (count, type) => {
+        const prefix = get().settings.licensePrefix;
+        const newKeys: LicenseKey[] = [];
+        for (let i = 0; i < count; i++) {
+          const key = generateLicenseKey(prefix);
+          newKeys.push({
+            key,
+            type,
+            status: "active",
+            createdAt: Date.now(),
+            expiresAt: getExpiryForType(type),
+            deviceIds: [],
+            verifications: 0,
+          });
+        }
+        // 1. Update in-memory state + localStorage IMMEDIATELY
+        set((s) => {
+          const next = [...newKeys, ...s.keys];
+          lsSet(LS_KEYS, next);
+          return { keys: next };
+        });
+        get().addLog("admin_action", `Generated ${count} bulk ${type} keys`);
+        // 2. AWAIT Firestore write for ALL keys
+        try {
+          const { syncAllKeysToFirestore } = await import("./firebase-license");
+          const firestoreOk = await syncAllKeysToFirestore(newKeys);
+          if (firestoreOk) {
+            console.log("[Unified Sync] ✅ Bulk save: " + count + " keys to Firestore");
+          } else {
+            console.error("[Unified Sync] ❌ Bulk save FAILED");
+          }
+          return { keys: newKeys.map((k) => k.key), firestoreOk, error: firestoreOk ? undefined : "Some keys failed to save — check console" };
+        } catch (err: any) {
+          console.error("[Unified Sync] ❌ Bulk save exception:", err);
+          return { keys: newKeys.map((k) => k.key), firestoreOk: false, error: err?.message || "Unknown error" };
+        }
       },
 
       activateKey: (key) => {
