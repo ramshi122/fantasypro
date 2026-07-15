@@ -97,13 +97,12 @@ export async function verifyLicenseFromRequest(request: Request): Promise<Licens
       };
     }
 
-    // Check device binding — allow up to 5 devices per key
-    const MAX_DEVICES = 5;
-    if (!license.deviceIds.includes(deviceId) && license.deviceIds.length >= MAX_DEVICES) {
+    // Check device binding (1 key = 1 device)
+    if (license.deviceIds.length > 0 && !license.deviceIds.includes(deviceId)) {
       return {
         valid: false,
         code: "DEVICE_MISMATCH",
-        message: `Key already activated on ${MAX_DEVICES} devices (max). Contact admin to reset.`,
+        message: "Key already bound to another device",
       };
     }
 

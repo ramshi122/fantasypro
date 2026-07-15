@@ -846,18 +846,16 @@ export const useAdmin = create<AdminState>()((set, get) => ({
 
         console.log("[License Verify] Expiry check passed. ExpiresAt:", k.expiresAt ? new Date(k.expiresAt).toLocaleDateString() : "Lifetime");
 
-        // Step 6: Device binding — allow MULTIPLE devices per key
-        // Changed from 1 device to 5 devices (admin can reset anytime)
-        const MAX_DEVICES = 5;
-        if (!k.deviceIds.includes(deviceId) && k.deviceIds.length >= MAX_DEVICES) {
-          console.log("[License Verify] FAIL: Key has reached max device limit:", MAX_DEVICES);
+        // Step 6: Device binding — STRICT 1 KEY = 1 DEVICE
+        if (k.deviceIds.length >= 1 && !k.deviceIds.includes(deviceId)) {
+          console.log("[License Verify] FAIL: Key already bound to another device.");
           return {
             valid: false,
-            message: `This key is already activated on ${MAX_DEVICES} devices (max limit). Contact admin to reset.`
+            message: "This key is already activated on another device. Each key can only be used on 1 device. Contact admin to reset."
           };
         }
 
-        console.log("[License Verify] Device check passed. Bound devices:", k.deviceIds.length, "/", MAX_DEVICES);
+        console.log("[License Verify] Device check passed. Bound devices:", k.deviceIds.length);
 
         // Step 7: All checks passed — bind device, update status
         let verifiedKey: LicenseKey | null = null;
