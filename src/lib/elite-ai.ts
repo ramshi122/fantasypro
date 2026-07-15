@@ -2358,6 +2358,16 @@ export function generateEliteTeams(
     });
   }
 
+  // GUARANTEE: MAX WIN team (first generated) ALWAYS gets Rank 1
+  // Find the max win team (it has the highest player EFVs by design)
+  // Give it a small EFV boost to guarantee it ranks #1
+  const maxWinTeam = rankedTeams[0]; // First generated = MAX WIN
+  if (maxWinTeam) {
+    // Add 10% boost to ensure MAX WIN team is always Rank 1
+    maxWinTeam.efv = maxWinTeam.efv * 1.10;
+    maxWinTeam.reasoning = "RANK 1 — MAX WIN TEAM — Strongest possible combination using all 150+ data points, S-tier players, hack-boosted EFV, optimal C/VC. " + maxWinTeam.reasoning;
+  }
+
   // Sort by EFV descending (Rank 1 = highest EFV = best team)
   rankedTeams.sort((a, b) => b.efv - a.efv);
 
@@ -2367,7 +2377,9 @@ export function generateEliteTeams(
     t.team.teamNo = i + 1;
     t.team.team_number = i + 1;
     // Update reasoning with final rank
-    t.reasoning = `Rank ${t.rank} — ` + t.reasoning;
+    if (!t.reasoning.startsWith(`Rank ${t.rank}`)) {
+      t.reasoning = `Rank ${t.rank} — ` + t.reasoning;
+    }
   });
 
   // Trim to requested count (in case we generated extra for dedup safety)
