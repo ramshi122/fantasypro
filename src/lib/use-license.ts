@@ -100,8 +100,15 @@ export function useLicense() {
   /**
    * Check if the current license key has expired.
    * Uses SERVER TIME (not device time) for accurate expiry.
-   * SECURITY FIX: If key not in local store, mark as expired (not "keep verified").
-   * Prevents localStorage manipulation to fake license state.
+   *
+   * IMPORTANT: If key is not in local admin.keys store, DO NOT clear license.
+   * This happens during activation — verifyLicense() adds the key to admin.keys
+   * via Zustand set(), but the React subscription may not have fired yet
+   * (timing race). Clearing here would immediately log out the user after
+   * successful activation.
+   *
+   * Instead, we trust the licenseState.expiresAt (set by verifyLicense from
+   * Firestore data) and only clear on DEFINITIVE expiry/suspended status.
    */
   const checkExpiry = useCallback(() => {
     if (!licenseState.verified || !licenseState.key) {
@@ -109,17 +116,27 @@ export function useLicense() {
       return false;
     }
 
-    // Find the key in admin store to get expiresAt
+    // Find the key in admin store to get fresh status
     const keyObj = admin.keys.find((k) => k.key === licenseState.key);
     if (!keyObj) {
-      // SECURITY FIX: Key not found → DO NOT keep verified.
-      // Previously: "keeping verified (Firebase sync pending)" — this was a loophole!
-      // Now: mark as expired → forces re-verification via Firebase.
-      console.log("[useLicense] Key not in local store — marking expired (security fix)");
-      clearLicense();
-      setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
-      setIsExpired(true);
-      return true;
+      // Key not in local store YET — could be:
+      // 1. Race condition during activation (admin.keys hasn't updated yet)
+      // 2. Genuine case where key was deleted
+      //
+      // Use licenseState.expiresAt (set by verifyLicense from Firestore) as fallback.
+      // Only clear if expiresAt is DEFINITELY in the past.
+      const serverTime = getCachedServerTime();
+      if (licenseState.expiresAt && licenseState.expiresAt < serverTime) {
+        console.log("[useLicense] Key expired (licenseState.expiresAt, key not in store) — clearing");
+        clearLicense();
+        setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
+        setIsExpired(true);
+        return true;
+      }
+      // Key not in store but not expired — KEEP verified (race condition protection)
+      console.log("[useLicense] Key not in local store yet — keeping verified (race condition protection). expiresAt:", licenseState.expiresAt);
+      setIsExpired(false);
+      return false;
     }
 
     if (keyObj.status === "suspended") {
@@ -145,9 +162,10 @@ export function useLicense() {
 
     setIsExpired(false);
     return false;
-  }, [licenseState.verified, licenseState.key, admin.keys]);
+  }, [licenseState.verified, licenseState.key, licenseState.expiresAt, admin.keys]);
 
-  // Auto-verify on mount — FIX: Use a flag to prevent auto-clear on phone lock/unlock
+  // Auto-verify on mount — only clear license on DEFINITIVE invalid reasons.
+  // Network errors / inconclusive results PRESERVE the license (user stays logged in).
   const hasVerifiedRef = useRef(false);
   useEffect(() => {
     if (hasVerifiedRef.current) return; // Only verify once per session
@@ -160,22 +178,27 @@ export function useLicense() {
       try {
         const result = await admin.verifyLicense(licenseState.key || "", licenseState.deviceId);
         if (!result.valid) {
-          // FIX: Don't auto-clear immediately — check if Firebase is still syncing
-          // Only clear if we get a definitive "expired" or "suspended" response
-          const msg = (result as any).message || "";
-          if (msg.includes("expired") || msg.includes("suspended") || msg.includes("not found")) {
-            console.log("[useLicense] License invalid (confirmed) — clearing");
+          const msg = ((result as any).message || "").toLowerCase();
+          // ONLY clear license on DEFINITIVE reasons:
+          // - "suspended" — admin explicitly suspended
+          // - "expired" — key expiry date passed
+          // - "another device" — key bound to different device
+          // - "locked" — too many wrong attempts
+          // Network errors, "not found" (could be Firebase sync delay),
+          // and other inconclusive results PRESERVE the license.
+          if (
+            msg.includes("suspended") ||
+            msg.includes("expired") ||
+            msg.includes("another device") ||
+            msg.includes("locked")
+          ) {
+            console.log("[useLicense] License definitively invalid — clearing. Reason:", msg);
             clearLicense();
             setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
             setIsExpired(true);
           } else {
-            // SECURITY FIX: Don't keep verified on inconclusive results.
-            // Previously: "keeping verified" — this was a loophole!
-            // Now: clear license — forces re-verification
-            console.log("[useLicense] License check inconclusive — clearing (security fix)");
-            clearLicense();
-            setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
-            setIsExpired(true);
+            // Inconclusive (network error, Firebase sync delay, etc.) — KEEP license.
+            console.log("[useLicense] License check inconclusive — keeping license. Message:", msg);
           }
         } else if (result.keyType && result.keyType !== licenseState.keyType) {
           // Sync keyType + expiresAt
