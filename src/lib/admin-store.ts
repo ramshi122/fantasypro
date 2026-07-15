@@ -443,14 +443,31 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           const { fullSyncFromFirestore } = await import("./admin-realtime-sync");
           const synced = await fullSyncFromFirestore();
 
-          // Update in-memory store with Firestore data (or fallback to localStorage)
+          // MERGE keys: Firestore keys (source of truth) + local-only keys
+          // (keys generated in the last few seconds that haven't synced to
+          // Firestore yet). This prevents the 10-second polling interval
+          // from clobbering newly generated keys.
           const lsKeys = lsGet<LicenseKey[]>(LS_KEYS, []);
           const lsDevices = lsGet<Device[]>(LS_DEVICES, []);
           const lsUsers = lsGet<User[]>(LS_USERS, []);
           const lsLogs = lsGet<ActivityLog[]>(LS_LOGS, []);
           const lsSettings = lsGet<AdminSettings>(LS_SETTINGS, DEFAULT_SETTINGS);
 
-          const keys = synced.keys || lsKeys;
+          let keys: LicenseKey[];
+          if (synced.keys && synced.keys.length > 0) {
+            // Merge: Firestore keys first, then local-only keys
+            const firestoreKeySet = new Set(
+              synced.keys.map((k: LicenseKey) => k.key.toUpperCase())
+            );
+            const localOnlyKeys = lsKeys.filter(
+              (k) => !firestoreKeySet.has(k.key.toUpperCase())
+            );
+            keys = [...synced.keys, ...localOnlyKeys];
+            console.log("[Admin Sync] Keys merged: " + synced.keys.length + " from Firestore + " + localOnlyKeys.length + " local-only = " + keys.length + " total");
+          } else {
+            keys = lsKeys;
+          }
+
           const devices = synced.devices || lsDevices;
           const users = synced.users || lsUsers;
           const logs = synced.logs || lsLogs;
