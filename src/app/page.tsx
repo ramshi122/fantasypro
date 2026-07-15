@@ -146,14 +146,27 @@ export default function Home() {
 function FullPageLicenseLock({ license }: { license: ReturnType<typeof useLicense> }) {
   const [keyInput, setKeyInput] = useState("");
   const [verifying, setVerifying] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   async function handleVerify() {
     if (!keyInput.trim()) return;
     setVerifying(true);
-    const result = await license.activate(keyInput.trim());
-    setVerifying(false);
-    if (result?.success) {
-      // License activated — page will auto-unlock via re-render
+    setErrorMsg(null);
+    try {
+      const result = await license.activate(keyInput.trim());
+      setVerifying(false);
+      if (result?.success) {
+        // License activated — page will auto-unlock via re-render
+      } else {
+        // SHOW the exact error reason returned by verifyLicense
+        const msg = result?.message || "Verification failed — please check your key and try again.";
+        console.log("[FullPageLicenseLock] Activation failed:", msg);
+        setErrorMsg(msg);
+      }
+    } catch (err: any) {
+      setVerifying(false);
+      console.error("[FullPageLicenseLock] Activation exception:", err);
+      setErrorMsg(err?.message || "Network error — please check internet and try again.");
     }
   }
 
@@ -246,6 +259,17 @@ function FullPageLicenseLock({ license }: { license: ReturnType<typeof useLicens
             autoFocus
           />
         </div>
+
+        {/* Error message — show the EXACT reason from verifyLicense */}
+        {errorMsg && (
+          <div
+            className="rounded-xl p-3 mb-4 text-center"
+            style={{ background: "#FEF2F2", border: "1px solid #DC2626" }}
+          >
+            <p className="text-[14px] font-bold" style={{ color: "#DC2626" }}>❌ Activation Failed</p>
+            <p className="text-[13px] mt-1" style={{ color: "#444444" }}>{errorMsg}</p>
+          </div>
+        )}
 
         {/* Activate button */}
         <button

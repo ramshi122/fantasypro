@@ -3,16 +3,15 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ============================================================
-    // SECURITY: admin_data — SERVER-ONLY writes
+    // SECURITY: admin_data — REAL-TIME SYNC (read + write from client)
     // ============================================================
-    // Client can READ for real-time sync (onSnapshot).
-    // Client CANNOT write — all writes go through server API routes
-    // using Firebase Admin SDK.
+    // Admin APK writes license keys, devices, logs, etc. here for
+    // cross-device real-time sync. User APK reads for license lookup.
     match /admin_data/{docId} {
-      allow read: if true;            // Real-time sync reads
-      allow create: if false;         // SERVER-ONLY
-      allow update: if false;         // SERVER-ONLY
-      allow delete: if false;         // SERVER-ONLY
+      allow read: if true;            // License lookup + real-time sync
+      allow create: if true;          // Admin generates keys (client-side)
+      allow update: if true;          // Admin updates (suspend, activate, device binding)
+      allow delete: if true;          // Admin deletes keys
     }
 
     // ============================================================
