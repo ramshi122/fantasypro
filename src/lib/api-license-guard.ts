@@ -60,17 +60,40 @@ export async function verifyLicenseFromRequest(request: Request): Promise<Licens
       };
     }
 
-    // Fetch license from Firestore
-    const docSnap = await getDoc(doc(db, "license_keys", licenseKey.toUpperCase()));
+    // Read from admin_data/keys document (NOT license_keys collection)
+    // The actual DB structure is: admin_data → keys → keys array
+    const docSnap = await getDoc(doc(db, "admin_data", "keys"));
     if (!docSnap.exists()) {
+      return {
+        valid: false,
+        code: "KEY_NOT_FOUND",
+        message: "License database not found. Contact admin.",
+      };
+    }
+    
+    const keysArray = docSnap.data().keys as any[];
+    if (!Array.isArray(keysArray)) {
+      return {
+        valid: false,
+        code: "KEY_NOT_FOUND",
+        message: "License database empty. Contact admin.",
+      };
+    }
+    
+    // Search for matching key (case-insensitive)
+    const found = keysArray.find((k) => 
+      String(k.key || "").toUpperCase() === licenseKey.toUpperCase()
+    );
+    
+    if (!found) {
       return {
         valid: false,
         code: "KEY_NOT_FOUND",
         message: "License key not found",
       };
     }
-
-    const data = docSnap.data() as any;
+    
+    const data = found;
     const license = {
       key: data.key || licenseKey.toUpperCase(),
       type: data.type as LicenseTier,
