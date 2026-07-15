@@ -179,8 +179,22 @@ export async function syncAnnouncementsToFirestore(announcements: Announcement[]
 export async function fetchKeysFromAdminData(): Promise<LicenseKey[] | null> {
   if (!isFirebaseReady() || !db) return null;
   try {
-    // Read entire license_keys collection (one doc per key)
-    const snap = await getDocs(collection(db, "license_keys"));
+    // Read entire license_keys collection, but LIMIT to last 200 keys
+    // (sorted by createdAt desc) to prevent browser hang when there are
+    // thousands of keys in Firestore.
+    const q = query(
+      collection(db, "license_keys"),
+      orderBy("createdAt", "desc"),
+      limit(200)
+    );
+    let snap;
+    try {
+      snap = await getDocs(q);
+    } catch (indexErr) {
+      // orderBy requires an index — fall back to unordered fetch with client-side sort
+      console.warn("[AdminSync] orderBy failed (no index?), falling back to unordered fetch");
+      snap = await getDocs(collection(db, "license_keys"));
+    }
     const keys: LicenseKey[] = [];
     snap.forEach((d) => {
       const data = d.data() as any;
@@ -196,8 +210,11 @@ export async function fetchKeysFromAdminData(): Promise<LicenseKey[] | null> {
         verifications: typeof data.verifications === "number" ? data.verifications : 0,
       });
     });
-    console.log(`[AdminSync] ✅ Fetched ${keys.length} keys from license_keys/`);
-    return keys;
+    // Sort by createdAt desc (most recent first) + limit to 200
+    keys.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+    const limited = keys.slice(0, 200);
+    console.log(`[AdminSync] ✅ Fetched ${limited.length} keys from license_keys/ (limited to 200)`);
+    return limited;
   } catch (err) {
     console.error("[AdminSync] Failed to fetch keys:", err);
     return null;
@@ -295,15 +312,24 @@ export function subscribeToAdminData(callbacks: AdminSyncCallbacks): Unsubscribe
   const unsubs: Unsubscribe[] = [];
 
   try {
-    // Listen to keys — onSnapshot on the license_keys COLLECTION.
+    // Listen to keys — onSnapshot on the license_keys COLLECTION with LIMIT.
+    // Without limit, loading 12,000+ keys freezes the browser.
+    // We only need the most recent 200 keys for the admin panel.
     // Any key add/update/delete from ANY admin device fires here instantly.
-    // (license_keys/{keyStr} — one doc per key, matches user's Firestore rules.)
     if (callbacks.onKeysUpdate) {
-      const keysColl = collection(db, "license_keys");
+      let keysQuery;
+      try {
+        keysQuery = query(
+          collection(db, "license_keys"),
+          orderBy("createdAt", "desc"),
+          limit(200)
+        );
+      } catch {
+        keysQuery = collection(db, "license_keys");
+      }
       const unsub = onSnapshot(
-        keysColl,
+        keysQuery,
         (snap) => {
-          // snap.docs = ALL documents in the collection at this moment
           const keys: LicenseKey[] = [];
           snap.forEach((d) => {
             const data = d.data() as any;
@@ -319,8 +345,11 @@ export function subscribeToAdminData(callbacks: AdminSyncCallbacks): Unsubscribe
               verifications: typeof data.verifications === "number" ? data.verifications : 0,
             });
           });
-          callbacks.onKeysUpdate!(keys);
-          console.log(`[AdminSync] 📡 Real-time keys update: ${keys.length} keys (license_keys collection)`);
+          // Sort by createdAt desc + limit to 200
+          keys.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+          const limited = keys.slice(0, 200);
+          callbacks.onKeysUpdate!(limited);
+          console.log(`[AdminSync] 📡 Real-time keys update: ${limited.length} keys (limited to 200)`);
         },
         (err) => {
           console.error("[AdminSync] ❌ onSnapshot(license_keys) error:", err);
