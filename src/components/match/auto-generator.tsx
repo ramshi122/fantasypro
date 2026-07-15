@@ -130,6 +130,21 @@ export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGe
       const rightPlayers = ((detail as any).right_team_players || []) as MatchPlayer[];
       let allPlayers = [...leftPlayers, ...rightPlayers].filter(Boolean);
 
+      // FIX: After lineup announced, ONLY use confirmed playing XI players
+      // Bench/injured/offline players must NEVER be in generated teams
+      const lineupStatus = (detail as any).lineup_status;
+      const lineupAnnounced = Number(lineupStatus) === 1;
+      if (lineupAnnounced) {
+        const beforeCount = allPlayers.length;
+        allPlayers = allPlayers.filter((p) => Number(p.playing) === 1);
+        console.log(`[AutoGen] Lineup announced — filtered ${beforeCount} → ${allPlayers.length} playing XI players`);
+        if (allPlayers.length < 11) {
+          toast.error(`Only ${allPlayers.length} confirmed playing XI players — need 11`);
+          setGenerating(false);
+          return;
+        }
+      }
+
       if (allPlayers.length < 11) {
         toast.error(`Only ${allPlayers.length} players available — need at least 11`);
         setGenerating(false);

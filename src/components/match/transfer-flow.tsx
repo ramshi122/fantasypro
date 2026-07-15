@@ -148,6 +148,40 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
     loadAll();
   }, [loadAll, refreshKey]);
 
+  // ===== 30-SECOND AUTO-REFRESH for lineup detection =====
+  // Checks every 30s if lineup has been announced. If lineup status changes,
+  // auto-reloads match data + shows toast + auto-replaces non-playing players.
+  useEffect(() => {
+    if (!matchId) return;
+    let prevLineupAnnounced = lineupAnnounced;
+
+    const interval = setInterval(async () => {
+      try {
+        const matchDetail = await getMatchDetail(matchId).catch(() => null);
+        if (!matchDetail) return;
+
+        const lineupStatus = (matchDetail as any).lineup_status;
+        const newAnnounced = Number(lineupStatus) === 1;
+
+        // Lineup just changed from pre-toss → announced
+        if (newAnnounced && !prevLineupAnnounced) {
+          toast.success("📢 Official Playing XI announced! Auto-refreshing...");
+          setRefreshKey((k) => k + 1);
+        }
+
+        // Lineup status changed (either direction)
+        if (newAnnounced !== prevLineupAnnounced) {
+          prevLineupAnnounced = newAnnounced;
+        }
+      } catch {
+        // silent fail — don't spam errors every 30s
+      }
+    }, 30_000); // 30 seconds
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchId, lineupAnnounced]);
+
   // Check if user already has a Dream11 token saved
   useEffect(() => {
     const t = getFantasyToken("dream11");
