@@ -60,9 +60,9 @@ export async function verifyLicenseFromRequest(request: Request): Promise<Licens
       };
     }
 
-    // Fetch license from Firestore (UNIFIED: admin_data/keys array)
+    // Fetch license from Firestore (license_keys/{keyStr} single-doc read)
     const cleanKey = licenseKey.toUpperCase();
-    const docSnap = await getDoc(doc(db, "admin_data", "keys"));
+    const docSnap = await getDoc(doc(db, "license_keys", cleanKey));
     if (!docSnap.exists()) {
       return {
         valid: false,
@@ -71,23 +71,13 @@ export async function verifyLicenseFromRequest(request: Request): Promise<Licens
       };
     }
 
-    const docData = docSnap.data() as Record<string, any>;
-    const arr = Array.isArray(docData.keys) ? docData.keys : [];
-    const match = arr.find((k: any) => String(k?.key || "").toUpperCase() === cleanKey);
-    if (!match) {
-      return {
-        valid: false,
-        code: "KEY_NOT_FOUND",
-        message: "License key not found",
-      };
-    }
-
+    const data = docSnap.data() as any;
     const license = {
-      key: match.key || cleanKey,
-      type: match.type as LicenseTier,
-      status: (match.status || "active") as string,
-      expiresAt: match.expiresAt as number | null,
-      deviceIds: (match.deviceIds || []) as string[],
+      key: data.key || cleanKey,
+      type: data.type as LicenseTier,
+      status: (data.status || "active") as string,
+      expiresAt: data.expiresAt as number | null,
+      deviceIds: (data.deviceIds || []) as string[],
     };
 
     // Check status

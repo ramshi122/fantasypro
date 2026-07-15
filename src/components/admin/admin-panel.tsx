@@ -518,14 +518,14 @@ function LicensesTab() {
             size="sm"
             className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs"
             onClick={async () => {
-              toast.info("Syncing ALL keys to Firestore (admin_data/keys — unified)...");
+              toast.info("Syncing ALL keys to Firestore (license_keys/)...");
               try {
-                // UNIFIED SYNC: write ALL keys to admin_data/keys in ONE shot.
-                // This triggers onSnapshot on all other admin panels instantly.
+                // UNIFIED SYNC: write ALL keys to license_keys/{keyStr} (one doc per key).
+                // Each write triggers onSnapshot on all other admin panels.
                 const { syncAllKeysToFirestore } = await import("@/lib/firebase-license");
                 const ok = await syncAllKeysToFirestore(admin.keys);
                 if (ok) {
-                  toast.success(`✅ Synced ${admin.keys.length} keys to admin_data/keys — all admin panels will update instantly`);
+                  toast.success(`✅ Synced ${admin.keys.length} keys to license_keys/ — all admin panels will update instantly`);
                 } else {
                   toast.error("❌ Sync failed — check console for Firestore error");
                 }
@@ -533,7 +533,7 @@ function LicensesTab() {
                 toast.error(err?.message || "Sync failed");
               }
             }}
-            title="Upload ALL local keys to Firestore admin_data/keys (unified source of truth — syncs all admin panels instantly)"
+            title="Upload ALL local keys to Firestore license_keys/{keyStr} (one doc per key — syncs all admin panels instantly)"
           >
             <ShieldCheck className="w-3 h-3 mr-1" />
             Sync Firebase

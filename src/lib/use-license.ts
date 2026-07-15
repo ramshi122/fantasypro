@@ -244,17 +244,29 @@ export function useLicense() {
       try {
         const result = await admin.verifyLicense(licenseState.key || "", licenseState.deviceId);
         if (!result.valid) {
-          console.log("[useLicense] Periodic re-verify failed — license may be suspended/banned");
-          clearLicense();
-          setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
-          setIsExpired(true);
-          // Force page reload to show license lock screen
-          if (typeof window !== "undefined") {
-            window.location.reload();
+          const msg = (result as any).message || "";
+          // ONLY clear license on DEFINITIVE reasons (suspended/expired/not found).
+          // Network errors and inconclusive results should NOT clear the license.
+          if (
+            msg.toLowerCase().includes("suspended") ||
+            msg.toLowerCase().includes("expired") ||
+            msg.toLowerCase().includes("not found") ||
+            msg.toLowerCase().includes("another device")
+          ) {
+            console.log("[useLicense] Periodic re-verify: license definitively invalid — clearing. Reason:", msg);
+            clearLicense();
+            setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
+            setIsExpired(true);
+            if (typeof window !== "undefined") {
+              window.location.reload();
+            }
+          } else {
+            console.log("[useLicense] Periodic re-verify: inconclusive — keeping license. Message:", msg);
           }
         }
-      } catch {
+      } catch (err) {
         // Network error — don't clear license on network failure
+        console.log("[useLicense] Periodic re-verify: network error — keeping license:", err);
       }
     }, 60_000); // 60 seconds — catch admin suspensions within 1 minute
 

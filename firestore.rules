@@ -4,45 +4,34 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ============================================================
-    // ADMIN DATA — SINGLE SOURCE OF TRUTH (full read/write)
+    // LICENSE KEYS — SINGLE SOURCE OF TRUTH (one doc per key)
     // ============================================================
-    // All admin clients (Web Panel, Old APK, New APK) + User APK
-    // read and write to admin_data/{docId} for license keys, devices,
-    // users, logs, settings, announcements, server_time.
+    // Collection: license_keys/{keyStr}
+    // Each key is its own document (atomic writes, no race conditions).
     //
-    // Real-time sync via onSnapshot listeners on admin_data/{docId}.
-    match /admin_data/{docId} {
-      allow read: if true;            // All clients read for sync + verification
-      allow create: if true;          // Admin generates keys
+    // All clients read and write here:
+    //   - Admin Web Panel (admin-store.ts → firebase-license.ts)
+    //   - Old Admin APK (same code path — loads same Vercel deployment)
+    //   - New Admin APK (same code path — loads same Vercel deployment)
+    //   - User APK (verifyLicense → fetchKeyFromFirestore)
+    //   - API routes (/api/license/verify, api-license-guard.ts)
+    //
+    // Real-time sync: admin-realtime-sync.ts attaches onSnapshot to the
+    // COLLECTION — any key change instantly notifies all admin panels.
+    //
+    // 1 KEY = 1 DEVICE policy enforced in code (deviceIds[] array).
+    match /license_keys/{keyId} {
+      allow read: if true;            // Verification reads (user + admin)
+      allow create: if true;          // Admin generates keys (client-side)
       allow update: if true;          // Admin updates (suspend, activate, device binding)
       allow delete: if true;          // Admin deletes keys
     }
 
     // ============================================================
-    // LEGACY: license_keys — kept for backward compat (unused now)
-    // ============================================================
-    // All reads/writes now go to admin_data/keys. This collection
-    // is kept only to avoid breaking old APKs that haven't updated yet.
-    match /license_keys/{keyId} {
-      allow read: if true;
-      allow create: if true;
-      allow update: if true;
-      allow delete: if true;
-    }
-
-    // ============================================================
-    // LEGACY: admin_generated_keys — kept for backward compat (unused now)
-    // ============================================================
-    match /admin_generated_keys/{keyId} {
-      allow read: if true;
-      allow create: if true;
-      allow update: if false;
-      allow delete: if false;
-    }
-
-    // ============================================================
     // Default — DENY ALL other collections
     // ============================================================
+    // No admin_data, no arrays, no other collections.
+    // Everything lives in license_keys/{keyStr}.
     match /{document=**} {
       allow read, write: if false;
     }

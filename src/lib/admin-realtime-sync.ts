@@ -78,8 +78,8 @@ function cleanUndefined<T>(obj: T): T {
 }
 
 /**
- * Write all keys to Firestore (admin_data/keys doc).
- * Uses setDoc with merge to replace the entire keys array.
+ * Write all keys to Firestore (license_keys/{keyStr} — one doc per key).
+ * Delegates to firebase-license.ts syncAllKeysToFirestore for atomic per-doc writes.
  */
 export async function syncKeysToFirestore(keys: LicenseKey[]): Promise<void> {
   if (!isFirebaseReady() || !db) {
@@ -87,12 +87,9 @@ export async function syncKeysToFirestore(keys: LicenseKey[]): Promise<void> {
     return;
   }
   try {
-    const cleanKeys = keys.map(k => cleanUndefined(k));
-    await setDoc(doc(db, ADMIN_DATA_COLLECTION, DOC_KEYS), {
-      keys: cleanKeys,
-      updatedAt: serverTimestamp(),
-    });
-    console.log(`[AdminSync] ✅ Synced ${cleanKeys.length} keys to Firestore`);
+    const { syncAllKeysToFirestore } = await import("./firebase-license");
+    await syncAllKeysToFirestore(keys);
+    console.log(`[AdminSync] ✅ Synced ${keys.length} keys to license_keys/`);
   } catch (err) {
     console.error("[AdminSync] Failed to sync keys:", err);
   }
@@ -182,11 +179,25 @@ export async function syncAnnouncementsToFirestore(announcements: Announcement[]
 export async function fetchKeysFromAdminData(): Promise<LicenseKey[] | null> {
   if (!isFirebaseReady() || !db) return null;
   try {
-    const snap = await getDoc(doc(db, ADMIN_DATA_COLLECTION, DOC_KEYS));
-    if (snap.exists()) {
-      return snap.data().keys as LicenseKey[];
-    }
-    return null;
+    // Read entire license_keys collection (one doc per key)
+    const snap = await getDocs(collection(db, "license_keys"));
+    const keys: LicenseKey[] = [];
+    snap.forEach((d) => {
+      const data = d.data() as any;
+      keys.push({
+        key: data.key || d.id,
+        type: data.type || "trial",
+        status: data.status || "active",
+        createdAt: typeof data.createdAt === "number" ? data.createdAt : Date.now(),
+        expiresAt: data.expiresAt ?? null,
+        deviceIds: Array.isArray(data.deviceIds) ? data.deviceIds : [],
+        userName: data.userName,
+        lastVerified: data.lastVerified,
+        verifications: typeof data.verifications === "number" ? data.verifications : 0,
+      });
+    });
+    console.log(`[AdminSync] ✅ Fetched ${keys.length} keys from license_keys/`);
+    return keys;
   } catch (err) {
     console.error("[AdminSync] Failed to fetch keys:", err);
     return null;
@@ -284,18 +295,37 @@ export function subscribeToAdminData(callbacks: AdminSyncCallbacks): Unsubscribe
   const unsubs: Unsubscribe[] = [];
 
   try {
-    // Listen to keys
+    // Listen to keys — onSnapshot on the license_keys COLLECTION.
+    // Any key add/update/delete from ANY admin device fires here instantly.
+    // (license_keys/{keyStr} — one doc per key, matches user's Firestore rules.)
     if (callbacks.onKeysUpdate) {
+      const keysColl = collection(db, "license_keys");
       const unsub = onSnapshot(
-        doc(db, ADMIN_DATA_COLLECTION, DOC_KEYS),
+        keysColl,
         (snap) => {
-          if (snap.exists()) {
-            const keys = snap.data().keys as LicenseKey[];
-            callbacks.onKeysUpdate!(keys || []);
-            console.log(`[AdminSync] 📡 Real-time keys update: ${keys?.length || 0} keys`);
-          }
+          // snap.docs = ALL documents in the collection at this moment
+          const keys: LicenseKey[] = [];
+          snap.forEach((d) => {
+            const data = d.data() as any;
+            keys.push({
+              key: data.key || d.id,
+              type: data.type || "trial",
+              status: data.status || "active",
+              createdAt: typeof data.createdAt === "number" ? data.createdAt : Date.now(),
+              expiresAt: data.expiresAt ?? null,
+              deviceIds: Array.isArray(data.deviceIds) ? data.deviceIds : [],
+              userName: data.userName,
+              lastVerified: data.lastVerified,
+              verifications: typeof data.verifications === "number" ? data.verifications : 0,
+            });
+          });
+          callbacks.onKeysUpdate!(keys);
+          console.log(`[AdminSync] 📡 Real-time keys update: ${keys.length} keys (license_keys collection)`);
         },
-        (err) => callbacks.onError?.(err)
+        (err) => {
+          console.error("[AdminSync] ❌ onSnapshot(license_keys) error:", err);
+          callbacks.onError?.(err);
+        }
       );
       unsubs.push(unsub);
     }

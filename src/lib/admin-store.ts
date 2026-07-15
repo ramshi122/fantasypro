@@ -1,34 +1,31 @@
 /**
- * Admin Panel Store — UNIFIED FIRESTORE SYNC (single source of truth)
+ * Admin Panel Store — FIRESTORE SYNC (license_keys/{keyStr} per-doc)
  * -------------------------------------------------------------------
  * Hidden admin mode with license management, device binding, user control,
  * team generator toggles, announcements, activity logs, and settings.
  *
- * Storage model (UNIFIED):
- *   • Firestore admin_data/keys  — SINGLE SOURCE OF TRUTH for license keys
- *     Shape: { keys: LicenseKey[], updatedAt: serverTimestamp }
+ * Storage model (matches user's ACTUAL Firestore rules):
+ *   • Firestore license_keys/{keyStr} — ONE DOCUMENT PER KEY
+ *     Each key is its own document (atomic writes, no race conditions).
  *     All admin clients (Web, Old APK, New APK) + User APK + API routes
- *     read and write to this SAME document.
- *   • Firestore admin_data/*     — devices, users, logs, settings, announcements
- *   • localStorage               — read cache (offline fallback) + UI state
+ *     read and write to this SAME collection.
+ *   • localStorage — read cache (offline fallback) + UI state
  *
  * Real-time sync:
- *   • onSnapshot listeners on admin_data/{keys,devices,users,...}
+ *   • onSnapshot listener on the license_keys COLLECTION
  *   • Any admin change → Firestore → ALL other admin panels update INSTANTLY
  *   • Auto-reconnect on network loss (initNetworkReconnectListener)
  *
  * CRUD operations:
  *   • generateKey/suspendKey/activateKey/deleteKey/extendExpiry/resetDevice
- *     ALL write to admin_data/keys via firebase-license.ts (unified path)
+ *     ALL write to license_keys/{keyStr} via firebase-license.ts
  *   • After every write, onSnapshot fires → all admin panels get the update
  *
  * User verification:
- *   • verifyLicense() reads from admin_data/keys array (via fetchKeyFromFirestore)
- *   • API routes /api/license/verify also read from admin_data/keys
+ *   • verifyLicense() checks Firestore FIRST (source of truth), then local cache
+ *   • API routes /api/license/verify + api-license-guard.ts → read license_keys/{keyStr}
  *
- * NO legacy paths used:
- *   • license_keys/{keyStr} collection — REMOVED (was causing sync issues)
- *   • admin_generated_keys collection — REMOVED (was redundant)
+ * 1 KEY = 1 DEVICE policy enforced in code (deviceIds[] array, max 1 device).
  */
 
 import { create } from "zustand";
@@ -140,11 +137,11 @@ interface AdminState {
   changePassword: (newPassword: string) => void;
 
   // Sync actions
-  /** Fetch ALL admin data from Firestore admin_data/* (single source of truth).
+  /** Fetch ALL admin data from Firestore license_keys/{keyStr} (per-doc).
    *  Updates in-memory store + localStorage cache. Returns true on success. */
   syncFromFirebase: () => Promise<boolean>;
-  /** Attach onSnapshot listeners to admin_data/{keys,devices,users,...}.
-   *  Any change from ANY admin device instantly updates this device.
+  /** Attach onSnapshot listener to license_keys collection.
+   *  Any key change from ANY admin device instantly updates this device.
    *  Returns unsubscribe function. */
   subscribeToFirebase: () => () => void;
 
@@ -570,11 +567,11 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           return { keys: next };
         });
         get().addLog("admin_action", `Generated ${type} key: ${key}`);
-        // 2. UNIFIED SYNC: Write to admin_data/keys (single source of truth).
+        // 2. UNIFIED SYNC: Write to license_keys/{keyStr} (single source of truth).
         //    This triggers onSnapshot on ALL other admin panels instantly.
         import("./firebase-license").then(({ syncKeyToFirestore }) => {
           syncKeyToFirestore(newKey).then((ok) => {
-            if (ok) console.log("[Unified Sync] ✅ Key written to admin_data/keys:", key);
+            if (ok) console.log("[Unified Sync] ✅ Key written to license_keys/" + key);
             else console.error("[Unified Sync] ❌ Key write FAILED:", key);
           });
         });
@@ -603,11 +600,11 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           return { keys: next };
         });
         get().addLog("admin_action", `Generated ${count} bulk ${type} keys`);
-        // 2. UNIFIED SYNC: Write ALL keys to admin_data/keys (single source).
-        //    One write triggers onSnapshot on all other admin panels.
+        // 2. UNIFIED SYNC: Write ALL keys to license_keys/{keyStr} (per-doc, parallel).
+        //    Each write triggers onSnapshot on all other admin panels.
         import("./firebase-license").then(({ syncAllKeysToFirestore }) => {
           syncAllKeysToFirestore(get().keys).then((ok) => {
-            if (ok) console.log("[Unified Sync] ✅ Bulk write: " + count + " keys to admin_data/keys");
+            if (ok) console.log("[Unified Sync] ✅ Bulk write: " + count + " keys to license_keys/");
             else console.error("[Unified Sync] ❌ Bulk write FAILED");
           });
         });
@@ -621,7 +618,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           return { keys: next };
         });
         get().addLog("admin_action", `Activated key: ${key}`);
-        // UNIFIED SYNC: update this key in admin_data/keys array
+        // UNIFIED SYNC: update this key in license_keys/{keyStr}
         import("./firebase-license").then(({ updateKeyStatusInFirestore }) => {
           updateKeyStatusInFirestore(key, "active").then((ok) => {
             if (ok) console.log("[Unified Sync] ✅ Activated key:", key);
@@ -637,7 +634,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           return { keys: next };
         });
         get().addLog("admin_action", `Suspended key: ${key}`);
-        // UNIFIED SYNC: update this key in admin_data/keys array
+        // UNIFIED SYNC: update this key in license_keys/{keyStr}
         import("./firebase-license").then(({ updateKeyStatusInFirestore }) => {
           updateKeyStatusInFirestore(key, "suspended").then((ok) => {
             if (ok) console.log("[Unified Sync] ✅ Suspended key:", key);
@@ -653,7 +650,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           return { keys: next };
         });
         get().addLog("admin_action", `Deleted key: ${key}`);
-        // UNIFIED SYNC: delete this key from admin_data/keys array
+        // UNIFIED SYNC: delete this key from license_keys/{keyStr}
         import("./firebase-license").then(({ deleteKeyFromFirestore }) => {
           deleteKeyFromFirestore(key).then((ok) => {
             if (ok) console.log("[Unified Sync] ✅ Deleted key:", key);
@@ -675,7 +672,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           return { keys: next };
         });
         get().addLog("admin_action", `Extended ${key} by ${days} days`);
-        // UNIFIED SYNC: update this key's fields in admin_data/keys array
+        // UNIFIED SYNC: update this key's fields in license_keys/{keyStr}
         if (newExpiry !== null) {
           import("./firebase-license").then(({ updateKeyFieldsInFirestore }) => {
             updateKeyFieldsInFirestore(key, { expiresAt: newExpiry, status: "active" }).then((ok) => {
@@ -693,7 +690,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           return { keys: next };
         });
         get().addLog("admin_action", `Reset device binding for key: ${key}`);
-        // UNIFIED SYNC: update this key in admin_data/keys array
+        // UNIFIED SYNC: update this key in license_keys/{keyStr}
         import("./firebase-license").then(({ updateKeyFieldsInFirestore }) => {
           updateKeyFieldsInFirestore(key, { deviceIds: [] }).then((ok) => {
             if (ok) console.log("[Unified Sync] ✅ Reset device for key:", key);
@@ -734,7 +731,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           return { keys: next };
         });
 
-        // UNIFIED SYNC: Write ALL modified keys to admin_data/keys (one shot).
+        // UNIFIED SYNC: Write ALL modified keys to license_keys/{keyStr} (per-doc).
         if (modifiedKeys.length > 0) {
           import("./firebase-license").then(({ syncAllKeysToFirestore }) => {
             syncAllKeysToFirestore(get().keys).then((ok) => {
@@ -784,35 +781,37 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           return { valid: false, message: `Invalid key format. ${remaining} attempt(s) remaining before 1-hour lock.` };
         }
 
-        // Step 3: Look up key in LOCAL database (localStorage)
-        const allKeys = get().keys;
-        console.log("[License Verify] Total keys in local database:", allKeys.length);
-        let k = allKeys.find((x) => x.key.toUpperCase() === cleanKey);
-
-        // Step 3b: If not found locally, do a SINGLE-doc Firebase read by key.
-        // This is the ONLY Firebase read in the entire verify flow.
-        if (!k) {
-          console.log("[License Verify] Key not found locally — checking Firebase (single-doc read)...");
-          try {
-            const { fetchKeyFromFirestore } = await import("./firebase-license");
-            const firebaseKey = await fetchKeyFromFirestore(cleanKey);
-            if (firebaseKey) {
-              console.log("[License Verify] ✅ Key found in Firebase:", firebaseKey.key, "| Type:", firebaseKey.type);
-              // Add to local store for future lookups (this session)
-              set((s) => {
-                const next = [firebaseKey, ...s.keys];
-                lsSet(LS_KEYS, next);
-                return { keys: next };
-              });
-              k = firebaseKey;
-            }
-          } catch (err) {
-            console.log("[License Verify] Firebase lookup failed:", err);
+        // Step 3: Look up key in FIRESTORE FIRST (source of truth).
+        // Local cache is stale — admin may have suspended/activated the key
+        // from another device. Always check Firestore for the latest status.
+        let k: LicenseKey | undefined;
+        console.log("[License Verify] Checking Firestore FIRST (source of truth)...");
+        try {
+          const { fetchKeyFromFirestore } = await import("./firebase-license");
+          const firebaseKey = await fetchKeyFromFirestore(cleanKey);
+          if (firebaseKey) {
+            console.log("[License Verify] ✅ Key found in Firestore:", firebaseKey.key, "| Type:", firebaseKey.type, "| Status:", firebaseKey.status);
+            // Update local store with fresh data from Firestore
+            set((s) => {
+              const next = [firebaseKey, ...s.keys.filter((x) => x.key.toUpperCase() !== cleanKey)];
+              lsSet(LS_KEYS, next);
+              return { keys: next };
+            });
+            k = firebaseKey;
           }
+        } catch (err) {
+          console.log("[License Verify] Firestore lookup failed (network?), falling back to local cache:", err);
+        }
+
+        // Step 3b: Fallback to LOCAL cache if Firestore unavailable (offline)
+        if (!k) {
+          const allKeys = get().keys;
+          console.log("[License Verify] Fallback — checking local cache. Total keys:", allKeys.length);
+          k = allKeys.find((x) => x.key.toUpperCase() === cleanKey);
         }
 
         if (!k) {
-          console.log("[License Verify] FAIL: Key not found in local OR Firebase database");
+          console.log("[License Verify] FAIL: Key not found in Firestore OR local cache");
           const failState = recordFailedAttempt(cleanKey);
           const remaining = getRemainingAttempts();
           if (failState.lockedUntil) {
@@ -1120,12 +1119,12 @@ export const useAdmin = create<AdminState>()((set, get) => ({
 if (typeof window !== "undefined") {
   setTimeout(() => {
     useAdmin.getState().syncFromFirebase().then((ok) => {
-      if (ok) console.log("[Admin Store] ✅ Initial sync complete (admin_data/keys unified)");
+      if (ok) console.log("[Admin Store] ✅ Initial sync complete (license_keys/ collection)");
       else console.warn("[Admin Store] Initial sync failed — using localStorage cache");
     });
-    // Attach real-time listeners (instant sync across all admin panels)
+    // Attach real-time listener on license_keys collection (instant sync across all admin panels)
     useAdmin.getState().subscribeToFirebase();
-    console.log("[Admin Store] ✅ Real-time listeners attached (admin_data/*)");
+    console.log("[Admin Store] ✅ Real-time listener attached (license_keys collection)");
   }, 100);
 }
 
