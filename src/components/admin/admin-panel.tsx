@@ -518,19 +518,26 @@ function LicensesTab() {
             size="sm"
             className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs"
             onClick={async () => {
-              toast.info("Syncing ALL keys to Firestore (license_keys/)...");
+              if (admin.keys.length === 0) {
+                toast.error("❌ No keys to sync — generate a key first");
+                return;
+              }
+              toast.info("Syncing " + admin.keys.length + " keys to Firestore (license_keys/)...");
               try {
                 // UNIFIED SYNC: write ALL keys to license_keys/{keyStr} (one doc per key).
                 // Each write triggers onSnapshot on all other admin panels.
                 const { syncAllKeysToFirestore } = await import("@/lib/firebase-license");
                 const ok = await syncAllKeysToFirestore(admin.keys);
                 if (ok) {
-                  toast.success(`✅ Synced ${admin.keys.length} keys to license_keys/ — all admin panels will update instantly`);
+                  toast.success(`✅ Synced ALL ${admin.keys.length} keys to Firestore — all admin panels will update instantly`);
                 } else {
-                  toast.error("❌ Sync failed — check console for Firestore error");
+                  // Partial success — some keys may have failed. Check console for details.
+                  toast.error(`⚠️ Sync completed with errors — ${admin.keys.length} keys attempted. Check browser console (F12) for specific failures.`);
+                  console.error("[Sync Firebase] Some keys failed to sync. See [LicenseSync] errors above for details.");
                 }
               } catch (err: any) {
-                toast.error(err?.message || "Sync failed");
+                console.error("[Sync Firebase] Exception:", err);
+                toast.error(err?.message || "Sync failed — check browser console (F12)");
               }
             }}
             title="Upload ALL local keys to Firestore license_keys/{keyStr} (one doc per key — syncs all admin panels instantly)"

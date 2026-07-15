@@ -123,6 +123,24 @@ export async function fetchKeyFromFirestore(keyStr: string): Promise<LicenseKey 
 }
 
 /**
+ * Remove undefined fields from any object — Firestore REJECTS undefined values.
+ * Recursively cleans nested objects + arrays.
+ * This is the #1 cause of "Sync Firebase failed" errors.
+ */
+function cleanUndefined<T>(obj: T): T {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(cleanUndefined) as T;
+  const clean: any = {};
+  for (const [key, value] of Object.entries(obj as any)) {
+    if (value !== undefined) {
+      clean[key] = typeof value === "object" && value !== null ? cleanUndefined(value) : value;
+    }
+  }
+  return clean;
+}
+
+/**
  * Sync a SINGLE license key to Firestore.
  * Writes to `license_keys/{keyStr}` document (atomic, no race conditions).
  *
@@ -140,15 +158,24 @@ export async function syncKeyToFirestore(key: LicenseKey): Promise<boolean> {
 
   try {
     const docRef = doc(db, COLL_KEYS, cleanKey);
-    const payload = {
-      ...key,
+    // Build payload — replace null/undefined with explicit values that Firestore accepts.
+    // Firestore REJECTS undefined fields ("Unsupported field value: undefined").
+    const rawPayload: Record<string, any> = {
       key: cleanKey,
+      type: key.type || "trial",
+      status: key.status || "active",
+      createdAt: typeof key.createdAt === "number" ? key.createdAt : Date.now(),
+      expiresAt: key.expiresAt ?? null,  // null is allowed (lifetime keys)
       deviceIds: Array.isArray(key.deviceIds) ? key.deviceIds : [],
       verifications: typeof key.verifications === "number" ? key.verifications : 0,
-      createdAt: typeof key.createdAt === "number" ? key.createdAt : Date.now(),
+      // Optional fields — only include if defined (Firestore rejects undefined)
+      ...(key.userName ? { userName: key.userName } : {}),
+      ...(key.lastVerified ? { lastVerified: key.lastVerified } : {}),
       updatedAt: serverTimestamp(),
     };
-    console.log("[LicenseSync] Writing to license_keys/" + cleanKey + "...");
+    // Final safety: strip any remaining undefined values
+    const payload = cleanUndefined(rawPayload);
+    console.log("[LicenseSync] Writing to license_keys/" + cleanKey + "...", JSON.stringify(Object.keys(payload)));
     await setDoc(docRef, payload);
     console.log("[LicenseSync] ✅ setDoc completed for license_keys/" + cleanKey);
 
@@ -167,6 +194,9 @@ export async function syncKeyToFirestore(key: LicenseKey): Promise<boolean> {
     if (err?.code === "permission-denied") {
       console.error("[LicenseSync] ❌ PERMISSION DENIED — check Firestore rules for license_keys/{keyId}");
     }
+    if (err?.message?.includes("undefined")) {
+      console.error("[LicenseSync] ❌ UNDEFINED FIELD error — cleanUndefined() should have caught this. Key object:", JSON.stringify(key));
+    }
     return false;
   }
 }
@@ -175,15 +205,37 @@ export async function syncKeyToFirestore(key: LicenseKey): Promise<boolean> {
  * Sync ALL keys to Firestore (bulk operation).
  * Writes each key as its own document (atomic, parallel).
  * Used by "Sync Firebase" button in admin panel.
+ *
+ * Returns true ONLY if ALL keys synced successfully.
+ * Logs detailed per-key success/failure counts to console.
  */
 export async function syncAllKeysToFirestore(keys: LicenseKey[]): Promise<boolean> {
   console.log("[LicenseSync] Bulk syncing " + keys.length + " keys to license_keys/...");
-  if (!db) return false;
+  if (!db) {
+    console.error("[LicenseSync] ❌ Firebase db not initialized");
+    return false;
+  }
+  if (keys.length === 0) {
+    console.log("[LicenseSync] No keys to sync");
+    return true;
+  }
   try {
     const results = await Promise.all(keys.map((k) => syncKeyToFirestore(k)));
-    const ok = results.filter(Boolean).length;
-    console.log("[LicenseSync] ✅ Bulk write: " + ok + "/" + keys.length + " keys written");
-    return ok === keys.length;
+    const okCount = results.filter(Boolean).length;
+    const failCount = keys.length - okCount;
+    if (failCount === 0) {
+      console.log("[LicenseSync] ✅ Bulk write: ALL " + okCount + "/" + keys.length + " keys written successfully");
+      return true;
+    } else {
+      console.error("[LicenseSync] ⚠️ Bulk write: " + okCount + "/" + keys.length + " keys succeeded. " + failCount + " FAILED — see errors above.");
+      // Log which keys failed
+      keys.forEach((k, i) => {
+        if (!results[i]) {
+          console.error("[LicenseSync] ❌ Failed key #" + (i + 1) + ": " + k.key + " | Type: " + k.type + " | Status: " + k.status);
+        }
+      });
+      return false;
+    }
   } catch (err: any) {
     console.error("[LicenseSync] ❌ Bulk write error:", err?.code || err?.message || err);
     return false;
@@ -229,6 +281,7 @@ export async function updateKeyStatusInFirestore(
  * Update a SINGLE key's fields in Firestore.
  * Updates `license_keys/{keyStr}` document.
  * Falls back to setDoc(merge:true) if document doesn't exist yet.
+ * Strips undefined fields (Firestore rejects undefined).
  */
 export async function updateKeyFieldsInFirestore(
   keyStr: string,
@@ -239,9 +292,11 @@ export async function updateKeyFieldsInFirestore(
   if (!db) return false;
   try {
     const docRef = doc(db, COLL_KEYS, cleanKey);
+    // Strip undefined fields — Firestore REJECTS undefined values.
+    const cleanFields = cleanUndefined({ ...fields });
     try {
       await updateDoc(docRef, {
-        ...fields,
+        ...cleanFields,
         updatedAt: serverTimestamp(),
       });
       console.log("[LicenseSync] ✅ updateDoc completed for license_keys/" + cleanKey);
@@ -250,7 +305,7 @@ export async function updateKeyFieldsInFirestore(
       // updateDoc fails if doc doesn't exist. Fall back to setDoc(merge:true).
       console.log("[LicenseSync] updateDoc failed (" + (updateErr?.code || updateErr?.message) + ") — trying setDoc merge...");
       await setDoc(docRef, {
-        ...fields,
+        ...cleanFields,
         key: cleanKey,
         updatedAt: serverTimestamp(),
       }, { merge: true });
