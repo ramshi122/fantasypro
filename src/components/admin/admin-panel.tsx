@@ -518,24 +518,22 @@ function LicensesTab() {
             size="sm"
             className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs"
             onClick={async () => {
-              toast.info("Syncing keys to Firebase (one doc per key)...");
+              toast.info("Syncing ALL keys to Firestore (admin_data/keys — unified)...");
               try {
-                const { syncKeyToFirestore } = await import("@/lib/firebase-license");
-                const { recordAdminGeneratedKey } = await import("@/lib/admin-firebase-sync");
-                const res = await Promise.all(
-                  admin.keys.map(async (k) => {
-                    const a = await syncKeyToFirestore(k);
-                    await recordAdminGeneratedKey(k.key).catch(() => {});
-                    return a;
-                  })
-                );
-                const ok = res.filter(Boolean).length;
-                toast.success(`✅ Synced ${ok}/${admin.keys.length} keys to Firebase`);
+                // UNIFIED SYNC: write ALL keys to admin_data/keys in ONE shot.
+                // This triggers onSnapshot on all other admin panels instantly.
+                const { syncAllKeysToFirestore } = await import("@/lib/firebase-license");
+                const ok = await syncAllKeysToFirestore(admin.keys);
+                if (ok) {
+                  toast.success(`✅ Synced ${admin.keys.length} keys to admin_data/keys — all admin panels will update instantly`);
+                } else {
+                  toast.error("❌ Sync failed — check console for Firestore error");
+                }
               } catch (err: any) {
                 toast.error(err?.message || "Sync failed");
               }
             }}
-            title="Upload all local keys to Firebase Firestore (one doc per key)"
+            title="Upload ALL local keys to Firestore admin_data/keys (unified source of truth — syncs all admin panels instantly)"
           >
             <ShieldCheck className="w-3 h-3 mr-1" />
             Sync Firebase

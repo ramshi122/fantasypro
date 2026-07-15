@@ -1,24 +1,27 @@
 /**
- * Firebase Firestore Integration — LICENSE ONLY
- * ==============================================
- *
- * SINGLE-PATH KEY STORAGE (matches actual Firestore rules):
+ * Firebase Firestore Integration — LICENSE ONLY (UNIFIED)
  * ========================================================
- * Collection: `license_keys/{keyStr}` — one document per key.
  *
- * Firestore rules (matches user's actual Firebase project):
- *   match /license_keys/{keyId} {
+ * SINGLE SOURCE OF TRUTH:
+ * =======================
+ * ONE Firestore document: `admin_data/keys`
+ * Shape: { keys: LicenseKey[], updatedAt: serverTimestamp }
+ *
+ * ALL clients (Admin Web, Old APK, New APK, User APK, API routes)
+ * read and write to this SAME document. No other paths.
+ *
+ * Real-time sync:
+ *   - admin-realtime-sync.ts attaches onSnapshot to `admin_data/keys`
+ *   - Any write here instantly notifies ALL admin panels
+ *
+ * Removed legacy paths:
+ *   - license_keys/{keyStr} collection — REMOVED (was causing sync issues)
+ *   - admin_generated_keys collection — REMOVED (was redundant)
+ *
+ * Firestore rules (must allow full read/write on admin_data):
+ *   match /admin_data/{docId} {
  *     allow read, create, update, delete: if true;
  *   }
- *
- * All keys are normalized to UPPERCASE before read/write so the
- * admin's "CRICB-ABCD-EFGH-IJKL" matches the user typing
- * "cricb-abcd-efgh-ijkl" or " CRICB-ABCD-EFGH-IJKL ".
- *
- * After every write, we immediately READ BACK the document to
- * confirm it landed in Firestore. This catches silent write
- * failures (network/firestore rules issues) that would otherwise
- * leave the key invisible to other phones.
  */
 
 import { db } from "./firebase";
@@ -26,13 +29,15 @@ import {
   doc,
   setDoc,
   getDoc,
-  updateDoc,
-  deleteDoc,
   serverTimestamp,
 } from "firebase/firestore";
 import type { KeyType, KeyStatus, LicenseKey } from "./admin-store";
 
-const COLL_KEYS = "license_keys";
+// ============================================================
+// SINGLE SOURCE OF TRUTH — one document, one array
+// ============================================================
+const COLL_ADMIN_DATA = "admin_data";
+const DOC_KEYS = "keys";
 
 export function initFirebase(_config?: string): boolean {
   return !!db;
@@ -51,14 +56,39 @@ function normalizeKey(keyStr: string): string {
 }
 
 /**
+ * Read the ENTIRE keys array from `admin_data/keys`.
+ * Returns empty array if doc doesn't exist or Firebase unavailable.
+ */
+export async function fetchAllKeysFromFirestore(): Promise<LicenseKey[]> {
+  if (!db) {
+    console.error("[LicenseFetch] ❌ Firebase db not initialized");
+    return [];
+  }
+  try {
+    const snap = await getDoc(doc(db, COLL_ADMIN_DATA, DOC_KEYS));
+    if (!snap.exists()) {
+      console.log("[LicenseFetch] admin_data/keys document does not exist yet");
+      return [];
+    }
+    const data = snap.data() as Record<string, any>;
+    const arr = Array.isArray(data.keys) ? data.keys : [];
+    console.log("[LicenseFetch] ✅ Read admin_data/keys — " + arr.length + " keys");
+    return arr as LicenseKey[];
+  } catch (err: any) {
+    console.error("[LicenseFetch] ❌ Firestore error:", err?.code || err?.message || err);
+    return [];
+  }
+}
+
+/**
  * Fetch a SINGLE license key from Firestore by key string.
- * Reads `license_keys/{keyStr}` document.
+ * Reads `admin_data/keys` document and scans the `keys[]` array.
  *
  * Returns null if:
  *   - Firebase not initialized
  *   - Key string is empty
- *   - Document does not exist
- *   - Firestore error (permission denied, network, etc.)
+ *   - Key not found in array
+ *   - Firestore error
  */
 export async function fetchKeyFromFirestore(keyStr: string): Promise<LicenseKey | null> {
   const cleanKey = normalizeKey(keyStr);
@@ -75,44 +105,28 @@ export async function fetchKeyFromFirestore(keyStr: string): Promise<LicenseKey 
   }
 
   try {
-    console.log("[LicenseFetch] Reading license_keys/" + cleanKey + "...");
-    const snap = await getDoc(doc(db, COLL_KEYS, cleanKey));
-    if (!snap.exists()) {
-      console.log("[LicenseFetch] ❌ Document does not exist at license_keys/" + cleanKey);
+    const allKeys = await fetchAllKeysFromFirestore();
+    const match = allKeys.find((k: any) => normalizeKey(k?.key || "") === cleanKey);
+    if (!match) {
+      console.log("[LicenseFetch] ❌ Key not found in admin_data/keys array");
       return null;
     }
-    const data = snap.data() as Record<string, any>;
-    console.log("[LicenseFetch] ✅ Key found:", data.key, "| Type:", data.type, "| Status:", data.status, "| Devices:", (data.deviceIds || []).length);
-    return {
-      key: data.key || cleanKey,
-      type: (data.type as KeyType) || "trial",
-      status: (data.status as KeyStatus) || "active",
-      createdAt: typeof data.createdAt === "number" ? data.createdAt : Date.now(),
-      expiresAt: data.expiresAt ?? null,
-      deviceIds: Array.isArray(data.deviceIds) ? data.deviceIds : [],
-      userName: data.userName,
-      lastVerified: data.lastVerified,
-      verifications: typeof data.verifications === "number" ? data.verifications : 0,
-    };
+    console.log("[LicenseFetch] ✅ Key found:", match.key, "| Type:", match.type, "| Status:", match.status, "| Devices:", (match.deviceIds || []).length);
+    return match as LicenseKey;
   } catch (err: any) {
-    console.error("[LicenseFetch] ❌ Firestore error:", err?.code || err?.message || err);
-    if (err?.code === "permission-denied") {
-      console.error("[LicenseFetch] ❌ PERMISSION DENIED — check Firestore rules for license_keys/{keyId}");
-    }
+    console.error("[LicenseFetch] ❌ Error scanning keys:", err?.code || err?.message || err);
     return null;
   }
 }
 
 /**
- * Sync a SINGLE license key to Firestore.
- * Writes to `license_keys/{keyStr}` document.
+ * Write the ENTIRE keys array to `admin_data/keys`.
+ * Used by admin-realtime-sync.ts and admin-store.ts bulk operations.
  *
- * After writing, immediately READS BACK the document to verify the
- * write actually landed. Returns true ONLY if the read-back succeeds.
+ * After writing, immediately READS BACK to verify the write landed.
  */
-export async function syncKeyToFirestore(key: LicenseKey): Promise<boolean> {
-  const cleanKey = normalizeKey(key.key);
-  console.log("[LicenseSync] Syncing key:", cleanKey);
+export async function syncAllKeysToFirestore(keys: LicenseKey[]): Promise<boolean> {
+  console.log("[LicenseSync] Writing " + keys.length + " keys to admin_data/keys...");
 
   if (!db) {
     console.error("[LicenseSync] ❌ Firebase db not initialized");
@@ -120,32 +134,103 @@ export async function syncKeyToFirestore(key: LicenseKey): Promise<boolean> {
   }
 
   try {
-    const docRef = doc(db, COLL_KEYS, cleanKey);
-    const payload = {
-      ...key,
-      key: cleanKey,
+    const docRef = doc(db, COLL_ADMIN_DATA, DOC_KEYS);
+    // Clean undefined fields + normalize keys
+    const cleanKeys = keys.map((k) => ({
+      ...k,
+      key: normalizeKey(k.key),
+      deviceIds: Array.isArray(k.deviceIds) ? k.deviceIds : [],
+      verifications: typeof k.verifications === "number" ? k.verifications : 0,
+      createdAt: typeof k.createdAt === "number" ? k.createdAt : Date.now(),
+    }));
+    await setDoc(docRef, {
+      keys: cleanKeys,
       updatedAt: serverTimestamp(),
-    };
-    console.log("[LicenseSync] Writing to license_keys/" + cleanKey + "...");
-    await setDoc(docRef, payload);
-    console.log("[LicenseSync] ✅ setDoc completed for license_keys/" + cleanKey);
+    });
+    console.log("[LicenseSync] ✅ Wrote " + cleanKeys.length + " keys to admin_data/keys");
 
-    // VERIFY-AFTER-WRITE: read back immediately to confirm the write landed.
-    // This catches silent failures (e.g. offline cache, rules mismatch, etc.)
-    console.log("[LicenseSync] Verifying write — reading back license_keys/" + cleanKey + "...");
+    // VERIFY-AFTER-WRITE: read back immediately
     const verifySnap = await getDoc(docRef);
     if (!verifySnap.exists()) {
-      console.error("[LicenseSync] ❌ VERIFY FAILED — document does not exist after write!");
-      console.error("[LicenseSync] ❌ Possible causes: offline mode, Firestore cache, rules issue");
+      console.error("[LicenseSync] ❌ VERIFY FAILED — doc missing after write!");
       return false;
     }
     const verifyData = verifySnap.data() as Record<string, any>;
-    console.log("[LicenseSync] ✅ Verified — key is in Firestore. Type:", verifyData.type, "| Status:", verifyData.status);
+    const verifyCount = Array.isArray(verifyData.keys) ? verifyData.keys.length : 0;
+    console.log("[LicenseSync] ✅ Verified — " + verifyCount + " keys now in Firestore");
     return true;
   } catch (err: any) {
     console.error("[LicenseSync] ❌ Firestore write error:", err?.code || err?.message || err);
     if (err?.code === "permission-denied") {
-      console.error("[LicenseSync] ❌ PERMISSION DENIED — check Firestore rules for license_keys/{keyId}");
+      console.error("[LicenseSync] ❌ PERMISSION DENIED — check Firestore rules for admin_data/{docId}");
+    }
+    return false;
+  }
+}
+
+/**
+ * Sync a SINGLE license key to Firestore.
+ * Reads the current `admin_data/keys` array, merges/updates this key, writes back.
+ *
+ * This is the atomic per-key write function used by admin-store CRUD operations.
+ *
+ * After writing, immediately READS BACK to verify the write landed.
+ */
+export async function syncKeyToFirestore(key: LicenseKey): Promise<boolean> {
+  const cleanKey = normalizeKey(key.key);
+  console.log("[LicenseSync] Upserting single key:", cleanKey);
+
+  if (!db) {
+    console.error("[LicenseSync] ❌ Firebase db not initialized");
+    return false;
+  }
+
+  try {
+    const docRef = doc(db, COLL_ADMIN_DATA, DOC_KEYS);
+
+    // Read current array
+    const currentSnap = await getDoc(docRef);
+    let currentKeys: LicenseKey[] = [];
+    if (currentSnap.exists()) {
+      const data = currentSnap.data() as Record<string, any>;
+      currentKeys = Array.isArray(data.keys) ? data.keys : [];
+    }
+
+    // Merge: remove existing entry for this key, add updated one
+    const cleanKeyObj = {
+      ...key,
+      key: cleanKey,
+      deviceIds: Array.isArray(key.deviceIds) ? key.deviceIds : [],
+      verifications: typeof key.verifications === "number" ? key.verifications : 0,
+      createdAt: typeof key.createdAt === "number" ? key.createdAt : Date.now(),
+    };
+    const nextKeys = [cleanKeyObj, ...currentKeys.filter((k: any) => normalizeKey(k?.key || "") !== cleanKey)];
+
+    await setDoc(docRef, {
+      keys: nextKeys,
+      updatedAt: serverTimestamp(),
+    });
+    console.log("[LicenseSync] ✅ Upserted key " + cleanKey + " (total " + nextKeys.length + " keys)");
+
+    // VERIFY-AFTER-WRITE
+    const verifySnap = await getDoc(docRef);
+    if (!verifySnap.exists()) {
+      console.error("[LicenseSync] ❌ VERIFY FAILED — doc missing after upsert!");
+      return false;
+    }
+    const verifyData = verifySnap.data() as Record<string, any>;
+    const verifyArr = Array.isArray(verifyData.keys) ? verifyData.keys : [];
+    const verifyMatch = verifyArr.find((k: any) => normalizeKey(k?.key || "") === cleanKey);
+    if (!verifyMatch) {
+      console.error("[LicenseSync] ❌ VERIFY FAILED — key not in array after upsert!");
+      return false;
+    }
+    console.log("[LicenseSync] ✅ Verified — key is in Firestore. Status:", verifyMatch.status);
+    return true;
+  } catch (err: any) {
+    console.error("[LicenseSync] ❌ Upsert error:", err?.code || err?.message || err);
+    if (err?.code === "permission-denied") {
+      console.error("[LicenseSync] ❌ PERMISSION DENIED — check Firestore rules for admin_data/{docId}");
     }
     return false;
   }
@@ -153,7 +238,7 @@ export async function syncKeyToFirestore(key: LicenseKey): Promise<boolean> {
 
 /**
  * Update a SINGLE key's status in Firestore.
- * Updates `license_keys/{keyStr}` document.
+ * Reads array, merges status field, writes back.
  */
 export async function updateKeyStatusInFirestore(
   keyStr: string,
@@ -164,8 +249,7 @@ export async function updateKeyStatusInFirestore(
 
 /**
  * Update a SINGLE key's fields in Firestore.
- * Updates `license_keys/{keyStr}` document.
- * Falls back to setDoc(merge:true) if document doesn't exist yet.
+ * Reads `admin_data/keys` array, merges fields into matching key, writes back.
  */
 export async function updateKeyFieldsInFirestore(
   keyStr: string,
@@ -180,37 +264,46 @@ export async function updateKeyFieldsInFirestore(
   }
 
   try {
-    const docRef = doc(db, COLL_KEYS, cleanKey);
-    try {
-      await updateDoc(docRef, {
-        ...fields,
-        updatedAt: serverTimestamp(),
-      });
-      console.log("[LicenseSync] ✅ updateDoc completed for license_keys/" + cleanKey);
-      return true;
-    } catch (updateErr: any) {
-      // updateDoc fails if doc doesn't exist. Fall back to setDoc(merge:true).
-      console.log("[LicenseSync] updateDoc failed (" + (updateErr?.code || updateErr?.message) + ") — trying setDoc merge...");
-      await setDoc(docRef, {
-        ...fields,
-        key: cleanKey,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-      console.log("[LicenseSync] ✅ setDoc(merge) completed for license_keys/" + cleanKey);
-      return true;
+    const docRef = doc(db, COLL_ADMIN_DATA, DOC_KEYS);
+
+    // Read current array
+    const currentSnap = await getDoc(docRef);
+    let currentKeys: LicenseKey[] = [];
+    if (currentSnap.exists()) {
+      const data = currentSnap.data() as Record<string, any>;
+      currentKeys = Array.isArray(data.keys) ? data.keys : [];
     }
+
+    // Find + merge
+    let found = false;
+    const nextKeys = currentKeys.map((k: any) => {
+      if (normalizeKey(k?.key || "") === cleanKey) {
+        found = true;
+        return { ...k, ...fields, key: cleanKey };
+      }
+      return k;
+    });
+
+    if (!found) {
+      console.error("[LicenseSync] ❌ Key not found in array — cannot update. Key:", cleanKey);
+      return false;
+    }
+
+    await setDoc(docRef, {
+      keys: nextKeys,
+      updatedAt: serverTimestamp(),
+    });
+    console.log("[LicenseSync] ✅ Updated fields for key " + cleanKey);
+    return true;
   } catch (err: any) {
-    console.error("[LicenseSync] ❌ Firestore update error:", err?.code || err?.message || err);
-    if (err?.code === "permission-denied") {
-      console.error("[LicenseSync] ❌ PERMISSION DENIED — check Firestore rules for license_keys/{keyId}");
-    }
+    console.error("[LicenseSync] ❌ Update error:", err?.code || err?.message || err);
     return false;
   }
 }
 
 /**
  * Delete a SINGLE key from Firestore.
- * Deletes `license_keys/{keyStr}` document.
+ * Reads `admin_data/keys` array, filters out the key, writes back.
  */
 export async function deleteKeyFromFirestore(keyStr: string): Promise<boolean> {
   const cleanKey = normalizeKey(keyStr);
@@ -222,21 +315,54 @@ export async function deleteKeyFromFirestore(keyStr: string): Promise<boolean> {
   }
 
   try {
-    await deleteDoc(doc(db, COLL_KEYS, cleanKey));
-    console.log("[LicenseSync] ✅ Deleted license_keys/" + cleanKey);
+    const docRef = doc(db, COLL_ADMIN_DATA, DOC_KEYS);
+
+    // Read current array
+    const currentSnap = await getDoc(docRef);
+    let currentKeys: LicenseKey[] = [];
+    if (currentSnap.exists()) {
+      const data = currentSnap.data() as Record<string, any>;
+      currentKeys = Array.isArray(data.keys) ? data.keys : [];
+    }
+
+    // Filter out the key
+    const nextKeys = currentKeys.filter((k: any) => normalizeKey(k?.key || "") !== cleanKey);
+
+    if (nextKeys.length === currentKeys.length) {
+      console.log("[LicenseSync] Key was not in array — nothing to delete");
+      return true;
+    }
+
+    await setDoc(docRef, {
+      keys: nextKeys,
+      updatedAt: serverTimestamp(),
+    });
+    console.log("[LicenseSync] ✅ Deleted key " + cleanKey + " (now " + nextKeys.length + " keys)");
     return true;
   } catch (err: any) {
-    console.error("[LicenseSync] ❌ Firestore delete error:", err?.code || err?.message || err);
-    if (err?.code === "permission-denied") {
-      console.error("[LicenseSync] ❌ PERMISSION DENIED — check Firestore rules for license_keys/{keyId}");
-    }
+    console.error("[LicenseSync] ❌ Delete error:", err?.code || err?.message || err);
+    return false;
+  }
+}
+
+/**
+ * Check if a key already exists in Firestore (duplicate prevention).
+ * Returns true if key exists, false if available.
+ */
+export async function checkKeyExistsInFirestore(keyStr: string): Promise<boolean> {
+  const cleanKey = normalizeKey(keyStr);
+  if (!db || !cleanKey) return false;
+  try {
+    const allKeys = await fetchAllKeysFromFirestore();
+    return allKeys.some((k: any) => normalizeKey(k?.key || "") === cleanKey);
+  } catch {
     return false;
   }
 }
 
 /**
  * TEST CONNECTION — diagnostic helper.
- * Writes a test document, reads it back, deletes it.
+ * Writes a test key to admin_data/keys, reads it back, deletes it.
  * Returns a detailed report for the admin to see.
  */
 export async function testFirestoreConnection(): Promise<{
@@ -245,7 +371,7 @@ export async function testFirestoreConnection(): Promise<{
   deleteOk: boolean;
   message: string;
 }> {
-  console.log("[LicenseTest] Running connection test...");
+  console.log("[LicenseTest] Running connection test on admin_data/keys...");
   const testKey = "TEST-" + Date.now().toString(36).toUpperCase();
   const result = { writeOk: false, readOk: false, deleteOk: false, message: "" };
 
@@ -254,15 +380,21 @@ export async function testFirestoreConnection(): Promise<{
     return result;
   }
 
-  // WRITE
+  // WRITE — upsert test key
   try {
-    await setDoc(doc(db, COLL_KEYS, testKey), {
+    const ok = await syncKeyToFirestore({
       key: testKey,
       type: "trial",
       status: "active",
       createdAt: Date.now(),
-      _test: true,
+      expiresAt: null,
+      deviceIds: [],
+      verifications: 0,
     });
+    if (!ok) {
+      result.message = "Write failed — see console for Firestore error";
+      return result;
+    }
     result.writeOk = true;
     console.log("[LicenseTest] ✅ Write OK");
   } catch (err: any) {
@@ -271,15 +403,15 @@ export async function testFirestoreConnection(): Promise<{
     return result;
   }
 
-  // READ
+  // READ — verify test key is in array
   try {
-    const snap = await getDoc(doc(db, COLL_KEYS, testKey));
-    if (snap.exists()) {
+    const fetched = await fetchKeyFromFirestore(testKey);
+    if (fetched) {
       result.readOk = true;
       console.log("[LicenseTest] ✅ Read OK");
     } else {
-      result.message = "Read failed: document does not exist after write";
-      console.error("[LicenseTest] ❌ Read: doc missing");
+      result.message = "Read failed: key not found after write";
+      console.error("[LicenseTest] ❌ Read: key missing");
       return result;
     }
   } catch (err: any) {
@@ -288,12 +420,17 @@ export async function testFirestoreConnection(): Promise<{
     return result;
   }
 
-  // DELETE
+  // DELETE — remove test key
   try {
-    await deleteDoc(doc(db, COLL_KEYS, testKey));
-    result.deleteOk = true;
-    result.message = "✅ All checks passed — Firestore is working correctly";
-    console.log("[LicenseTest] ✅ Delete OK — connection healthy");
+    const ok = await deleteKeyFromFirestore(testKey);
+    if (ok) {
+      result.deleteOk = true;
+      result.message = "✅ All checks passed — Firestore admin_data/keys is working. Real-time sync will work across all admin panels.";
+      console.log("[LicenseTest] ✅ Delete OK — connection healthy");
+    } else {
+      result.message = "Delete failed — see console";
+      console.error("[LicenseTest] ❌ Delete failed");
+    }
   } catch (err: any) {
     result.message = "Delete failed: " + (err?.code || err?.message || err);
     console.error("[LicenseTest] ❌ Delete failed:", err);

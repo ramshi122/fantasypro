@@ -4,23 +4,35 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ============================================================
-    // LICENSE KEYS — Admin can read + write from client
+    // ADMIN DATA — SINGLE SOURCE OF TRUTH (full read/write)
     // ============================================================
-    // User APK reads here on activation.
-    // Admin APK writes here on key generation, suspend, activate, delete.
-    // 1 KEY = 1 DEVICE policy enforced in code (deviceIds[] array).
-    match /license_keys/{keyId} {
-      allow read: if true;            // Verification reads (user + admin)
-      allow create: if true;          // Admin generates keys (client-side)
+    // All admin clients (Web Panel, Old APK, New APK) + User APK
+    // read and write to admin_data/{docId} for license keys, devices,
+    // users, logs, settings, announcements, server_time.
+    //
+    // Real-time sync via onSnapshot listeners on admin_data/{docId}.
+    match /admin_data/{docId} {
+      allow read: if true;            // All clients read for sync + verification
+      allow create: if true;          // Admin generates keys
       allow update: if true;          // Admin updates (suspend, activate, device binding)
       allow delete: if true;          // Admin deletes keys
     }
 
     // ============================================================
-    // ADMIN GENERATED KEYS — discovery log (cross-device)
+    // LEGACY: license_keys — kept for backward compat (unused now)
     // ============================================================
-    // When admin phone A generates a key, it records it here so
-    // admin phone B can discover the new key and pull it locally.
+    // All reads/writes now go to admin_data/keys. This collection
+    // is kept only to avoid breaking old APKs that haven't updated yet.
+    match /license_keys/{keyId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+      allow delete: if true;
+    }
+
+    // ============================================================
+    // LEGACY: admin_generated_keys — kept for backward compat (unused now)
+    // ============================================================
     match /admin_generated_keys/{keyId} {
       allow read: if true;
       allow create: if true;

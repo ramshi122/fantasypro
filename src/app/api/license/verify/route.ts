@@ -1,7 +1,39 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
-import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import type { KeyType } from "@/lib/admin-store";
+
+/**
+ * UNIFIED WRITE HELPER — updates a single key's fields in admin_data/keys array.
+ * Reads the current array, merges fields into the matching key, writes back.
+ * This is the ONLY way to update a key in Firestore from the API route.
+ */
+async function updateKeyInAdminData(keyStr: string, fields: Record<string, any>): Promise<void> {
+  if (!db) return;
+  const cleanKey = keyStr.toUpperCase();
+  try {
+    const docRef = doc(db, "admin_data", "keys");
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return;
+    const data = snap.data() as Record<string, any>;
+    const arr = Array.isArray(data.keys) ? data.keys : [];
+    let found = false;
+    const nextArr = arr.map((k: any) => {
+      if (String(k?.key || "").toUpperCase() === cleanKey) {
+        found = true;
+        return { ...k, ...fields };
+      }
+      return k;
+    });
+    if (!found) return;
+    await setDoc(docRef, {
+      keys: nextArr,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.error("[License Verify] updateKeyInAdminData error:", err);
+  }
+}
 
 /**
  * Server-Side License Verification API
@@ -141,25 +173,32 @@ export async function POST(request: Request) {
       );
     }
 
-    // ===== Step 1: Fetch license from Firestore =====
+    // ===== Step 1: Fetch license from Firestore (UNIFIED: admin_data/keys) =====
     let license: LicenseRecord | null = null;
 
     if (db) {
       try {
-        const docSnap = await getDoc(doc(db, "license_keys", licenseKey.toUpperCase()));
+        // Read from admin_data/keys document (single source of truth).
+        // Scan the keys[] array for the matching key.
+        const cleanKey = licenseKey.toUpperCase();
+        const docSnap = await getDoc(doc(db, "admin_data", "keys"));
         if (docSnap.exists()) {
-          const data = docSnap.data();
-          license = {
-            key: data.key || licenseKey.toUpperCase(),
-            type: data.type as KeyType,
-            status: data.status,
-            expiresAt: data.expiresAt,
-            deviceIds: data.deviceIds || [],
-            transferCount: data.transferCount || 0,
-            transferCountDate: data.transferCountDate,
-            teamGenCount: data.teamGenCount || 0,
-            createdAt: data.createdAt,
-          };
+          const data = docSnap.data() as Record<string, any>;
+          const arr = Array.isArray(data.keys) ? data.keys : [];
+          const match = arr.find((k: any) => String(k?.key || "").toUpperCase() === cleanKey);
+          if (match) {
+            license = {
+              key: match.key || cleanKey,
+              type: match.type as KeyType,
+              status: match.status,
+              expiresAt: match.expiresAt,
+              deviceIds: match.deviceIds || [],
+              transferCount: match.transferCount || 0,
+              transferCountDate: match.transferCountDate,
+              teamGenCount: match.teamGenCount || 0,
+              createdAt: match.createdAt,
+            };
+          }
         }
       } catch (err) {
         console.error("[License Verify] Firestore error:", err);
@@ -184,15 +223,11 @@ export async function POST(request: Request) {
 
     // ===== Step 4: Check expiry =====
     if (license.expiresAt && license.expiresAt < Date.now()) {
-      // Auto-expire in Firestore
-      if (db) {
-        try {
-          await updateDoc(doc(db, "license_keys", license.key), {
-            status: "expired",
-            expiredAt: Date.now(),
-          });
-        } catch { /* ignore */ }
-      }
+      // Auto-expire in Firestore (UNIFIED: admin_data/keys)
+      await updateKeyInAdminData(license.key, {
+        status: "expired",
+        expiredAt: Date.now(),
+      });
       return NextResponse.json(
         { valid: false, message: "License expired", code: "LICENSE_EXPIRED" },
         { status: 403 }
@@ -303,27 +338,23 @@ export async function POST(request: Request) {
     }
 
     // ===== Step 8: Increment counters if requested =====
-    if (action === "increment_transfer" && db) {
+    if (action === "increment_transfer") {
       const today = new Date().toDateString();
       const newCount = license.transferCountDate === today ? (license.transferCount || 0) + 1 : 1;
-      try {
-        await updateDoc(doc(db, "license_keys", license.key), {
-          transferCount: newCount,
-          transferCountDate: today,
-          lastTransferAt: Date.now(),
-        });
-      } catch { /* ignore */ }
+      await updateKeyInAdminData(license.key, {
+        transferCount: newCount,
+        transferCountDate: today,
+        lastTransferAt: Date.now(),
+      });
       license.transferCount = newCount;
     }
 
-    if (action === "increment_team_gen" && db) {
+    if (action === "increment_team_gen") {
       const newCount = (license.teamGenCount || 0) + 1;
-      try {
-        await updateDoc(doc(db, "license_keys", license.key), {
-          teamGenCount: newCount,
-          lastTeamGenAt: Date.now(),
-        });
-      } catch { /* ignore */ }
+      await updateKeyInAdminData(license.key, {
+        teamGenCount: newCount,
+        lastTeamGenAt: Date.now(),
+      });
       license.teamGenCount = newCount;
     }
 
