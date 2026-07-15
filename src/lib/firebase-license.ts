@@ -206,14 +206,15 @@ export async function syncKeyToFirestore(key: LicenseKey): Promise<boolean> {
 
 /**
  * Sync ALL keys to Firestore (bulk operation).
- * Writes each key as its own document (atomic, parallel).
- * Used by "Sync Firebase" button in admin panel.
+ * Writes each key as its own document, processed in BATCHES of 5 to
+ * avoid hanging the UI when there are hundreds of keys.
+ * Used by "Sync Firebase" button + generateBulkKeysAsync.
  *
  * Returns true ONLY if ALL keys synced successfully.
  * Logs detailed per-key success/failure counts to console.
  */
 export async function syncAllKeysToFirestore(keys: LicenseKey[]): Promise<boolean> {
-  console.log("[LicenseSync] Bulk syncing " + keys.length + " keys to license_keys/...");
+  console.log("[LicenseSync] Bulk syncing " + keys.length + " keys to license_keys/ (batches of 5)...");
   if (!db) {
     console.error("[LicenseSync] ❌ Firebase db not initialized");
     return false;
@@ -222,21 +223,30 @@ export async function syncAllKeysToFirestore(keys: LicenseKey[]): Promise<boolea
     console.log("[LicenseSync] No keys to sync");
     return true;
   }
+  const BATCH_SIZE = 5;
+  let okCount = 0;
+  let failCount = 0;
   try {
-    const results = await Promise.all(keys.map((k) => syncKeyToFirestore(k)));
-    const okCount = results.filter(Boolean).length;
-    const failCount = keys.length - okCount;
+    for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+      const batch = keys.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(batch.map((k) => syncKeyToFirestore(k)));
+      results.forEach((ok, idx) => {
+        if (ok) okCount++;
+        else {
+          failCount++;
+          console.error("[LicenseSync] ❌ Failed key: " + batch[idx].key + " | Type: " + batch[idx].type + " | Status: " + batch[idx].status);
+        }
+      });
+      // Small delay between batches to keep UI responsive
+      if (i + BATCH_SIZE < keys.length) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
     if (failCount === 0) {
       console.log("[LicenseSync] ✅ Bulk write: ALL " + okCount + "/" + keys.length + " keys written successfully");
       return true;
     } else {
-      console.error("[LicenseSync] ⚠️ Bulk write: " + okCount + "/" + keys.length + " keys succeeded. " + failCount + " FAILED — see errors above.");
-      // Log which keys failed
-      keys.forEach((k, i) => {
-        if (!results[i]) {
-          console.error("[LicenseSync] ❌ Failed key #" + (i + 1) + ": " + k.key + " | Type: " + k.type + " | Status: " + k.status);
-        }
-      });
+      console.error("[LicenseSync] ⚠️ Bulk write: " + okCount + "/" + keys.length + " keys succeeded. " + failCount + " FAILED.");
       return false;
     }
   } catch (err: any) {

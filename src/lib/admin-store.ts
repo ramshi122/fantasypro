@@ -153,6 +153,7 @@ interface AdminState {
   activateKey: (key: string) => void;
   suspendKey: (key: string) => void;
   deleteKey: (key: string) => void;
+  deleteKeyFromFirestoreAsync: (key: string) => Promise<boolean>;
   extendExpiry: (key: string, days: number) => void;
   resetDevice: (key: string) => void;
   verifyLicense: (key: string, deviceId: string) => Promise<{ valid: boolean; message: string; keyType?: KeyType; expiresAt?: number | null }>;
@@ -772,6 +773,30 @@ export const useAdmin = create<AdminState>()((set, get) => ({
             else console.error("[Unified Sync] ❌ Delete FAILED:", key);
           });
         });
+      },
+
+      deleteKeyFromFirestoreAsync: async (key) => {
+        // 1. Remove from local store + localStorage
+        set((s) => {
+          const next = s.keys.filter((k) => k.key !== key);
+          lsSet(LS_KEYS, next);
+          return { keys: next };
+        });
+        // 2. AWAIT Firestore delete
+        try {
+          const { deleteKeyFromFirestore } = await import("./firebase-license");
+          const ok = await deleteKeyFromFirestore(key);
+          if (ok) {
+            console.log("[Unified Sync] ✅ Deleted key from Firestore:", key);
+            get().addLog("admin_action", `Deleted key: ${key}`);
+          } else {
+            console.error("[Unified Sync] ❌ Delete FAILED from Firestore:", key);
+          }
+          return ok;
+        } catch (err: any) {
+          console.error("[Unified Sync] ❌ Delete exception:", err);
+          return false;
+        }
       },
 
       extendExpiry: (key, days) => {

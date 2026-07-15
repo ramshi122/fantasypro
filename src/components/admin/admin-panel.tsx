@@ -70,12 +70,13 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
     // UI compatibility.
     admin.subscribeToFirebase();
 
-    // ===== REAL-TIME SYNC: Refresh from Firebase every 10 seconds =====
-    // This ensures ALL admin tabs/pages show the latest key status (suspended,
-    // banned, activated, deleted) without requiring manual refresh.
+    // ===== REAL-TIME SYNC: Refresh from Firebase every 30 seconds =====
+    // Real-time updates come from onSnapshot listeners (instant).
+    // This 30s polling is a FALLBACK to catch any missed updates.
+    // Was 10s — too aggressive, caused page hangs with many keys.
     const syncInterval = setInterval(() => {
       admin.syncFromFirebase();
-    }, 10_000); // 10 seconds — near real-time
+    }, 30_000); // 30 seconds — fallback for missed onSnapshot updates
 
     return () => clearInterval(syncInterval);
   }, [open, admin.isAdminAuthenticated]);
@@ -487,26 +488,119 @@ function LicensesTab() {
             className="bg-violet-600 hover:bg-violet-700 text-white h-8 text-xs"
             onClick={async () => {
               if (bulkCount === 1) {
-                toast.info("Generating key + saving to Firestore...");
-                const result = await admin.generateKeyAsync(bulkType);
-                if (result.firestoreOk) {
-                  toast.success(`✅ Generated + SAVED to Firestore: ${result.key}`);
-                } else {
-                  toast.error(`⚠️ Generated locally but FAILED to save to Firestore: ${result.key}. Error: ${result.error}. Check console (F12).`);
+                toast.info("Generating key...");
+                try {
+                  const result = await admin.generateKeyAsync(bulkType);
+                  if (result.firestoreOk) {
+                    toast.success(`✅ Generated + saved: ${result.key}`);
+                  } else {
+                    toast.error(`⚠️ Generated locally but Firestore save failed: ${result.error}. Check console (F12).`);
+                  }
+                } catch (err: any) {
+                  toast.error("Generate failed: " + (err?.message || err));
                 }
               } else {
-                toast.info(`Generating ${bulkCount} keys + saving to Firestore...`);
-                const result = await admin.generateBulkKeysAsync(bulkCount, bulkType);
-                if (result.firestoreOk) {
-                  toast.success(`✅ Generated + SAVED ${result.keys.length} keys to Firestore`);
-                } else {
-                  toast.error(`⚠️ Generated ${result.keys.length} keys locally but FAILED to save to Firestore. Error: ${result.error}. Check console (F12).`);
+                toast.info(`Generating ${bulkCount} keys...`);
+                try {
+                  const result = await admin.generateBulkKeysAsync(bulkCount, bulkType);
+                  if (result.firestoreOk) {
+                    toast.success(`✅ Generated + saved ${result.keys.length} keys`);
+                  } else {
+                    toast.error(`⚠️ Generated ${result.keys.length} keys locally but Firestore save failed: ${result.error}. Check console (F12).`);
+                  }
+                } catch (err: any) {
+                  toast.error("Bulk generate failed: " + (err?.message || err));
                 }
               }
             }}
           >
             <Key className="w-3 h-3 mr-1" />
             Generate
+          </Button>
+          <Button
+            size="sm"
+            className="bg-amber-600 hover:bg-amber-700 text-white h-8 text-xs"
+            onClick={async () => {
+              const now = new Date();
+              const thisMonth = now.getMonth();
+              const thisYear = now.getFullYear();
+              const thisMonthKeys = admin.keys.filter((k) => {
+                const d = new Date(k.createdAt);
+                return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
+              });
+              const otherKeys = admin.keys.filter((k) => {
+                const d = new Date(k.createdAt);
+                return !(d.getMonth() === thisMonth && d.getFullYear() === thisYear);
+              });
+              if (otherKeys.length === 0) {
+                toast.info("No old keys to delete — all keys are from this month.");
+                return;
+              }
+              if (!confirm(`Delete ${otherKeys.length} keys NOT from this month? Keeps ${thisMonthKeys.length} keys from ${now.toLocaleString('default', { month: 'long' })} ${thisYear}.`)) return;
+              toast.info(`Deleting ${otherKeys.length} old keys from Firestore...`);
+              try {
+                let okCount = 0;
+                let failCount = 0;
+                for (const k of otherKeys) {
+                  const ok = await admin.deleteKeyFromFirestoreAsync(k.key);
+                  if (ok) okCount++;
+                  else failCount++;
+                }
+                if (failCount === 0) {
+                  toast.success(`✅ Deleted ${okCount} old keys. Kept ${thisMonthKeys.length} keys from ${now.toLocaleString('default', { month: 'long' })} ${thisYear}.`);
+                } else {
+                  toast.error(`⚠️ Deleted ${okCount}, failed ${failCount}. Check console.`);
+                }
+              } catch (err: any) {
+                toast.error("Delete failed: " + (err?.message || err));
+              }
+            }}
+            title="Delete all keys NOT created this month (keeps only current month keys + deletes from Firestore)"
+          >
+            <Trash2 className="w-3 h-3 mr-1" />
+            Keep This Month
+          </Button>
+          <Button
+            size="sm"
+            className="bg-red-700 hover:bg-red-800 text-white h-8 text-xs"
+            onClick={async () => {
+              if (admin.keys.length === 0) {
+                toast.info("No keys to delete.");
+                return;
+              }
+              if (!confirm(`⚠️ DELETE ALL ${admin.keys.length} keys? This cannot be undone. Keys will be removed from local store + Firestore.`)) return;
+              if (!confirm("Are you ABSOLUTELY sure? All users will be locked out.")) return;
+              toast.info(`Deleting ALL ${admin.keys.length} keys from Firestore...`);
+              try {
+                let okCount = 0;
+                let failCount = 0;
+                // Process in batches of 20 to avoid hanging
+                const allKeys = [...admin.keys];
+                for (let i = 0; i < allKeys.length; i += 20) {
+                  const batch = allKeys.slice(i, i + 20);
+                  await Promise.all(batch.map(async (k) => {
+                    const ok = await admin.deleteKeyFromFirestoreAsync(k.key);
+                    if (ok) okCount++;
+                    else failCount++;
+                  }));
+                  // Small delay between batches
+                  if (i + 20 < allKeys.length) {
+                    await new Promise((r) => setTimeout(r, 200));
+                  }
+                }
+                if (failCount === 0) {
+                  toast.success(`✅ Deleted ALL ${okCount} keys.`);
+                } else {
+                  toast.error(`⚠️ Deleted ${okCount}, failed ${failCount}. Check console.`);
+                }
+              } catch (err: any) {
+                toast.error("Delete all failed: " + (err?.message || err));
+              }
+            }}
+            title="⚠️ DELETE ALL keys (cannot be undone)"
+          >
+            <Trash2 className="w-3 h-3 mr-1" />
+            Delete All
           </Button>
           <Button
             size="sm"
