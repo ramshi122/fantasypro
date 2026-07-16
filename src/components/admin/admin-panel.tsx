@@ -1229,23 +1229,67 @@ function ContestsTab() {
   const [myTeams, setMyTeams] = useState<MyTeam[]>([]);
   const [joinResult, setJoinResult] = useState<JoinResult | null>(null);
 
-  // Load JWT from localStorage on mount
+  // Load JWT from Firestore on mount (central source of truth).
+  // Falls back to localStorage for instant display while Firestore loads.
+  // Also subscribes to real-time updates — any admin device saving a new
+  // token will instantly update this device.
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const t = localStorage.getItem("user_token") || "";
-      setJwtToken(t);
+    let unsub: (() => void) | null = null;
+
+    async function loadJwt() {
+      if (typeof window === "undefined") return;
+      // Instant display from localStorage cache
+      const cached = localStorage.getItem("user_token") || "";
+      setJwtToken(cached);
+
+      // Fetch latest from Firestore (source of truth)
+      try {
+        const { fetchJwtTokenFromFirestore, subscribeToJwtToken } = await import("@/lib/admin-realtime-sync");
+        const token = await fetchJwtTokenFromFirestore();
+        setJwtToken(token);
+        console.log("[ContestsTab] JWT token loaded from Firestore:", token ? "✓ active" : "✗ empty");
+
+        // Subscribe to real-time updates — any admin device saving a new
+        // token will instantly update this device via onSnapshot.
+        unsub = subscribeToJwtToken((newToken) => {
+          setJwtToken(newToken);
+          console.log("[ContestsTab] 📡 JWT token synced from another device:", newToken ? "✓ active" : "✗ cleared");
+        });
+      } catch (err) {
+        console.error("[ContestsTab] Failed to load JWT from Firestore:", err);
+      }
     }
+
+    loadJwt();
+
+    return () => {
+      if (unsub) {
+        try { unsub(); } catch { /* ignore */ }
+      }
+    };
   }, []);
 
-  function handleSaveJwt() {
-    if (typeof window !== "undefined") {
-      if (jwtToken.trim()) {
-        localStorage.setItem("user_token", jwtToken.trim());
-        toast.success("JWT token saved");
+  async function handleSaveJwt() {
+    const tokenToSave = jwtToken.trim();
+    try {
+      const { saveJwtTokenToFirestore } = await import("@/lib/admin-realtime-sync");
+      const ok = await saveJwtTokenToFirestore(tokenToSave);
+      if (tokenToSave) {
+        if (ok) toast.success("JWT token saved — synced to all admin devices");
+        else toast.success("JWT token saved locally (Firestore sync pending)");
       } else {
-        localStorage.removeItem("user_token");
-        toast.info("JWT token cleared");
+        if (ok) toast.info("JWT token cleared — synced to all admin devices");
+        else toast.info("JWT token cleared locally");
       }
+    } catch (err: any) {
+      console.error("[ContestsTab] JWT save error:", err);
+      // Fall back to localStorage only
+      if (typeof window !== "undefined") {
+        if (tokenToSave) localStorage.setItem("user_token", tokenToSave);
+        else localStorage.removeItem("user_token");
+      }
+      if (tokenToSave) toast.success("JWT token saved locally");
+      else toast.info("JWT token cleared locally");
     }
   }
 

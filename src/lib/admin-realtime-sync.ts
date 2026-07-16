@@ -650,3 +650,130 @@ export function initNetworkReconnectListener(): () => void {
     if (unsub) try { unsub(); } catch { /* ignore */ }
   };
 }
+
+// ============================================================
+// JWT TOKEN SYNC — Centralized across all admin devices
+// ============================================================
+// Stored in license_keys/ADMIN_JWT_TOKEN (same collection as license keys,
+// since that's the only collection the user's Firestore rules allow).
+// All admin devices read from + write to this SAME document.
+// Real-time onSnapshot listener syncs instantly across all devices.
+
+const JWT_TOKEN_DOC_ID = "ADMIN_JWT_TOKEN";
+const JWT_TOKEN_COLLECTION = "license_keys";
+
+/**
+ * Save JWT token to Firestore (central source of truth).
+ * Also writes to localStorage as offline cache.
+ * All admin devices will receive this via onSnapshot instantly.
+ */
+export async function saveJwtTokenToFirestore(token: string): Promise<boolean> {
+  if (!isFirebaseReady() || !db) {
+    console.warn("[JwtSync] Firebase not ready — saving to localStorage only");
+    if (typeof window !== "undefined") {
+      if (token) localStorage.setItem("user_token", token);
+      else localStorage.removeItem("user_token");
+    }
+    return false;
+  }
+  try {
+    const docRef = doc(db, JWT_TOKEN_COLLECTION, JWT_TOKEN_DOC_ID);
+    await setDoc(docRef, {
+      token: token || "",
+      updatedAt: serverTimestamp(),
+      updatedBy: typeof window !== "undefined" ? localStorage.getItem("apna-cricket-device-id") || "unknown" : "unknown",
+    });
+    console.log("[JwtSync] ✅ JWT token saved to Firestore — all admin devices will sync");
+    // Also cache in localStorage for offline use
+    if (typeof window !== "undefined") {
+      if (token) localStorage.setItem("user_token", token);
+      else localStorage.removeItem("user_token");
+    }
+    return true;
+  } catch (err: any) {
+    console.error("[JwtSync] ❌ Failed to save JWT to Firestore:", err?.code || err?.message || err);
+    // Fall back to localStorage only
+    if (typeof window !== "undefined") {
+      if (token) localStorage.setItem("user_token", token);
+      else localStorage.removeItem("user_token");
+    }
+    return false;
+  }
+}
+
+/**
+ * Fetch JWT token from Firestore (central source of truth).
+ * Falls back to localStorage if Firestore unavailable.
+ */
+export async function fetchJwtTokenFromFirestore(): Promise<string> {
+  // Try localStorage first for instant display (while Firestore loads)
+  const cached = typeof window !== "undefined" ? (localStorage.getItem("user_token") || "") : "";
+
+  if (!isFirebaseReady() || !db) {
+    return cached;
+  }
+  try {
+    const snap = await getDoc(doc(db, JWT_TOKEN_COLLECTION, JWT_TOKEN_DOC_ID));
+    if (snap.exists()) {
+      const data = snap.data() as Record<string, any>;
+      const token = data.token || "";
+      // Update localStorage cache
+      if (typeof window !== "undefined") {
+        if (token) localStorage.setItem("user_token", token);
+        else localStorage.removeItem("user_token");
+      }
+      console.log("[JwtSync] ✅ Fetched JWT token from Firestore");
+      return token;
+    }
+    return cached;
+  } catch (err: any) {
+    console.error("[JwtSync] ❌ Failed to fetch JWT from Firestore:", err?.code || err?.message || err);
+    return cached;
+  }
+}
+
+/**
+ * Subscribe to JWT token changes in real-time.
+ * When ANY admin device saves a new token, ALL other devices
+ * receive the update INSTANTLY via onSnapshot.
+ *
+ * Returns an unsubscribe function.
+ */
+export function subscribeToJwtToken(callback: (token: string) => void): Unsubscribe {
+  if (!isFirebaseReady() || !db) {
+    console.warn("[JwtSync] Firebase not ready — real-time JWT sync disabled");
+    return () => {};
+  }
+  try {
+    const unsub = onSnapshot(
+      doc(db, JWT_TOKEN_COLLECTION, JWT_TOKEN_DOC_ID),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as Record<string, any>;
+          const token = data.token || "";
+          // Update localStorage cache
+          if (typeof window !== "undefined") {
+            if (token) localStorage.setItem("user_token", token);
+            else localStorage.removeItem("user_token");
+          }
+          callback(token);
+          console.log("[JwtSync] 📡 Real-time JWT token update received");
+        } else {
+          // Document deleted — token cleared
+          if (typeof window !== "undefined") {
+            localStorage.removeItem("user_token");
+          }
+          callback("");
+          console.log("[JwtSync] 📡 Real-time JWT token cleared");
+        }
+      },
+      (err) => {
+        console.error("[JwtSync] ❌ onSnapshot error:", err);
+      }
+    );
+    return unsub;
+  } catch (err) {
+    console.error("[JwtSync] ❌ Failed to subscribe:", err);
+    return () => {};
+  }
+}
