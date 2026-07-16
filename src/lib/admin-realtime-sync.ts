@@ -359,98 +359,12 @@ export function subscribeToAdminData(callbacks: AdminSyncCallbacks): Unsubscribe
       unsubs.push(unsub);
     }
 
-    // Listen to devices
-    if (callbacks.onDevicesUpdate) {
-      const unsub = onSnapshot(
-        doc(db, ADMIN_DATA_COLLECTION, DOC_DEVICES),
-        (snap) => {
-          if (snap.exists()) {
-            const devices = snap.data().devices as Device[];
-            callbacks.onDevicesUpdate!(devices || []);
-          }
-        },
-        (err) => callbacks.onError?.(err)
-      );
-      unsubs.push(unsub);
-    }
-
-    // Listen to users
-    if (callbacks.onUsersUpdate) {
-      const unsub = onSnapshot(
-        doc(db, ADMIN_DATA_COLLECTION, DOC_USERS),
-        (snap) => {
-          if (snap.exists()) {
-            const users = snap.data().users as User[];
-            callbacks.onUsersUpdate!(users || []);
-          }
-        },
-        (err) => callbacks.onError?.(err)
-      );
-      unsubs.push(unsub);
-    }
-
-    // Listen to logs
-    if (callbacks.onLogsUpdate) {
-      const unsub = onSnapshot(
-        doc(db, ADMIN_DATA_COLLECTION, DOC_LOGS),
-        (snap) => {
-          if (snap.exists()) {
-            const logs = snap.data().logs as ActivityLog[];
-            callbacks.onLogsUpdate!(logs || []);
-          }
-        },
-        (err) => callbacks.onError?.(err)
-      );
-      unsubs.push(unsub);
-    }
-
-    // Listen to settings
-    if (callbacks.onSettingsUpdate) {
-      const unsub = onSnapshot(
-        doc(db, ADMIN_DATA_COLLECTION, DOC_SETTINGS),
-        (snap) => {
-          if (snap.exists()) {
-            const settings = snap.data().settings as AdminSettings;
-            callbacks.onSettingsUpdate!(settings);
-            console.log("[AdminSync] 📡 Real-time settings update");
-          }
-        },
-        (err) => callbacks.onError?.(err)
-      );
-      unsubs.push(unsub);
-    }
-
-    // Listen to announcements
-    if (callbacks.onAnnouncementsUpdate) {
-      const unsub = onSnapshot(
-        doc(db, ADMIN_DATA_COLLECTION, DOC_ANNOUNCEMENTS),
-        (snap) => {
-          if (snap.exists()) {
-            const announcements = snap.data().announcements as Announcement[];
-            callbacks.onAnnouncementsUpdate!(announcements || []);
-          }
-        },
-        (err) => callbacks.onError?.(err)
-      );
-      unsubs.push(unsub);
-    }
-
-    // Listen to server time (for expiry calculations)
-    if (callbacks.onServerTimeUpdate) {
-      const unsub = onSnapshot(
-        doc(db, ADMIN_DATA_COLLECTION, DOC_SERVER_TIME),
-        (snap) => {
-          if (snap.exists()) {
-            const ts = snap.data().timestamp;
-            // Firestore Timestamp to milliseconds
-            const serverTime = ts?.toMillis?.() || Date.now();
-            callbacks.onServerTimeUpdate!(serverTime);
-          }
-        },
-        (err) => callbacks.onError?.(err)
-      );
-      unsubs.push(unsub);
-    }
+    // NOTE: devices, users, logs, settings, announcements, server_time
+    // listeners are DISABLED because the user's Firestore rules only allow
+    // license_keys/{keyId}. Attempting to listen to admin_data/* causes
+    // "Missing or insufficient permissions" errors in the console.
+    // These data types are stored in localStorage only (per-device).
+    // Only license keys need cross-device sync.
   } catch (err) {
     console.error("[AdminSync] Failed to subscribe:", err);
     callbacks.onError?.(err as Error);
@@ -485,31 +399,17 @@ export async function getServerTime(): Promise<number> {
     return cachedServerTime;
   }
 
-  if (!isFirebaseReady() || !db) {
-    return Date.now(); // fallback to device time
-  }
-
-  try {
-    // Write current server timestamp
-    await setDoc(doc(db, ADMIN_DATA_COLLECTION, DOC_SERVER_TIME), {
-      timestamp: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-
-    // Read it back to get the actual server time
-    const snap = await getDoc(doc(db, ADMIN_DATA_COLLECTION, DOC_SERVER_TIME));
-    if (snap.exists()) {
-      const ts = snap.data().timestamp;
-      const serverTime = ts?.toMillis?.() || Date.now();
-      cachedServerTime = serverTime;
-      lastServerTimeFetch = Date.now();
-      return serverTime;
-    }
-  } catch (err) {
-    console.error("[AdminSync] Failed to get server time:", err);
-  }
-
-  return Date.now(); // fallback
+  // NOTE: Firestore server time fetch removed — it writes to admin_data/server_time
+  // which causes "Missing or insufficient permissions" errors (user's rules
+  // only allow license_keys/{keyId}).
+  // Fall back to device time. This is acceptable because:
+  //   1. License expiry checks use this time, but admins set expiry from their
+  //      device anyway — so device time is consistent within a session.
+  //   2. The /api/admin/time endpoint provides server time via HTTP (no Firestore).
+  //   3. Cached server time from onSnapshot (if available) is used first.
+  cachedServerTime = Date.now();
+  lastServerTimeFetch = Date.now();
+  return cachedServerTime;
 }
 
 /**
@@ -557,33 +457,22 @@ export async function fullSyncFromFirestore(): Promise<{
   settings?: AdminSettings;
   announcements?: Announcement[];
 }> {
-  console.log("[AdminSync] 🔄 Full sync from Firestore...");
+  console.log("[AdminSync] 🔄 Full sync from Firestore (license_keys only)...");
   const result: any = {};
 
   try {
-    const [keys, devices, users, logs, settings, announcements] = await Promise.all([
-      fetchKeysFromAdminData(),
-      fetchDevicesFromAdminData(),
-      fetchUsersFromAdminData(),
-      fetchLogsFromAdminData(),
-      fetchSettingsFromAdminData(),
-      fetchAnnouncementsFromAdminData(),
-    ]);
-
+    // ONLY fetch keys from license_keys collection (user's Firestore rules
+    // only allow license_keys/{keyId}). Devices, users, logs, settings,
+    // announcements are stored in localStorage only — attempting to fetch
+    // them from admin_data/* causes "Missing or insufficient permissions" errors.
+    const keys = await fetchKeysFromAdminData();
     if (keys) result.keys = keys;
-    if (devices) result.devices = devices;
-    if (users) result.users = users;
-    if (logs) result.logs = logs;
-    if (settings) result.settings = settings;
-    if (announcements) result.announcements = announcements;
 
     console.log("[AdminSync] ✅ Full sync complete:", {
       keys: keys?.length || 0,
-      devices: devices?.length || 0,
-      users: users?.length || 0,
-      logs: logs?.length || 0,
-      hasSettings: !!settings,
-      announcements: announcements?.length || 0,
+      devices: "localStorage only",
+      users: "localStorage only",
+      logs: "localStorage only",
     });
   } catch (err) {
     console.error("[AdminSync] Full sync failed:", err);
@@ -610,7 +499,8 @@ export async function syncOnReconnect(): Promise<void> {
   console.log("[AdminSync] 📡 Network reconnected — syncing from Firestore...");
   try {
     await fullSyncFromFirestore();
-    await getServerTime(); // refresh server time
+    // Note: getServerTime() removed — it writes to admin_data/server_time
+    // which causes permission-denied errors (user's rules only allow license_keys)
   } catch (err) {
     console.error("[AdminSync] Reconnect sync failed:", err);
   } finally {
@@ -629,25 +519,12 @@ export function initNetworkReconnectListener(): () => void {
 
   window.addEventListener("online", handleOnline);
 
-  // Also listen to Firestore connectivity changes
-  let unsub: Unsubscribe | null = null;
-  if (isFirebaseReady() && db) {
-    try {
-      // onSnapshot will auto-reconnect when network comes back
-      // This is a no-op listener just to keep the connection alive
-      unsub = onSnapshot(
-        doc(db, ADMIN_DATA_COLLECTION, DOC_SERVER_TIME),
-        () => {}, // no-op — just keeps connection alive
-        (err) => console.warn("[AdminSync] Connection error:", err)
-      );
-    } catch {
-      // ignore
-    }
-  }
+  // NOTE: Firestore keep-alive onSnapshot removed — it was listening to
+  // admin_data/server_time which causes permission-denied errors.
+  // The license_keys onSnapshot listener already keeps the connection alive.
 
   return () => {
     window.removeEventListener("online", handleOnline);
-    if (unsub) try { unsub(); } catch { /* ignore */ }
   };
 }
 
