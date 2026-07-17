@@ -1881,8 +1881,8 @@ function ContestsTab() {
             );
           })()}
 
-          {/* Join Remaining Teams button — shown when some teams failed */}
-          {joinResult.status === "partial" && joinResult.joinResults && (() => {
+          {/* Join Remaining Teams button — shown when some teams failed (partial or fail status) */}
+          {(joinResult.status === "partial" || joinResult.status === "fail") && joinResult.joinResults && !joinResult.needsReauth && (() => {
             const failedTeamIds = joinResult.joinResults
               .filter((r: any) => !r.success)
               .map((r: any) => Number(r.teamId))
