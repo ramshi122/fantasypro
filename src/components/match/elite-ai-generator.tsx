@@ -213,10 +213,10 @@ export function EliteAIGenerator({
                 <div className="mb-4 text-left">
                   <label className="text-[11px] font-bold text-foreground mb-2 block flex items-center gap-1">
                     <Layers className="w-3 h-3 text-amber-500" />
-                    Team Count (1 to 40)
+                    Team Count (1 to 150)
                   </label>
                   <div className="grid grid-cols-5 gap-1.5">
-                    {[1, 5, 10, 15, 20, 25, 30, 35, 40].map((n) => (
+                    {[1, 5, 10, 15, 20, 25, 30, 35, 40, 50, 75, 100, 150].map((n) => (
                       <button
                         key={n}
                         onClick={() => setSelectedCount(n)}

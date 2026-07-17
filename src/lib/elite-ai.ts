@@ -1823,8 +1823,8 @@ export function generateEliteTeams(
 ): EliteRankedTeam[] {
   const startTime = Date.now();
 
-  // Clamp count to 1-40
-  const teamCount = Math.max(1, Math.min(40, Math.floor(count)));
+  // Clamp count to 1-150 (was 1-40, now supports up to 150 teams)
+  const teamCount = Math.max(1, Math.min(150, Math.floor(count)));
 
   const pool = players.filter((p) => p.name && credits(p) > 0);
 

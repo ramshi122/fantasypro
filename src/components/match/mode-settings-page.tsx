@@ -303,7 +303,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
         <div>
           <p className="text-[11px] font-bold text-foreground mb-2">Team Count</p>
           <div className="grid grid-cols-4 gap-1.5">
-            {[5, 10, 20, 40, 50, 100, 200, 500].map(n => (
+            {[1, 5, 10, 20, 40, 50, 75, 100, 150, 200, 300, 500].map(n => (
               <button key={n} onClick={() => setTeamCount(n as SweepCount)} className={cn("h-9 rounded-lg font-bold text-xs border-2", teamCount === n ? "bg-gradient-to-r from-violet-600 to-purple-600 text-white border-transparent" : "bg-white dark:bg-card border-violet-100 dark:border-violet-900/30 text-foreground")}>{n}</button>
             ))}
           </div>

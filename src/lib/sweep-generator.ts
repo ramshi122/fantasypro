@@ -22,8 +22,8 @@
 import type { MatchPlayer, TeamRow } from "./api";
 import { roleFromPlayerType } from "./format";
 
-export type SweepCount = 10 | 20 | 40 | 50 | 100 | 200 | 300 | 400 | 500;
-export const SWEEP_OPTIONS: SweepCount[] = [10, 20, 40, 50, 100, 200, 300, 400, 500];
+export type SweepCount = 1 | 5 | 10 | 20 | 40 | 50 | 75 | 100 | 150 | 200 | 300 | 400 | 500;
+export const SWEEP_OPTIONS: SweepCount[] = [1, 5, 10, 20, 40, 50, 75, 100, 150, 200, 300, 400, 500];
 
 export interface SweepProgress {
   generated: number;
