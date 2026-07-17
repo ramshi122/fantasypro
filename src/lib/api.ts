@@ -1559,26 +1559,45 @@ export async function bulkDirectTransfer(
   let successCount = 0;
   let failCount = 0;
 
-  for (let i = 0; i < teams.length; i++) {
-    const t = teams[i];
-    const res = await generateDirectTransferLink({
-      matchId,
-      matchDbId,
-      playerIds: t.playerIds,
-      captainId: t.captainId,
-      viceCaptainId: t.viceCaptainId,
-    });
-    if (res.status === "success" && res.link) {
-      successCount++;
-      results.push({ teamNo: t.teamNo, success: true });
-      transferLinks.push({ teamNo: t.teamNo, link: res.link });
-    } else {
-      failCount++;
-      results.push({ teamNo: t.teamNo, success: false, message: res.message });
-      transferLinks.push({ teamNo: t.teamNo });
+  // PERFORMANCE: Process in parallel batches of 3 (was sequential 1-at-a-time)
+  // Each transfer takes 1-3s network time. Sequential 40 teams = 40-120s.
+  // Parallel batches of 3 = ~13-40s (3x faster).
+  // We don't use full parallel (Promise.all) because the backend may rate-limit.
+  const BATCH_SIZE = 3;
+  let completed = 0;
+
+  for (let i = 0; i < teams.length; i += BATCH_SIZE) {
+    const batch = teams.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(async (t) => {
+        const res = await generateDirectTransferLink({
+          matchId,
+          matchDbId,
+          playerIds: t.playerIds,
+          captainId: t.captainId,
+          viceCaptainId: t.viceCaptainId,
+        });
+        return { t, res };
+      })
+    );
+
+    for (const { t, res } of batchResults) {
+      if (res.status === "success" && res.link) {
+        successCount++;
+        results.push({ teamNo: t.teamNo, success: true });
+        transferLinks.push({ teamNo: t.teamNo, link: res.link });
+      } else {
+        failCount++;
+        results.push({ teamNo: t.teamNo, success: false, message: res.message });
+        transferLinks.push({ teamNo: t.teamNo });
+      }
+      completed++;
+      onProgress?.(completed, teams.length);
     }
-    onProgress?.(i + 1, teams.length);
-    if (i < teams.length - 1) await new Promise((r) => setTimeout(r, 200));
+    // Small delay between batches to avoid overwhelming backend
+    if (i + BATCH_SIZE < teams.length) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
   }
 
   return { totalAttempted: teams.length, successCount, failCount, results, transferLinks };
@@ -1674,99 +1693,125 @@ export async function bulkTransferToLinkedAccount(
     console.log("[bulkTransfer] Skipping pre-verify (default) — reactive auth detection in /api/transfer");
   }
 
-  for (let i = 0; i < teams.length; i++) {
-    const t = teams[i];
-    // FIX: If replaceMode but no existing team ID for this index, fall back to "new"
-    const hasExistingId = params.replaceMode && params.existingTeamIds && i < params.existingTeamIds.length && params.existingTeamIds[i];
-    const isReplace = !!hasExistingId;
-    const numericPlayers = t.playerIds.map((id) => Number(id)).filter((n) => !isNaN(n));
-    const numericCaptain = Number(t.captainId);
-    const numericVC = Number(t.viceCaptainId);
+  // PERFORMANCE: Process in parallel batches of 3 (was sequential 1-at-a-time)
+  // Each transfer takes 1-3s network time. Sequential 40 teams = 40-120s + delays.
+  // Parallel batches of 3 = ~13-40s (3x faster).
+  // We don't use full parallel (Promise.all all teams) because:
+  //   1. Backend may rate-limit too many concurrent requests
+  //   2. We need to stop immediately on auth failure (needsReauth)
+  // Batch of 3 is the sweet spot — fast but safe.
+  const BATCH_SIZE = 3;
+  let i = 0;
+  while (i < teams.length) {
+    const batch = teams.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(async (t, batchIdx) => {
+        const realIdx = i + batchIdx;
+        // FIX: If replaceMode but no existing team ID for this index, fall back to "new"
+        const hasExistingId = params.replaceMode && params.existingTeamIds && realIdx < params.existingTeamIds.length && params.existingTeamIds[realIdx];
+        const isReplace = !!hasExistingId;
+        const numericPlayers = t.playerIds.map((id) => Number(id)).filter((n) => !isNaN(n));
+        const numericCaptain = Number(t.captainId);
+        const numericVC = Number(t.viceCaptainId);
 
-    const body: Record<string, unknown> = {
-      matchId: params.matchId,
-      captain: isNaN(numericCaptain) ? t.captainId : numericCaptain,
-      vice_captain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
-      vicecaptain: isNaN(numericVC) ? t.viceCaptainId : numericVC, // Original APK format
-      players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
-      fantasyApp: params.fantasyApp,
-      authToken: params.authToken,
-      sportIndex: params.sportIndex ?? 0,
-      type: isReplace ? "edit" : "new",
-    };
-    if (isReplace && params.existingTeamIds) body.id = params.existingTeamIds[i];
-    if (params.fantasyApp === "my11circle") {
-      body.my11circleChallenge = params.my11circleChallenge || null;
-      body.my11circleUserId = params.my11circleUserId || null;
-      body.my11circleMobile = params.mobileNumber || null;
-    }
+        const body: Record<string, unknown> = {
+          matchId: params.matchId,
+          captain: isNaN(numericCaptain) ? t.captainId : numericCaptain,
+          vice_captain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
+          vicecaptain: isNaN(numericVC) ? t.viceCaptainId : numericVC, // Original APK format
+          players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
+          fantasyApp: params.fantasyApp,
+          authToken: params.authToken,
+          sportIndex: params.sportIndex ?? 0,
+          type: isReplace ? "edit" : "new",
+        };
+        if (isReplace && params.existingTeamIds) body.id = params.existingTeamIds[realIdx];
+        if (params.fantasyApp === "my11circle") {
+          body.my11circleChallenge = params.my11circleChallenge || null;
+          body.my11circleUserId = params.my11circleUserId || null;
+          body.my11circleMobile = params.mobileNumber || null;
+        }
 
-    try {
-      // Call our server-side /api/transfer proxy instead of hitting the backend directly.
-      // The proxy handles:
-      //   - Multi-endpoint fallback (dream11: /api/fantasy/add-team → /api/classic/dream11/addteam)
-      //   - Bug-aware success detection (HTTP 201 + "Something Went Wrong!" = tentative success)
-      //   - Token expiry detection (returns needsReauth: true)
-      //   - Edit → Add fallback if edit fails on all endpoints
-      //   - AES decryption of response data
-      const proxyBody = {
-        ...body,
-        skipPreVerify: true, // we already did pre-verify above; skip to avoid double call
-      };
-      const proxyRes = await fetch(`/api/transfer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(proxyBody),
-        cache: "no-store",
-        signal: AbortSignal.timeout(45000), // 45s — server proxy has its own 30s timeout per endpoint
-      });
-      const res = await proxyRes.json() as ApiResponse & {
-        needsReauth?: boolean;
-        confidence?: "definite" | "tentative";
-        code?: string;
-        backendError?: string;
-      };
+        try {
+          const proxyBody = {
+            ...body,
+            skipPreVerify: true,
+          };
+          const proxyRes = await fetch(`/api/transfer`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(proxyBody),
+            cache: "no-store",
+            signal: AbortSignal.timeout(45000),
+          });
+          const res = await proxyRes.json() as ApiResponse & {
+            needsReauth?: boolean;
+            confidence?: "definite" | "tentative";
+            code?: string;
+            backendError?: string;
+          };
+          return { t, res, error: null as string | null };
+        } catch (err: any) {
+          return { t, res: null, error: err?.message || "Network error" };
+        }
+      })
+    );
 
-      if (res.status === "success") {
-        successCount++;
-        const confidence = res.confidence === "tentative" ? " (tentative)" : "";
-        results.push({ teamNo: t.teamNo, success: true, message: res.message || `Transferred${confidence}` });
-        transferLinks.push({ teamNo: t.teamNo });
-      } else if (res.needsReauth) {
-        // Token expired — record the failure with the re-auth signal
+    // Process batch results — check for needsReauth to bail out early
+    let shouldBail = false;
+    let bailMsg = "";
+    for (const { t, res, error } of batchResults) {
+      if (error) {
         failCount++;
-        const msg = (res.error as string) || (res.message as string) || "Token expired — re-link via OTP";
+        results.push({ teamNo: t.teamNo, success: false, message: error });
+        transferLinks.push({ teamNo: t.teamNo });
+      } else if (res!.status === "success") {
+        successCount++;
+        const confidence = res!.confidence === "tentative" ? " (tentative)" : "";
+        results.push({ teamNo: t.teamNo, success: true, message: res!.message || `Transferred${confidence}` });
+        transferLinks.push({ teamNo: t.teamNo });
+      } else if (res!.needsReauth) {
+        // Token expired — bail out immediately
+        failCount++;
+        const msg = (res!.error as string) || (res!.message as string) || "Token expired — re-link via OTP";
         results.push({ teamNo: t.teamNo, success: false, message: msg });
         transferLinks.push({ teamNo: t.teamNo });
-        // Bail out early on confirmed token expiry — no point trying remaining teams
-        // (they'll all fail with the same expired token)
-        for (let j = i + 1; j < teams.length; j++) {
-          failCount++;
-          results.push({ teamNo: teams[j].teamNo, success: false, message: "Skipped — token expired" });
-          transferLinks.push({ teamNo: teams[j].teamNo });
-          onProgress?.(j + 1, teams.length);
-        }
-        return {
-          totalAttempted: teams.length,
-          successCount,
-          failCount,
-          results,
-          transferLinks,
-          needsReauth: true,
-          blockReason: msg,
-        };
+        shouldBail = true;
+        bailMsg = msg;
       } else {
         failCount++;
-        results.push({ teamNo: t.teamNo, success: false, message: (res.error as string) || (res.message as string) || "Failed" });
+        results.push({ teamNo: t.teamNo, success: false, message: (res!.error as string) || (res!.message as string) || "Failed" });
         transferLinks.push({ teamNo: t.teamNo });
       }
-    } catch (err: any) {
-      failCount++;
-      results.push({ teamNo: t.teamNo, success: false, message: err?.message || "Network error" });
-      transferLinks.push({ teamNo: t.teamNo });
+      onProgress?.(results.length, teams.length);
     }
-    onProgress?.(i + 1, teams.length);
-    if (i < teams.length - 1) await new Promise((r) => setTimeout(r, delay));
+
+    if (shouldBail) {
+      // Mark remaining teams as skipped — token expired, no point trying
+      const processedCount = results.length;
+      for (let j = processedCount; j < teams.length; j++) {
+        failCount++;
+        results.push({ teamNo: teams[j].teamNo, success: false, message: "Skipped — token expired" });
+        transferLinks.push({ teamNo: teams[j].teamNo });
+        onProgress?.(j + 1, teams.length);
+      }
+      return {
+        totalAttempted: teams.length,
+        successCount,
+        failCount,
+        results,
+        transferLinks,
+        needsReauth: true,
+        blockReason: bailMsg,
+      };
+    }
+
+    i += BATCH_SIZE;
+    // Small delay between batches (was per-team delay of 200-500ms)
+    // Now: 100ms per batch of 3 = ~33ms per team effective (6-15x less delay)
+    if (i < teams.length) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
   }
 
   return { totalAttempted: teams.length, successCount, failCount, results, transferLinks };

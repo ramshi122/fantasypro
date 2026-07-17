@@ -1955,6 +1955,12 @@ export function generateEliteTeams(
 
     // === MAX WIN TEAM: Pick TOP S-tier players by hack-boosted EFV ===
     if (isMaxWin) {
+      // PERFORMANCE: Pre-compute hack-boosted EFV for ALL players in this role ONCE.
+      // Previously: sort comparator called calculatePlayerEFV() + calculateHackScores()
+      // + getHackTierMultiplier() on EVERY comparison = O(N log N) × 3 heavy calls
+      // per comparison. For 30 players × log(30) ≈ 150 comparisons × 3 calls = 450
+      // heavy computations per role × 4 roles = 1800 per MAX WIN team.
+      // Now: 30 computations per role × 4 roles = 120 total. ~15x faster.
       for (const role of ["WK", "BAT", "AR", "BOWL"] as const) {
         const need = cfg[role];
         const poolForRole = byRole[role];
@@ -1964,30 +1970,23 @@ export function generateEliteTeams(
           const borrowed = borrow.slice(0, need - poolForRole.length);
           team.push(...poolForRole.slice(0, poolForRole.length), ...borrowed);
         } else {
-          // Sort by hack-boosted EFV (highest first) — pick the BEST players
-          const sortedByHackEFV = [...poolForRole].sort((a, b) => {
-            const efvA = calculatePlayerEFV(a) * getHackTierMultiplier(
-              calculateHackScores({
-                id: String(a.player_fixed_id ?? a.pl_id ?? a.pid ?? a.name ?? ""),
-                name: a.name || "",
-                team: a.team_name || "",
-                roleShort: role,
-                wicketKeeper: role === "WK",
-              }).tier
-            );
-            const efvB = calculatePlayerEFV(b) * getHackTierMultiplier(
-              calculateHackScores({
-                id: String(b.player_fixed_id ?? b.pl_id ?? b.pid ?? b.name ?? ""),
-                name: b.name || "",
-                team: b.team_name || "",
-                roleShort: role,
-                wicketKeeper: role === "WK",
-              }).tier
-            );
-            return efvB - efvA;
+          // Compute hack-boosted EFV ONCE per player, then sort by cached value
+          const withHackEFV = poolForRole.map((p) => {
+            const baseEFV = calculatePlayerEFV(p);
+            const hackScores = calculateHackScores({
+              id: String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? ""),
+              name: p.name || "",
+              team: p.team_name || "",
+              roleShort: role,
+              wicketKeeper: role === "WK",
+            });
+            const hackMultiplier = getHackTierMultiplier(hackScores.tier);
+            return { player: p, hackEFV: baseEFV * hackMultiplier };
           });
+          // Sort by cached hack-boosted EFV (descending) — no recomputation
+          withHackEFV.sort((a, b) => b.hackEFV - a.hackEFV);
           // Pick top N players (NO shuffle — best of the best)
-          team.push(...sortedByHackEFV.slice(0, need));
+          team.push(...withHackEFV.slice(0, need).map((x) => x.player));
         }
       }
 
