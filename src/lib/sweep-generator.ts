@@ -172,6 +172,60 @@ function teamFingerprint(players: MatchPlayer[]): string {
 
 type TeamType = "safe" | "balanced" | "differential";
 
+// ============================================================
+// PERFORMANCE: Pre-computed lookup structures (built ONCE per generateSweep call)
+// These replace expensive repeated filter/map/find operations inside loops.
+// ============================================================
+interface CachedLookups {
+  byRole: { WK: RankedPlayer[]; BAT: RankedPlayer[]; AR: RankedPlayer[]; BOWL: RankedPlayer[] };
+  efvMap: Map<string, number>;          // playerId → EFV (for C/VC sort)
+  roleMap: Map<string, "WK" | "BAT" | "AR" | "BOWL">; // playerId → role
+  teamMap: Map<string, string>;          // playerId → teamName
+  // Pre-shuffled pools per role per rotation seed (memoized)
+  shuffleCache: Map<string, RankedPlayer[]>;
+}
+
+/**
+ * Build all lookup structures ONCE — reused across all team generations.
+ * This replaces O(N) filter/map calls inside loops with O(1) Map lookups.
+ */
+function buildLookups(ranked: RankedPlayer[]): CachedLookups {
+  const byRole = {
+    WK: ranked.filter((r) => r.role === "WK"),
+    BAT: ranked.filter((r) => r.role === "BAT"),
+    AR: ranked.filter((r) => r.role === "AR"),
+    BOWL: ranked.filter((r) => r.role === "BOWL"),
+  };
+  const efvMap = new Map<string, number>();
+  const roleMap = new Map<string, "WK" | "BAT" | "AR" | "BOWL">();
+  const teamMap = new Map<string, string>();
+  for (const r of ranked) {
+    efvMap.set(r.playerId, r.efv);
+    roleMap.set(r.playerId, r.role);
+    teamMap.set(r.playerId, r.teamName);
+  }
+  return { byRole, efvMap, roleMap, teamMap, shuffleCache: new Map() };
+}
+
+/**
+ * Deterministic shuffle — memoized per (role, seed) combination.
+ * Previously: shuffled pool on every buildStrategicTeam call.
+ * Now: shuffles are cached, reuse same shuffled pool for same seed.
+ */
+function memoizedShuffle(pool: RankedPlayer[], seed: number, cache: Map<string, RankedPlayer[]>, cacheKey: string): RankedPlayer[] {
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+  const shuffled = [...pool];
+  let s = (seed * 2654435761) % 2147483647;
+  for (let j = shuffled.length - 1; j > 0; j--) {
+    s = (s * 1103515245 + 12345) % 2147483647;
+    const k = s % (j + 1);
+    [shuffled[j], shuffled[k]] = [shuffled[k], shuffled[j]];
+  }
+  cache.set(cacheKey, shuffled);
+  return shuffled;
+}
+
 /**
  * Build a team using STRATEGIC selection — NO Math.random.
  *
@@ -188,7 +242,8 @@ function buildStrategicTeam(
   type: TeamType,
   team1Name: string,
   team2Name: string,
-  rotationOffset: number
+  rotationOffset: number,
+  lookups?: CachedLookups
 ): MatchPlayer[] | null {
   const availWK = byRole.WK.length;
   const availBAT = byRole.BAT.length;
@@ -242,16 +297,23 @@ function buildStrategicTeam(
     let chosen: RankedPlayer[] = [];
 
     // FIX: Deterministic shuffle based on rotationOffset for maximum diversity
-    // Previously: slice(start, start+need) only shifted start position
-    // Now: shuffle pool deterministically, then pick top N
-    const shuffled = [...pool];
-    // Deterministic shuffle using rotationOffset as seed
-    let seed = (rotationOffset * 2654435761) % 2147483647;
-    for (let j = shuffled.length - 1; j > 0; j--) {
-      seed = (seed * 1103515245 + 12345) % 2147483647;
-      const k = seed % (j + 1);
-      [shuffled[j], shuffled[k]] = [shuffled[k], shuffled[j]];
-    }
+    // PERFORMANCE: Use memoized shuffle — same seed → same shuffled pool
+    // Previously: shuffled pool on EVERY buildStrategicTeam call (expensive)
+    // Now: shuffles are cached per (role, rotationOffset) combination
+    const shuffleKey = `${role}_${rotationOffset}`;
+    const shuffled = lookups
+      ? memoizedShuffle(pool, rotationOffset, lookups.shuffleCache, shuffleKey)
+      : (() => {
+          // Fallback (no cache) — inline shuffle
+          const s = [...pool];
+          let seed = (rotationOffset * 2654435761) % 2147483647;
+          for (let j = s.length - 1; j > 0; j--) {
+            seed = (seed * 1103515245 + 12345) % 2147483647;
+            const k = seed % (j + 1);
+            [s[j], s[k]] = [s[k], s[j]];
+          }
+          return s;
+        })();
 
     if (type === "safe") {
       // Safe: pick from shuffled pool — NO EFV sort (that cancels the shuffle!)
@@ -348,10 +410,13 @@ function pickCaptainVCDeterministic(
   players: MatchPlayer[],
   allRanked: RankedPlayer[],
   teamIndex: number,
-  usedCVPairs: Set<string>
+  usedCVPairs: Set<string>,
+  cachedEfvMap?: Map<string, number>
 ): { captain: string; viceCaptain: string } | null {
-  // Sort team players by EFV (use allRanked to get EFV)
-  const efvMap = new Map(allRanked.map((r) => [r.playerId, r.efv]));
+  // PERFORMANCE: Use cached efvMap if available (built ONCE per generateSweep)
+  // Previously: rebuilt Map from allRanked on EVERY C/VC pick = O(N) per team
+  // Now: O(1) lookup using pre-built map
+  const efvMap = cachedEfvMap ?? new Map(allRanked.map((r) => [r.playerId, r.efv]));
   const sorted = [...players].sort((a, b) => {
     const efvA = efvMap.get(String(a.player_fixed_id ?? a.pid ?? a.name)) ?? 0;
     const efvB = efvMap.get(String(b.player_fixed_id ?? b.pid ?? b.name)) ?? 0;
@@ -411,6 +476,20 @@ export async function generateSweep(
   mode?: "smart" | "gl" | "advanced" | "combination"
 ): Promise<SweepResult> {
   const startedAt = Date.now();
+  // PERFORMANCE: Track each phase timing for diagnostics
+  const perfLog = {
+    cleanPoolMs: 0,
+    rankPlayersMs: 0,
+    buildLookupsMs: 0,
+    generationMs: 0,
+    similarityCheckMs: 0,
+    cvPickMs: 0,
+    teamsRequested: count,
+    teamsGenerated: 0,
+    attempts: 0,
+    duplicates: 0,
+  };
+
   onProgress?.({
     generated: 0,
     total: count,
@@ -419,7 +498,10 @@ export async function generateSweep(
   });
 
   // 1. Clean and rank players by EFV
+  const cleanStart = Date.now();
   const cleaned = cleanPlayerPool(players);
+  perfLog.cleanPoolMs = Date.now() - cleanStart;
+
   if (cleaned.length < 11) {
     return {
       teams: [],
@@ -432,15 +514,17 @@ export async function generateSweep(
     };
   }
 
+  const rankStart = Date.now();
   const ranked = rankPlayers(cleaned);
+  perfLog.rankPlayersMs = Date.now() - rankStart;
 
-  // Group by role (sorted by EFV descending)
-  const byRole = {
-    WK: ranked.filter((r) => r.role === "WK"),
-    BAT: ranked.filter((r) => r.role === "BAT"),
-    AR: ranked.filter((r) => r.role === "AR"),
-    BOWL: ranked.filter((r) => r.role === "BOWL"),
-  };
+  // PERFORMANCE: Build all lookup structures ONCE — reused across all teams
+  // Previously: filter() called per team for role grouping, EFV map rebuilt per C/VC pick
+  // Now: O(1) lookups via Maps
+  const lookupStart = Date.now();
+  const lookups = buildLookups(ranked);
+  const byRole = lookups.byRole;
+  perfLog.buildLookupsMs = Date.now() - lookupStart;
 
   console.log("[generator] Player pool:", {
     total: ranked.length,
@@ -450,6 +534,7 @@ export async function generateSweep(
     BOWL: byRole.BOWL.length,
     topEFV: ranked.slice(0, 5).map((r) => `${r.player.name} (${r.efv.toFixed(1)})`),
   });
+  console.log(`[perf] cleanPool: ${perfLog.cleanPoolMs}ms, rankPlayers: ${perfLog.rankPlayersMs}ms, buildLookups: ${perfLog.buildLookupsMs}ms`);
 
   onProgress?.({
     generated: 0,
@@ -461,6 +546,10 @@ export async function generateSweep(
   const teams: TeamRow[] = [];
   const usedFingerprints = new Set<string>();
   const usedCVPairs = new Set<string>();
+  // PERFORMANCE: Cache existing team player ID sets for O(1) similarity check
+  // Previously: rebuilt Set for every existing team on every new team = O(N²)
+  // Now: built once per team, stored in array
+  const existingTeamIdSets: Set<string>[] = [];
   let attempts = 0;
   let duplicates = 0;
   const maxAttempts = count * 50;
@@ -509,7 +598,8 @@ export async function generateSweep(
 
       // Rotation offset = i * 3 + tries (deterministic, varies picks)
       const rotationOffset = i * 3 + tries;
-      const candidate = buildStrategicTeam(byRole, strategy, team1Name, team2Name, rotationOffset);
+      // PERFORMANCE: pass lookups to enable memoized shuffle cache
+      const candidate = buildStrategicTeam(byRole, strategy, team1Name, team2Name, rotationOffset, lookups);
       if (!candidate) continue;
       if (!isValidRoleBalance(candidate)) continue;
       if (!isValidCredits(candidate)) continue;
@@ -523,64 +613,79 @@ export async function generateSweep(
     }
 
     if (!team) continue;
-    usedFingerprints.add(teamFingerprint(team));
+    // PERFORMANCE: reuse fingerprint instead of recomputing
+    let teamFp = teamFingerprint(team);
+    usedFingerprints.add(teamFp);
 
-    // SIMILARITY CHECK — ensure at least 3 players differ from existing teams
-    // This prevents teams from looking almost identical
+    // PERFORMANCE: Build current team's ID set ONCE
     const currentTeamIds = new Set(team.map((p) => String(p.player_fixed_id ?? p.pid ?? p.name)));
+
+    // SIMILARITY CHECK — O(N) where N = number of existing teams (was O(N × M))
+    // PERFORMANCE: use cached existingTeamIdSets instead of rebuilding Set per team
+    const simStart = Date.now();
     let tooSimilar = false;
-    for (const existing of teams) {
-      const existingIds = new Set((existing.players || []).map((p: any) =>
-        String((p as any).player_fixed_id ?? (p as any).pid ?? (p as any).name ?? "")
-      ));
+    for (let eIdx = 0; eIdx < existingTeamIdSets.length; eIdx++) {
+      const existingIds = existingTeamIdSets[eIdx];
       let common = 0;
+      // Iterate smaller set for performance + early exit
       for (const id of currentTeamIds) {
-        if (existingIds.has(id)) common++;
+        if (existingIds.has(id)) {
+          common++;
+          if (common >= 9) break; // early exit
+        }
       }
-      // If 9+ players same, too similar — try to swap 2 players
       if (common >= 9) {
         tooSimilar = true;
         break;
       }
     }
+    perfLog.similarityCheckMs += Date.now() - simStart;
+
     if (tooSimilar) {
       // Swap 2 players from different roles for diversity
+      // PERFORMANCE: use lookups.roleMap for O(1) role lookup (was O(N) find)
       let swapsMade = 0;
+      const teamPlayerIds = new Set(team.map((p) => String(p.player_fixed_id ?? p.pid ?? p.name)));
       for (const role of ["BAT", "BOWL", "AR", "WK"] as const) {
         if (swapsMade >= 2) break;
         const swapIdx = team.findIndex((p) => {
-          const r = String(p.player_type || "").toLowerCase();
-          if (role === "WK") return r.includes("keeper") || r.includes("wk") || p.role === 0;
-          if (role === "AR") return r.includes("all") || p.role === 2;
-          if (role === "BOWL") return r.includes("bowl") || p.role === 3;
-          return r.includes("bat") || p.role === 1;
+          const pid = String(p.player_fixed_id ?? p.pid ?? p.name);
+          return lookups.roleMap.get(pid) === role;
         });
         if (swapIdx >= 0) {
-          const rolePool = ranked.filter((r) => r.role === role);
-          const alt = rolePool.find((rp) =>
-            !team.find((x) => String(x.player_fixed_id ?? x.pid) === String(rp.player.player_fixed_id ?? rp.player.pid)) &&
-            !teams.some((t) =>
-              (t.players || []).some((tp: any) =>
-                String((tp as any).player_fixed_id ?? (tp as any).pid) === String(rp.player.player_fixed_id ?? rp.player.pid)
-              )
-            )
-          );
+          const rolePool = byRole[role];
+          // PERFORMANCE: use pre-built teamPlayerIds set + existingTeamIdSets (no nested .some)
+          let alt: RankedPlayer | null = null;
+          for (const rp of rolePool) {
+            const rpId = rp.playerId;
+            if (teamPlayerIds.has(rpId)) continue;
+            // Check if player is in any existing team
+            let inExisting = false;
+            for (const exSet of existingTeamIdSets) {
+              if (exSet.has(rpId)) { inExisting = true; break; }
+            }
+            if (!inExisting) { alt = rp; break; }
+          }
           if (alt) {
             team[swapIdx] = alt.player;
+            teamPlayerIds.add(alt.playerId);
             swapsMade++;
           }
         }
       }
       // Re-check fingerprint after swaps
-      const newFp = teamFingerprint(team);
-      if (usedFingerprints.has(newFp)) {
+      teamFp = teamFingerprint(team);
+      if (usedFingerprints.has(teamFp)) {
         duplicates++;
         continue;
       }
-      usedFingerprints.add(newFp);
+      usedFingerprints.add(teamFp);
+      // Update currentTeamIds after swaps
+      currentTeamIds.clear();
+      for (const p of team) currentTeamIds.add(String(p.player_fixed_id ?? p.pid ?? p.name));
     }
 
-    // Pick C/VC (deterministic)
+    // Pick C/VC (deterministic) — PERFORMANCE: pass cached efvMap
     onProgress?.({
       generated: i,
       total: count,
@@ -588,7 +693,9 @@ export async function generateSweep(
       message: `Rotating C/VC for team ${i + 1}/${count} — ${strategy}...`,
     });
 
-    const cv = pickCaptainVCDeterministic(team, ranked, i, usedCVPairs);
+    const cvStart = Date.now();
+    const cv = pickCaptainVCDeterministic(team, ranked, i, usedCVPairs, lookups.efvMap);
+    perfLog.cvPickMs += Date.now() - cvStart;
     if (!cv) continue;
 
     const teamRow: TeamRow = {
@@ -620,6 +727,8 @@ export async function generateSweep(
       type: `sweep-${strategy}`,
     };
     teams.push(teamRow);
+    // PERFORMANCE: cache this team's ID set for future similarity checks
+    existingTeamIdSets.push(new Set(currentTeamIds));
 
     if (i > 0 && i % CHUNK === 0) {
       onProgress?.({
@@ -628,9 +737,25 @@ export async function generateSweep(
         phase: "selecting",
         message: `Generated ${i + 1}/${count} strategic teams...`,
       });
+      // Yield to UI thread to prevent freeze
       await new Promise((r) => setTimeout(r, 0));
     }
   }
+
+  // PERFORMANCE: Log generation phase timing
+  perfLog.generationMs = Date.now() - startedAt - perfLog.cleanPoolMs - perfLog.rankPlayersMs - perfLog.buildLookupsMs;
+  perfLog.teamsGenerated = teams.length;
+  perfLog.duplicates = duplicates;
+  perfLog.attempts = attempts;
+  console.log(`[perf] Generation breakdown for ${count} teams:`);
+  console.log(`  Total: ${Date.now() - startedAt}ms`);
+  console.log(`  Clean pool: ${perfLog.cleanPoolMs}ms`);
+  console.log(`  Rank players: ${perfLog.rankPlayersMs}ms`);
+  console.log(`  Build lookups: ${perfLog.buildLookupsMs}ms`);
+  console.log(`  Generation loop: ${perfLog.generationMs}ms`);
+  console.log(`    ├─ Similarity checks: ${perfLog.similarityCheckMs.toFixed(0)}ms`);
+  console.log(`    └─ C/VC picks: ${perfLog.cvPickMs.toFixed(0)}ms`);
+  console.log(`  Teams: ${teams.length}/${count} (attempts: ${attempts}, duplicates: ${duplicates})`);
 
   onProgress?.({
     generated: teams.length,
