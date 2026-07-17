@@ -1392,19 +1392,22 @@ function ContestsTab() {
   }
 
   // Join a contest — uses /api/contest/join which now batches + shuffles
-  async function handleJoinContest(cid?: string) {
+  async function handleJoinContest(cid?: string, specificTeamIds?: number[]) {
     const cId = cid || contestId.trim();
     if (!authToken.trim() || !matchId.trim() || !cId) {
       toast.error("Auth token, Match ID, Contest ID required");
       return;
     }
-    const ids = teamIds.split(",").map(t => parseInt(t.trim())).filter(n => !isNaN(n));
+    // Use specificTeamIds if provided (for "Join Remaining" button), else parse from teamIds field
+    const ids = specificTeamIds && specificTeamIds.length > 0
+      ? specificTeamIds
+      : teamIds.split(",").map(t => parseInt(t.trim())).filter(n => !isNaN(n));
     if (ids.length === 0) {
       toast.error("Team IDs required (comma-separated) — or click 'Fetch My Teams'");
       return;
     }
     setLoading(true);
-    setJoinResult(null);
+    if (!specificTeamIds) setJoinResult(null); // Keep previous result when joining remaining
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (jwtToken.trim()) headers.Authorization = `Bearer ${jwtToken.trim()}`;
@@ -1421,19 +1424,65 @@ function ContestsTab() {
         }),
       });
       const data = await res.json();
-      setJoinResult(data);
-      if (data.status === "success" || data.status === "partial") {
-        const s = data.summary || {};
-        const batchesInfo = s.batches ? ` · ${s.batches} batches · shuffled` : "";
-        if (data.status === "success") {
-          toast.success(`✓ Joined ${s.successCount}/${s.totalCount || ids.length} teams${batchesInfo}`);
-        } else {
-          toast.warning(`⚠ Partial: ${s.successCount} joined, ${s.failedCount} failed${batchesInfo}`);
+
+      // If joining remaining teams, merge results with previous joinResult
+      if (specificTeamIds && joinResult) {
+        const prevSuccess = joinResult.summary?.successCount || 0;
+        const newSuccess = data.summary?.successCount || 0;
+        const newFailed = data.summary?.failedCount || 0;
+        const totalAttempted = (joinResult.summary?.totalCount || 0);
+
+        // Merge joinResults arrays — update failed teams to success if they joined now
+        const prevResults = [...(joinResult.joinResults || [])];
+        const newResults = data.joinResults || [];
+        for (const nr of newResults) {
+          const idx = prevResults.findIndex(pr => pr.teamId === nr.teamId);
+          if (idx >= 0) {
+            prevResults[idx] = nr; // Update with new result
+          } else {
+            prevResults.push(nr); // Add new
+          }
         }
-      } else if (data.needsReauth) {
-        toast.error("Session expired — re-link via OTP");
+
+        const totalSuccess = prevSuccess + newSuccess;
+        const totalFailed = totalAttempted - totalSuccess;
+
+        const mergedResult = {
+          ...data,
+          joinResults: prevResults,
+          summary: {
+            ...data.summary,
+            successCount: totalSuccess,
+            failedCount: totalFailed,
+            totalCount: totalAttempted,
+          },
+          status: totalFailed === 0 ? "success" : "partial",
+          message: totalFailed === 0
+            ? `All ${totalAttempted} teams joined successfully!`
+            : `${totalSuccess}/${totalAttempted} teams joined. ${totalFailed} still failing.`,
+        };
+        setJoinResult(mergedResult);
+
+        if (totalFailed === 0) {
+          toast.success(`✅ All Slots Filled — ${totalSuccess}/${totalAttempted} teams joined!`);
+        } else {
+          toast.warning(`⚠ ${newSuccess} more joined. ${totalFailed} still failing.`);
+        }
       } else {
-        toast.error(data.message || "Failed to join contest");
+        setJoinResult(data);
+        if (data.status === "success" || data.status === "partial") {
+          const s = data.summary || {};
+          const batchesInfo = s.batches ? ` · ${s.batches} batches · shuffled` : "";
+          if (data.status === "success") {
+            toast.success(`✓ Joined ${s.successCount}/${s.totalCount || ids.length} teams${batchesInfo}`);
+          } else {
+            toast.warning(`⚠ Partial: ${s.successCount} joined, ${s.failedCount} failed${batchesInfo}`);
+          }
+        } else if (data.needsReauth) {
+          toast.error("Session expired — re-link via OTP");
+        } else {
+          toast.error(data.message || "Failed to join contest");
+        }
       }
     } catch (err: any) {
       toast.error(err?.message || "Network error");
@@ -1814,6 +1863,72 @@ function ContestsTab() {
               ⚠️ Session expired — re-link via OTP
             </p>
           )}
+
+          {/* All Slots Filled banner — shown when all teams joined successfully */}
+          {joinResult.status === "success" && joinResult.summary && (() => {
+            const successCount = joinResult.summary.successCount || 0;
+            const totalCount = joinResult.summary.totalCount || successCount;
+            return (
+              <div className="mt-3 pt-3 border-t border-slate-700">
+                <div className="bg-emerald-950/50 border border-emerald-700 rounded-lg p-3 text-center">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400 mx-auto mb-1" />
+                  <p className="text-emerald-400 font-bold text-sm">✅ All Slots Filled</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    Progress: {successCount}/{totalCount} teams joined
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Join Remaining Teams button — shown when some teams failed */}
+          {joinResult.status === "partial" && joinResult.joinResults && (() => {
+            const failedTeamIds = joinResult.joinResults
+              .filter((r: any) => !r.success)
+              .map((r: any) => Number(r.teamId))
+              .filter((n: number) => !isNaN(n));
+            const failedCount = failedTeamIds.length;
+            const successCount = joinResult.summary?.successCount || 0;
+            const totalCount = joinResult.summary?.totalCount || (successCount + failedCount);
+
+            if (failedCount === 0) return null;
+
+            // All slots filled check
+            const allFilled = successCount >= totalCount;
+
+            return (
+              <div className="mt-3 pt-3 border-t border-slate-700">
+                {allFilled ? (
+                  <div className="bg-emerald-950/50 border border-emerald-700 rounded-lg p-3 text-center">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400 mx-auto mb-1" />
+                    <p className="text-emerald-400 font-bold text-sm">✅ All Slots Filled</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      Progress: {successCount}/{totalCount} teams joined
+                    </p>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    className="w-full bg-amber-600 hover:bg-amber-700 text-white h-10 text-xs font-bold"
+                    disabled={loading}
+                    onClick={() => handleJoinContest(contestId.trim(), failedTeamIds)}
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                        Joining {failedCount} teams...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-3 h-3 mr-1" />
+                        Join Remaining {failedCount} Team{failedCount > 1 ? "s" : ""}
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
