@@ -46,6 +46,13 @@ import { ApnaTransferModal } from "./apna-transfer-modal";
 import { FreeContestsModal } from "./free-contests-modal";
 import { OtpLoginModal } from "@/components/auth/otp-login-modal";
 import { EliteAIGenerator } from "./elite-ai-generator";
+import {
+  SmartSubstitutePopup,
+  shouldShowSmartSubstitutePopup,
+  saveSmartSubstitutePreference,
+  getSmartSubstitutePreference,
+  type SmartSubstituteChoice,
+} from "./smart-substitute-popup";
 import { ErrorBoundary } from "@/components/error-boundary";
 import {
   autoReplaceNonPlaying,
@@ -73,6 +80,9 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [showSweepGenerator, setShowSweepGenerator] = useState(false);
   const [showEliteAI, setShowEliteAI] = useState(false);
+  // Smart Substitute popup state — shown before generation if match has Impact Player possibility
+  const [showSubstitutePopup, setShowSubstitutePopup] = useState(false);
+  const [pendingGenerator, setPendingGenerator] = useState<"sweep" | "elite" | null>(null);
   const [showBulkTransfer, setShowBulkTransfer] = useState(false);
   const [selectedTransferApp, setSelectedTransferApp] = useState<FantasyApp>("dream11");
   const [showFreeContests, setShowFreeContests] = useState(false);
@@ -680,7 +690,19 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                     variant="outline"
                     onClick={() => {
                       if (!license.requireLicense()) return;
-                      setShowSweepGenerator(true);
+                      // Smart Substitute check — show popup if match has Impact Player possibility
+                      if (shouldShowSmartSubstitutePopup(match, players)) {
+                        setPendingGenerator("sweep");
+                        setShowSubstitutePopup(true);
+                      } else {
+                        // Check if user has saved preference
+                        const pref = getSmartSubstitutePreference();
+                        if (pref) {
+                          // Use saved preference (popup was dismissed with "Don't show again")
+                          console.log("[SmartSubstitute] Using saved preference:", pref);
+                        }
+                        setShowSweepGenerator(true);
+                      }
                     }}
                     disabled={players.length < 11}
                     className={cn(
@@ -710,7 +732,17 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                         toast.error("Elite AI requires Elite (₹999) or Lifetime subscription.");
                         return;
                       }
-                      setShowEliteAI(true);
+                      // Smart Substitute check — show popup if match has Impact Player possibility
+                      if (shouldShowSmartSubstitutePopup(match, players)) {
+                        setPendingGenerator("elite");
+                        setShowSubstitutePopup(true);
+                      } else {
+                        const pref = getSmartSubstitutePreference();
+                        if (pref) {
+                          console.log("[SmartSubstitute] Using saved preference:", pref);
+                        }
+                        setShowEliteAI(true);
+                      }
                     }}
                     disabled={players.length < 11}
                     className={cn(
@@ -979,6 +1011,50 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
             </motion.div>
           </motion.div>
         )}
+
+        {/* Smart Substitute (Impact Player) Popup — shown before generation */}
+        <SmartSubstitutePopup
+          open={showSubstitutePopup}
+          matchName={match?.name || match?.title || String(match?.team1 ?? "") + " vs " + String(match?.team2 ?? "")}
+          matchFormat={match?.format || match?.match_type}
+          onChoose={(choice, dontShowAgain) => {
+            console.log("[SmartSubstitute] User choice:", choice, "| Don't show again:", dontShowAgain);
+
+            // Save preference if user checked "Don't show again"
+            if (dontShowAgain && (choice === "playing-xi-only" || choice === "ai-smart-substitute")) {
+              saveSmartSubstitutePreference(choice);
+              toast.success(`സമാധാനം! ഇനി "${choice === "playing-xi-only" ? "Playing XI മാത്രം" : "AI Smart Substitute"}" സ്വയമേവ ഉപയോഗിക്കും`);
+            }
+
+            // Close popup
+            setShowSubstitutePopup(false);
+
+            if (choice === "cancel") {
+              // User cancelled — don't open any generator
+              setPendingGenerator(null);
+              toast.info("ടീം ജനറേഷൻ റദ്ദാക്കി");
+              return;
+            }
+
+            // Log the choice for analytics
+            console.log(`[SmartSubstitute] Mode selected: ${choice} for ${pendingGenerator} generator`);
+
+            // Proceed with the pending generator
+            if (pendingGenerator === "sweep") {
+              setShowSweepGenerator(true);
+            } else if (pendingGenerator === "elite") {
+              setShowEliteAI(true);
+            }
+            setPendingGenerator(null);
+
+            // Show info toast about the selected mode
+            if (choice === "playing-xi-only") {
+              toast.success("🟢 Playing XI മാത്രം — Bench/Substitute കളിക്കാരെ ഉൾപ്പെടുത്തില്ല");
+            } else if (choice === "ai-smart-substitute") {
+              toast.info("🟡 AI Smart Substitute — ഉയർന്ന സാധ്യതയുള്ള substitutes മാത്രം ഉൾപ്പെടുത്തും");
+            }
+          }}
+        />
       </AnimatePresence>
     </div>
   );
