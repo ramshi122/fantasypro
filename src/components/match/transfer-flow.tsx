@@ -307,18 +307,45 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
   // teams to localStorage via bulkAddTeams(), so we just need to refresh the
   // view and show a success toast.
   function handleBulkAddTeams(teams: TeamRow[]) {
-    // SAVE TEAMS TO LOCAL STORAGE — this was missing!
+    console.log("[TransferFlow] handleBulkAddTeams called with", teams.length, "teams for matchId:", matchId);
+    console.log("[TransferFlow] Sample team:", teams[0] ? { teamNo: teams[0].teamNo, captain: teams[0].captain, playerCount: teams[0].players?.length } : "none");
+
+    // SAVE TEAMS TO LOCAL STORAGE
     try {
       const key = String(matchId);
-      const all = JSON.parse(localStorage.getItem("apna-cricket-local-teams") || "{}");
+      const STORAGE_KEY = "apna-cricket-local-teams";
+      const raw = localStorage.getItem(STORAGE_KEY);
+      console.log("[TransferFlow] Current localStorage raw data length:", raw?.length || 0);
+      const all = raw ? JSON.parse(raw) : {};
       const existing = all[key] || [];
+      console.log("[TransferFlow] Existing teams for matchId", key, ":", existing.length);
       // Add new teams to existing list
       all[key] = [...existing, ...teams];
-      localStorage.setItem("apna-cricket-local-teams", JSON.stringify(all));
-      // Update the displayed teams
-      setExistingTeams(all[key]);
+      const newCount = all[key].length;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+      console.log("[TransferFlow] ✅ Saved", teams.length, "new teams. Total for matchId", key, ":", newCount);
+
+      // VERIFY the save worked by reading back
+      const verify = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+      const verifyTeams = verify[key] || [];
+      console.log("[TransferFlow] Verification — teams in localStorage for matchId", key, ":", verifyTeams.length);
+
+      // Update the displayed teams immediately
+      setExistingTeams(verifyTeams);
+      console.log("[TransferFlow] setExistingTeams called with", verifyTeams.length, "teams");
     } catch (e) {
-      console.error("[TransferFlow] Failed to save teams:", e);
+      console.error("[TransferFlow] ❌ Failed to save teams:", e);
+      // Fallback: try saving with just the new teams (replace existing)
+      try {
+        const key = String(matchId);
+        const all = { [key]: teams };
+        localStorage.setItem("apna-cricket-local-teams", JSON.stringify(all));
+        setExistingTeams(teams);
+        console.log("[TransferFlow] Fallback save — saved", teams.length, "teams");
+      } catch (e2) {
+        console.error("[TransferFlow] ❌ Fallback save also failed:", e2);
+        toast.error("Failed to save teams — storage may be full");
+      }
     }
 
     toast.success(`Generated ${teams.length} unique teams — saved!`);
