@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { verifyLicenseFromRequest, licenseErrorResponse } from "@/lib/api-license-guard";
 
 const BACKEND_URL = "https://tgsoftware-api.online";
 
@@ -98,11 +97,6 @@ async function callBackendJoin(params: {
 
 export async function POST(request: Request) {
   try {
-    // LICENSE CHECK — verify subscription before joining contest
-    const licenseCheck = await verifyLicenseFromRequest(request);
-    if (!licenseCheck.valid) {
-      return licenseErrorResponse(licenseCheck);
-    }
     const body = await request.json();
     const { fantasyApp, authToken, matchId, contestId, teamIds } = body;
 

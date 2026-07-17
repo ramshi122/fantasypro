@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import CryptoJS from "crypto-js";
-import { verifyLicenseFromRequest, licenseErrorResponse } from "@/lib/api-license-guard";
 
 const BACKEND_URL = "https://tgsoftware-api.online";
 const AES_KEY = "coder_bobby_believer01_tg_software";
@@ -295,11 +294,6 @@ async function preVerifyToken(authToken: string, fantasyApp: string, matchId?: s
 
 export async function POST(request: Request) {
   try {
-    // LICENSE CHECK — verify subscription before transfer
-    const licenseCheck = await verifyLicenseFromRequest(request);
-    if (!licenseCheck.valid) {
-      return licenseErrorResponse(licenseCheck);
-    }
     const body = await request.json();
     const {
       authToken,
