@@ -654,3 +654,115 @@ export function subscribeToJwtToken(callback: (token: string) => void): Unsubscr
     return () => {};
   }
 }
+
+// ============================================================
+// FANTASY AUTH TOKEN SYNC — Dream11/My11Circle OTP session token
+// ============================================================
+// Same pattern as JWT token. Stored in license_keys/ADMIN_AUTH_TOKEN.
+// This is the per-user fantasy platform session token (from OTP login).
+// Without this, Phone B cannot join contests even if JWT is synced.
+
+const AUTH_TOKEN_DOC_ID = "ADMIN_AUTH_TOKEN";
+
+/**
+ * Save fantasy auth token to Firestore (central source of truth).
+ */
+export async function saveAuthTokenToFirestore(token: string): Promise<boolean> {
+  if (!isFirebaseReady() || !db) {
+    console.warn("[AuthSync] Firebase not ready — saving to localStorage only");
+    if (typeof window !== "undefined") {
+      if (token) localStorage.setItem("fantasy_auth_token", token);
+      else localStorage.removeItem("fantasy_auth_token");
+    }
+    return false;
+  }
+  try {
+    const docRef = doc(db, JWT_TOKEN_COLLECTION, AUTH_TOKEN_DOC_ID);
+    await setDoc(docRef, {
+      token: token || "",
+      updatedAt: serverTimestamp(),
+      updatedBy: typeof window !== "undefined" ? localStorage.getItem("apna-cricket-device-id") || "unknown" : "unknown",
+    });
+    console.log("[AuthSync] ✅ Fantasy auth token saved to Firestore — all admin devices will sync");
+    if (typeof window !== "undefined") {
+      if (token) localStorage.setItem("fantasy_auth_token", token);
+      else localStorage.removeItem("fantasy_auth_token");
+    }
+    return true;
+  } catch (err: any) {
+    console.error("[AuthSync] ❌ Failed to save auth token to Firestore:", err?.code || err?.message || err);
+    if (typeof window !== "undefined") {
+      if (token) localStorage.setItem("fantasy_auth_token", token);
+      else localStorage.removeItem("fantasy_auth_token");
+    }
+    return false;
+  }
+}
+
+/**
+ * Fetch fantasy auth token from Firestore (central source of truth).
+ */
+export async function fetchAuthTokenFromFirestore(): Promise<string> {
+  const cached = typeof window !== "undefined" ? (localStorage.getItem("fantasy_auth_token") || "") : "";
+
+  if (!isFirebaseReady() || !db) {
+    return cached;
+  }
+  try {
+    const snap = await getDoc(doc(db, JWT_TOKEN_COLLECTION, AUTH_TOKEN_DOC_ID));
+    if (snap.exists()) {
+      const data = snap.data() as Record<string, any>;
+      const token = data.token || "";
+      if (typeof window !== "undefined") {
+        if (token) localStorage.setItem("fantasy_auth_token", token);
+        else localStorage.removeItem("fantasy_auth_token");
+      }
+      console.log("[AuthSync] ✅ Fetched fantasy auth token from Firestore");
+      return token;
+    }
+    return cached;
+  } catch (err: any) {
+    console.error("[AuthSync] ❌ Failed to fetch auth token from Firestore:", err?.code || err?.message || err);
+    return cached;
+  }
+}
+
+/**
+ * Subscribe to fantasy auth token changes in real-time.
+ */
+export function subscribeToAuthToken(callback: (token: string) => void): Unsubscribe {
+  if (!isFirebaseReady() || !db) {
+    console.warn("[AuthSync] Firebase not ready — real-time auth token sync disabled");
+    return () => {};
+  }
+  try {
+    const unsub = onSnapshot(
+      doc(db, JWT_TOKEN_COLLECTION, AUTH_TOKEN_DOC_ID),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as Record<string, any>;
+          const token = data.token || "";
+          if (typeof window !== "undefined") {
+            if (token) localStorage.setItem("fantasy_auth_token", token);
+            else localStorage.removeItem("fantasy_auth_token");
+          }
+          callback(token);
+          console.log("[AuthSync] 📡 Real-time auth token update received");
+        } else {
+          if (typeof window !== "undefined") {
+            localStorage.removeItem("fantasy_auth_token");
+          }
+          callback("");
+          console.log("[AuthSync] 📡 Real-time auth token cleared");
+        }
+      },
+      (err) => {
+        console.error("[AuthSync] ❌ onSnapshot error:", err);
+      }
+    );
+    return unsub;
+  } catch (err) {
+    console.error("[AuthSync] ❌ Failed to subscribe:", err);
+    return () => {};
+  }
+}

@@ -1229,51 +1229,70 @@ function ContestsTab() {
   const [myTeams, setMyTeams] = useState<MyTeam[]>([]);
   const [joinResult, setJoinResult] = useState<JoinResult | null>(null);
 
-  // Load JWT from Firestore on mount (central source of truth).
+  // Load JWT + Auth token from Firestore on mount (central source of truth).
   // Falls back to localStorage for instant display while Firestore loads.
   // Also subscribes to real-time updates — any admin device saving a new
   // token will instantly update this device.
   useEffect(() => {
-    let unsub: (() => void) | null = null;
+    let unsubJwt: (() => void) | null = null;
+    let unsubAuth: (() => void) | null = null;
 
-    async function loadJwt() {
+    async function loadTokens() {
       if (typeof window === "undefined") return;
       // Instant display from localStorage cache
-      const cached = localStorage.getItem("user_token") || "";
-      setJwtToken(cached);
+      const cachedJwt = localStorage.getItem("user_token") || "";
+      const cachedAuth = localStorage.getItem("fantasy_auth_token") || "";
+      setJwtToken(cachedJwt);
+      setAuthToken(cachedAuth);
 
       // Fetch latest from Firestore (source of truth)
       try {
-        const { fetchJwtTokenFromFirestore, subscribeToJwtToken } = await import("@/lib/admin-realtime-sync");
-        const token = await fetchJwtTokenFromFirestore();
-        setJwtToken(token);
-        console.log("[ContestsTab] JWT token loaded from Firestore:", token ? "✓ active" : "✗ empty");
+        const {
+          fetchJwtTokenFromFirestore,
+          subscribeToJwtToken,
+          fetchAuthTokenFromFirestore,
+          subscribeToAuthToken,
+        } = await import("@/lib/admin-realtime-sync");
 
-        // Subscribe to real-time updates — any admin device saving a new
-        // token will instantly update this device via onSnapshot.
-        unsub = subscribeToJwtToken((newToken) => {
+        const [jwt, auth] = await Promise.all([
+          fetchJwtTokenFromFirestore(),
+          fetchAuthTokenFromFirestore(),
+        ]);
+        setJwtToken(jwt);
+        setAuthToken(auth);
+        console.log("[ContestsTab] Tokens loaded — JWT:", jwt ? "✓" : "✗", "| Auth:", auth ? "✓" : "✗");
+
+        // Subscribe to real-time updates
+        unsubJwt = subscribeToJwtToken((newToken) => {
           setJwtToken(newToken);
-          console.log("[ContestsTab] 📡 JWT token synced from another device:", newToken ? "✓ active" : "✗ cleared");
+          console.log("[ContestsTab] 📡 JWT synced:", newToken ? "✓" : "✗");
+        });
+        unsubAuth = subscribeToAuthToken((newToken) => {
+          setAuthToken(newToken);
+          console.log("[ContestsTab] 📡 Auth token synced:", newToken ? "✓" : "✗");
         });
       } catch (err) {
-        console.error("[ContestsTab] Failed to load JWT from Firestore:", err);
+        console.error("[ContestsTab] Failed to load tokens from Firestore:", err);
       }
     }
 
-    loadJwt();
+    loadTokens();
 
     return () => {
-      if (unsub) {
-        try { unsub(); } catch { /* ignore */ }
-      }
+      if (unsubJwt) { try { unsubJwt(); } catch { /* ignore */ } }
+      if (unsubAuth) { try { unsubAuth(); } catch { /* ignore */ } }
     };
   }, []);
 
   async function handleSaveJwt() {
     const tokenToSave = jwtToken.trim();
     try {
-      const { saveJwtTokenToFirestore } = await import("@/lib/admin-realtime-sync");
+      const { saveJwtTokenToFirestore, saveAuthTokenToFirestore } = await import("@/lib/admin-realtime-sync");
       const ok = await saveJwtTokenToFirestore(tokenToSave);
+      // Also save authToken to Firestore if it has a value
+      if (authToken.trim()) {
+        await saveAuthTokenToFirestore(authToken.trim());
+      }
       if (tokenToSave) {
         if (ok) toast.success("JWT token saved — synced to all admin devices");
         else toast.success("JWT token saved locally (Firestore sync pending)");
@@ -1283,7 +1302,6 @@ function ContestsTab() {
       }
     } catch (err: any) {
       console.error("[ContestsTab] JWT save error:", err);
-      // Fall back to localStorage only
       if (typeof window !== "undefined") {
         if (tokenToSave) localStorage.setItem("user_token", tokenToSave);
         else localStorage.removeItem("user_token");
@@ -1496,7 +1514,24 @@ function ContestsTab() {
           <label className="text-[10px] text-slate-400 mb-1 block">Fantasy Auth Token (OTP-linked)</label>
           <Input
             value={authToken}
-            onChange={(e) => setAuthToken(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value;
+              setAuthToken(val);
+              // Auto-save to Firestore with debounce (1.5s after user stops typing)
+              // This syncs the auth token to all admin devices without needing a Save button
+              if (val.trim().length > 10) {
+                if ((window as any).__authTokenSaveTimer) clearTimeout((window as any).__authTokenSaveTimer);
+                (window as any).__authTokenSaveTimer = setTimeout(async () => {
+                  try {
+                    const { saveAuthTokenToFirestore } = await import("@/lib/admin-realtime-sync");
+                    await saveAuthTokenToFirestore(val.trim());
+                    console.log("[ContestsTab] ✅ Auth token auto-saved to Firestore");
+                  } catch (err) {
+                    console.error("[ContestsTab] Auth token auto-save failed:", err);
+                  }
+                }, 1500);
+              }
+            }}
             placeholder="Token from OTP login..."
             className="bg-slate-900 border-slate-700 text-white h-9 text-xs font-mono"
           />
