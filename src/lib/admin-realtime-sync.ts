@@ -687,6 +687,9 @@ export async function fetchJwtTokenFromFirestore(): Promise<string> {
     return cached;
   }
 
+  // Get cached token (if any) — used as fallback if Firestore returns empty
+  const cachedToken = typeof window !== "undefined" ? (localStorage.getItem("user_token") || "") : "";
+
   // RULE 4: Always fetch from Firestore first (source of truth)
   for (let attempt = 1; attempt <= JWT_MAX_RETRIES; attempt++) {
     try {
@@ -694,26 +697,49 @@ export async function fetchJwtTokenFromFirestore(): Promise<string> {
       if (snap.exists()) {
         const data = snap.data() as Record<string, any>;
         const token = data.token || "";
-        // Update localStorage cache with fresh data
-        if (typeof window !== "undefined") {
-          if (token) localStorage.setItem("user_token", token);
-          else localStorage.removeItem("user_token");
+
+        if (token) {
+          // Firestore has a valid token — update localStorage cache
+          if (typeof window !== "undefined") {
+            localStorage.setItem("user_token", token);
+          }
+          console.log(`[JwtSync] ✅ Fetched JWT from Firestore (attempt ${attempt}): ✓ active`);
+          return token;
+        } else {
+          // Firestore doc exists but token field is empty.
+          // RULE: Do NOT overwrite a valid cached token with empty value.
+          // This handles the case where Firestore doc was created but token
+          // field is empty (shouldn't happen, but defensive).
+          if (cachedToken) {
+            console.log(`[JwtSync] ⚠️ Firestore token is empty — keeping cached token: ✓ active`);
+            return cachedToken;
+          }
+          console.log(`[JwtSync] ✅ Fetched JWT from Firestore (attempt ${attempt}): ✗ empty (no cache)`);
+          return "";
         }
-        console.log(`[JwtSync] ✅ Fetched JWT from Firestore (attempt ${attempt}):`, token ? "✓ active" : "✗ empty");
-        return token;
       } else {
-        // Document doesn't exist — no token saved yet
-        console.log("[JwtSync] No JWT token document in Firestore yet");
-        // Clear stale cache
-        if (typeof window !== "undefined") {
-          localStorage.removeItem("user_token");
+        // Document doesn't exist in Firestore.
+        // RULE: Do NOT clear cache if we have a valid token.
+        // The doc might not exist due to:
+        //   - Race condition (doc being created on another device)
+        //   - Firestore sync delay
+        //   - Network hiccup
+        // If we have a cached token, KEEP IT — don't overwrite with empty.
+        if (cachedToken) {
+          console.log(`[JwtSync] ⚠️ Firestore doc doesn't exist — keeping cached token: ✓ active`);
+          return cachedToken;
         }
+        console.log("[JwtSync] No JWT token in Firestore or cache — returning empty");
         return "";
       }
     } catch (err: any) {
       console.error(`[JwtSync] ❌ Fetch attempt ${attempt} failed:`, err?.code || err?.message || err);
       if (err?.code === "permission-denied") {
-        // Don't retry on permission errors
+        // Don't retry on permission errors — but return cached token if we have one
+        if (cachedToken) {
+          console.log("[JwtSync] Permission denied — using cached token:", cachedToken ? "✓" : "✗");
+          return cachedToken;
+        }
         break;
       }
       if (attempt < JWT_MAX_RETRIES) {
@@ -723,9 +749,8 @@ export async function fetchJwtTokenFromFirestore(): Promise<string> {
   }
 
   // All retries exhausted — fall back to cache
-  const cached = typeof window !== "undefined" ? (localStorage.getItem("user_token") || "") : "";
-  console.log("[JwtSync] Using cached token (Firestore unavailable):", cached ? "✓" : "✗");
-  return cached;
+  console.log("[JwtSync] Using cached token (Firestore retries exhausted):", cachedToken ? "✓" : "✗");
+  return cachedToken;
 }
 
 /**
@@ -747,20 +772,42 @@ export function subscribeToJwtToken(callback: (token: string) => void): Unsubscr
         if (snap.exists()) {
           const data = snap.data() as Record<string, any>;
           const token = data.token || "";
-          // Update localStorage cache
-          if (typeof window !== "undefined") {
-            if (token) localStorage.setItem("user_token", token);
-            else localStorage.removeItem("user_token");
+
+          if (token) {
+            // Valid token from Firestore — update localStorage + notify callback
+            if (typeof window !== "undefined") {
+              localStorage.setItem("user_token", token);
+            }
+            callback(token);
+            console.log("[JwtSync] 📡 Real-time JWT token update received: ✓ active");
+          } else {
+            // Firestore doc exists but token is empty.
+            // RULE: Do NOT overwrite valid cached token with empty.
+            const cached = typeof window !== "undefined" ? (localStorage.getItem("user_token") || "") : "";
+            if (cached) {
+              console.log("[JwtSync] 📡 Real-time: empty token received — keeping cached token");
+              callback(cached);
+            } else {
+              callback("");
+              console.log("[JwtSync] 📡 Real-time: empty token (no cache)");
+            }
           }
-          callback(token);
-          console.log("[JwtSync] 📡 Real-time JWT token update received");
         } else {
-          // Document deleted — token cleared
-          if (typeof window !== "undefined") {
-            localStorage.removeItem("user_token");
+          // Document deleted.
+          // RULE: Do NOT clear cache if we have a valid token.
+          // The doc might be temporarily deleted due to Firestore sync issues.
+          // Only clear if there's truly no cached token.
+          const cached = typeof window !== "undefined" ? (localStorage.getItem("user_token") || "") : "";
+          if (cached) {
+            console.log("[JwtSync] 📡 Real-time: doc deleted — keeping cached token");
+            callback(cached);
+          } else {
+            if (typeof window !== "undefined") {
+              localStorage.removeItem("user_token");
+            }
+            callback("");
+            console.log("[JwtSync] 📡 Real-time: JWT token cleared (no cache)");
           }
-          callback("");
-          console.log("[JwtSync] 📡 Real-time JWT token cleared");
         }
       },
       (err) => {
