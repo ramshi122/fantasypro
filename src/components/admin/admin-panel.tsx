@@ -1286,6 +1286,17 @@ function ContestsTab() {
 
   async function handleSaveJwt() {
     const tokenToSave = jwtToken.trim();
+
+    // Validate: reject empty or too-short tokens
+    if (!tokenToSave) {
+      toast.error("⚠️ JWT token ശൂന്യമാണ് — ദയവായി സാധുവായ token നൽകുക");
+      return;
+    }
+    if (tokenToSave.length < 20) {
+      toast.error("⚠️ JWT token വളരെ ചെറുതാണ് — സാധുവായ token നൽകുക");
+      return;
+    }
+
     try {
       const { saveJwtTokenToFirestore, saveAuthTokenToFirestore } = await import("@/lib/admin-realtime-sync");
       const ok = await saveJwtTokenToFirestore(tokenToSave);
@@ -1293,21 +1304,17 @@ function ContestsTab() {
       if (authToken.trim()) {
         await saveAuthTokenToFirestore(authToken.trim());
       }
-      if (tokenToSave) {
-        if (ok) toast.success("JWT token saved — synced to all admin devices");
-        else toast.success("JWT token saved locally (Firestore sync pending)");
+      if (ok) {
+        toast.success("✅ JWT token saved + verified — synced to all admin devices");
       } else {
-        if (ok) toast.info("JWT token cleared — synced to all admin devices");
-        else toast.info("JWT token cleared locally");
+        toast.error("⚠️ JWT token saved locally only — Firestore sync failed. Check console (F12).");
       }
     } catch (err: any) {
       console.error("[ContestsTab] JWT save error:", err);
       if (typeof window !== "undefined") {
-        if (tokenToSave) localStorage.setItem("user_token", tokenToSave);
-        else localStorage.removeItem("user_token");
+        localStorage.setItem("user_token", tokenToSave);
       }
-      if (tokenToSave) toast.success("JWT token saved locally");
-      else toast.info("JWT token cleared locally");
+      toast.error("⚠️ JWT save failed: " + (err?.message || "Unknown error"));
     }
   }
 

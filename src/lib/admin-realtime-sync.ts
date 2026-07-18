@@ -535,78 +535,197 @@ export function initNetworkReconnectListener(): () => void {
 // since that's the only collection the user's Firestore rules allow).
 // All admin devices read from + write to this SAME document.
 // Real-time onSnapshot listener syncs instantly across all devices.
+//
+// RULES ENFORCED:
+//   1. Empty/invalid tokens are NEVER saved to Firestore
+//   2. Retry mechanism: 3 retries with 1s delay on network errors
+//   3. Verify-after-write: reads back to confirm save succeeded
+//   4. Firestore is ALWAYS the source of truth (not localStorage cache)
+//   5. localStorage is only a fallback for offline mode
 
 const JWT_TOKEN_DOC_ID = "ADMIN_JWT_TOKEN";
 const JWT_TOKEN_COLLECTION = "license_keys";
+const JWT_MAX_RETRIES = 3;
+const JWT_RETRY_DELAY_MS = 1000;
+
+/**
+ * Validate a JWT token — must be non-empty and look like a JWT.
+ * JWT format: header.payload.signature (3 parts separated by dots)
+ * Minimum length: 20 characters
+ */
+function isValidJwtToken(token: string): boolean {
+  if (!token || typeof token !== "string") return false;
+  const trimmed = token.trim();
+  if (trimmed.length < 20) return false;
+  // JWT has 3 parts separated by dots — but some backend tokens may not follow
+  // exact JWT format. Accept any non-empty token > 20 chars.
+  return true;
+}
+
+/**
+ * Sleep helper for retry delays.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 /**
  * Save JWT token to Firestore (central source of truth).
- * Also writes to localStorage as offline cache.
- * All admin devices will receive this via onSnapshot instantly.
+ *
+ * RULES:
+ *   - Empty/invalid tokens are REJECTED (returns false)
+ *   - Retries 3 times on network errors (1s delay between retries)
+ *   - Verifies the write by reading back immediately
+ *   - Updates localStorage cache on success
+ *
+ * @returns true if Firestore write + verify succeeded, false otherwise
  */
 export async function saveJwtTokenToFirestore(token: string): Promise<boolean> {
+  const trimmedToken = (token || "").trim();
+
+  // RULE 1: Reject empty/invalid tokens
+  if (!trimmedToken) {
+    console.warn("[JwtSync] ⚠️ Rejecting empty JWT token — not saving to Firestore");
+    return false;
+  }
+  if (!isValidJwtToken(trimmedToken)) {
+    console.warn("[JwtSync] ⚠️ Rejecting invalid JWT token (too short) — not saving to Firestore");
+    return false;
+  }
+
   if (!isFirebaseReady() || !db) {
     console.warn("[JwtSync] Firebase not ready — saving to localStorage only");
     if (typeof window !== "undefined") {
-      if (token) localStorage.setItem("user_token", token);
-      else localStorage.removeItem("user_token");
+      localStorage.setItem("user_token", trimmedToken);
     }
     return false;
   }
-  try {
-    const docRef = doc(db, JWT_TOKEN_COLLECTION, JWT_TOKEN_DOC_ID);
-    await setDoc(docRef, {
-      token: token || "",
-      updatedAt: serverTimestamp(),
-      updatedBy: typeof window !== "undefined" ? localStorage.getItem("apna-cricket-device-id") || "unknown" : "unknown",
-    });
-    console.log("[JwtSync] ✅ JWT token saved to Firestore — all admin devices will sync");
-    // Also cache in localStorage for offline use
-    if (typeof window !== "undefined") {
-      if (token) localStorage.setItem("user_token", token);
-      else localStorage.removeItem("user_token");
+
+  const docRef = doc(db, JWT_TOKEN_COLLECTION, JWT_TOKEN_DOC_ID);
+  const payload = {
+    token: trimmedToken,
+    updatedAt: serverTimestamp(),
+    updatedBy: typeof window !== "undefined" ? localStorage.getItem("apna-cricket-device-id") || "unknown" : "unknown",
+  };
+
+  // RULE 2: Retry mechanism — 3 retries with 1s delay
+  for (let attempt = 1; attempt <= JWT_MAX_RETRIES; attempt++) {
+    try {
+      console.log(`[JwtSync] Save attempt ${attempt}/${JWT_MAX_RETRIES}...`);
+      await setDoc(docRef, payload);
+      console.log(`[JwtSync] ✅ Write succeeded (attempt ${attempt})`);
+
+      // RULE 3: Verify-after-write — read back to confirm
+      const verifySnap = await getDoc(docRef);
+      if (!verifySnap.exists()) {
+        console.error(`[JwtSync] ❌ Verify FAILED — document does not exist after write!`);
+        if (attempt < JWT_MAX_RETRIES) {
+          await sleep(JWT_RETRY_DELAY_MS);
+          continue;
+        }
+        return false;
+      }
+      const verifyData = verifySnap.data() as Record<string, any>;
+      const verifyToken = verifyData.token || "";
+      if (verifyToken !== trimmedToken) {
+        console.error(`[JwtSync] ❌ Verify FAILED — token mismatch! Expected: ${trimmedToken.substring(0, 20)}... Got: ${verifyToken.substring(0, 20)}...`);
+        if (attempt < JWT_MAX_RETRIES) {
+          await sleep(JWT_RETRY_DELAY_MS);
+          continue;
+        }
+        return false;
+      }
+
+      console.log(`[JwtSync] ✅ Verified — token is in Firestore. All admin devices will sync via onSnapshot.`);
+      // Update localStorage cache
+      if (typeof window !== "undefined") {
+        localStorage.setItem("user_token", trimmedToken);
+      }
+      return true;
+    } catch (err: any) {
+      console.error(`[JwtSync] ❌ Save attempt ${attempt} failed:`, err?.code || err?.message || err);
+      if (err?.code === "permission-denied") {
+        console.error("[JwtSync] ❌ PERMISSION DENIED — check Firestore rules for license_keys/{keyId}");
+        // Don't retry on permission errors — won't fix with retry
+        if (typeof window !== "undefined") {
+          localStorage.setItem("user_token", trimmedToken);
+        }
+        return false;
+      }
+      if (attempt < JWT_MAX_RETRIES) {
+        console.log(`[JwtSync] Retrying in ${JWT_RETRY_DELAY_MS}ms...`);
+        await sleep(JWT_RETRY_DELAY_MS);
+      } else {
+        // All retries exhausted — fall back to localStorage
+        console.error("[JwtSync] ❌ All retries exhausted — saving to localStorage only");
+        if (typeof window !== "undefined") {
+          localStorage.setItem("user_token", trimmedToken);
+        }
+        return false;
+      }
     }
-    return true;
-  } catch (err: any) {
-    console.error("[JwtSync] ❌ Failed to save JWT to Firestore:", err?.code || err?.message || err);
-    // Fall back to localStorage only
-    if (typeof window !== "undefined") {
-      if (token) localStorage.setItem("user_token", token);
-      else localStorage.removeItem("user_token");
-    }
-    return false;
   }
+
+  return false;
 }
 
 /**
  * Fetch JWT token from Firestore (central source of truth).
- * Falls back to localStorage if Firestore unavailable.
+ *
+ * RULES:
+ *   - ALWAYS fetches from Firestore first (not localStorage cache)
+ *   - localStorage cache is ONLY used if Firestore is unavailable
+ *   - Updates localStorage cache with fresh Firestore data
+ *
+ * @returns the latest JWT token from Firestore, or cached token if Firestore unavailable
  */
 export async function fetchJwtTokenFromFirestore(): Promise<string> {
-  // Try localStorage first for instant display (while Firestore loads)
-  const cached = typeof window !== "undefined" ? (localStorage.getItem("user_token") || "") : "";
-
   if (!isFirebaseReady() || !db) {
+    // Firestore unavailable — use cache
+    const cached = typeof window !== "undefined" ? (localStorage.getItem("user_token") || "") : "";
+    console.log("[JwtSync] Firebase not ready — using cached token:", cached ? "✓" : "✗");
     return cached;
   }
-  try {
-    const snap = await getDoc(doc(db, JWT_TOKEN_COLLECTION, JWT_TOKEN_DOC_ID));
-    if (snap.exists()) {
-      const data = snap.data() as Record<string, any>;
-      const token = data.token || "";
-      // Update localStorage cache
-      if (typeof window !== "undefined") {
-        if (token) localStorage.setItem("user_token", token);
-        else localStorage.removeItem("user_token");
+
+  // RULE 4: Always fetch from Firestore first (source of truth)
+  for (let attempt = 1; attempt <= JWT_MAX_RETRIES; attempt++) {
+    try {
+      const snap = await getDoc(doc(db, JWT_TOKEN_COLLECTION, JWT_TOKEN_DOC_ID));
+      if (snap.exists()) {
+        const data = snap.data() as Record<string, any>;
+        const token = data.token || "";
+        // Update localStorage cache with fresh data
+        if (typeof window !== "undefined") {
+          if (token) localStorage.setItem("user_token", token);
+          else localStorage.removeItem("user_token");
+        }
+        console.log(`[JwtSync] ✅ Fetched JWT from Firestore (attempt ${attempt}):`, token ? "✓ active" : "✗ empty");
+        return token;
+      } else {
+        // Document doesn't exist — no token saved yet
+        console.log("[JwtSync] No JWT token document in Firestore yet");
+        // Clear stale cache
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("user_token");
+        }
+        return "";
       }
-      console.log("[JwtSync] ✅ Fetched JWT token from Firestore");
-      return token;
+    } catch (err: any) {
+      console.error(`[JwtSync] ❌ Fetch attempt ${attempt} failed:`, err?.code || err?.message || err);
+      if (err?.code === "permission-denied") {
+        // Don't retry on permission errors
+        break;
+      }
+      if (attempt < JWT_MAX_RETRIES) {
+        await sleep(JWT_RETRY_DELAY_MS);
+      }
     }
-    return cached;
-  } catch (err: any) {
-    console.error("[JwtSync] ❌ Failed to fetch JWT from Firestore:", err?.code || err?.message || err);
-    return cached;
   }
+
+  // All retries exhausted — fall back to cache
+  const cached = typeof window !== "undefined" ? (localStorage.getItem("user_token") || "") : "";
+  console.log("[JwtSync] Using cached token (Firestore unavailable):", cached ? "✓" : "✗");
+  return cached;
 }
 
 /**
