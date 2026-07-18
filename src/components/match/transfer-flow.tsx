@@ -1153,8 +1153,9 @@ function TransferButtons({
   const canMy11 = isLicensed && licenseTier && my11Tiers.includes(licenseTier);
   const canContest = isLicensed && licenseTier && contestTiers.includes(licenseTier);
   const isTrial = licenseTier === "trial";
-  // Connect Account button visible only for subscription users (not free/trial)
-  const canConnect = isLicensed && licenseTier && !isTrial;
+  // Connect Account button visible for ALL licensed users (any subscription tier)
+  // Only hidden for free/unlicensed users
+  const canConnect = isLicensed;
 
   function buildTeamCode() {
     const players = (team.players || []).map((p) => p.player_fixed_id ?? p.pid ?? p.name).join(",");
