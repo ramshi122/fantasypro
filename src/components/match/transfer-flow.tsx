@@ -18,6 +18,7 @@ import {
   Save,
   Search,
   Send,
+  Shield,
   Star,
   Trash2,
   X,
@@ -1142,6 +1143,9 @@ function TransferButtons({
   isLicensed: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  // Connect Account state — subscription users only
+  const [connecting, setConnecting] = useState(false);
+  const [connectStatus, setConnectStatus] = useState<"idle" | "connected" | "failed">("idle");
 
   // Tier checks
   const my11Tiers = ["match_full", "weekly", "monthly", "elite", "lifetime"];
@@ -1149,6 +1153,8 @@ function TransferButtons({
   const canMy11 = isLicensed && licenseTier && my11Tiers.includes(licenseTier);
   const canContest = isLicensed && licenseTier && contestTiers.includes(licenseTier);
   const isTrial = licenseTier === "trial";
+  // Connect Account button visible only for subscription users (not free/trial)
+  const canConnect = isLicensed && licenseTier && !isTrial;
 
   function buildTeamCode() {
     const players = (team.players || []).map((p) => p.player_fixed_id ?? p.pid ?? p.name).join(",");
@@ -1204,8 +1210,57 @@ function TransferButtons({
     onJoinContests();
   }
 
+  // Connect Account — fetch latest JWT from Firestore + activate instantly
+  // Subscription users only — fetches JWT saved in Admin Panel
+  async function handleConnectAccount() {
+    setConnecting(true);
+    setConnectStatus("idle");
+    toast.info("🔗 Connecting to account...");
+
+    try {
+      const { fetchJwtTokenFromFirestore } = await import("@/lib/admin-realtime-sync");
+
+      // 1. Fetch latest JWT from Firestore (shared backend)
+      const latestJwt = await fetchJwtTokenFromFirestore();
+
+      // 2. Validate token
+      if (!latestJwt || latestJwt.trim().length < 20) {
+        setConnectStatus("failed");
+        toast.error("❌ JWT Token Not Found — Admin Panel-ൽ JWT Save ചെയ്യുക");
+        return;
+      }
+
+      // 3. Save to localStorage (replace old token with valid token)
+      localStorage.setItem("user_token", latestJwt.trim());
+
+      // 4. Authentication refresh — no app restart needed
+      setConnectStatus("connected");
+      console.log("[ConnectAccount] ✅ Account connected — JWT fetched + activated");
+      toast.success("✅ Account Connected Successfully");
+      toast.success("✅ Latest Authentication Synced");
+      toast.success("✅ Ready to Join Contest");
+
+      // Reset status after 3 seconds
+      setTimeout(() => setConnectStatus("idle"), 3000);
+    } catch (err: any) {
+      setConnectStatus("failed");
+      console.error("[ConnectAccount] ❌ Connection failed:", err);
+      const errMsg = err?.message || "Unknown error";
+      if (errMsg.toLowerCase().includes("network") || errMsg.toLowerCase().includes("fetch")) {
+        toast.error("⚠️ Network Error — ഇന്റർനെറ്റ് കണക്ഷൻ പരിശോധിക്കുക");
+      } else if (errMsg.toLowerCase().includes("permission")) {
+        toast.error("❌ Server Connection Failed — Permission denied");
+      } else {
+        toast.error("❌ Account Connection Failed: " + errMsg);
+      }
+      setTimeout(() => setConnectStatus("idle"), 3000);
+    } finally {
+      setConnecting(false);
+    }
+  }
+
   return (
-    <div className="grid grid-cols-4 gap-1.5">
+    <div className={cn("grid gap-1.5", canConnect ? "grid-cols-5" : "grid-cols-4")}>
       {/* Copy — always available */}
       <Button
         size="sm"
@@ -1260,6 +1315,37 @@ function TransferButtons({
         {!canContest ? <Lock className="w-3.5 h-3.5 mr-0.5" /> : <Gift className="w-3.5 h-3.5 mr-0.5" />}
         {!canContest ? "🔒" : "Join"}
       </Button>
+
+      {/* Connect Account — SUBSCRIPTION USERS ONLY */}
+      {/* Same style/size/height as Dream11/My11/Join buttons */}
+      {/* Fetches latest JWT from Firestore + activates instantly */}
+      {canConnect && (
+        <Button
+          size="sm"
+          className={cn(
+            "h-9 text-[11px] text-white",
+            connectStatus === "connected"
+              ? "bg-emerald-600 hover:bg-emerald-700"
+              : connectStatus === "failed"
+              ? "bg-red-600 hover:bg-red-700"
+              : "bg-sky-600 hover:bg-sky-700"
+          )}
+          onClick={handleConnectAccount}
+          disabled={connecting}
+        >
+          {connecting ? (
+            <Loader2 className="w-3.5 h-3.5 mr-0.5 animate-spin" />
+          ) : connectStatus === "connected" ? (
+            <Check className="w-3.5 h-3.5 mr-0.5" />
+          ) : connectStatus === "failed" ? (
+            <AlertCircle className="w-3.5 h-3.5 mr-0.5" />
+          ) : (
+            <Shield className="w-3.5 h-3.5 mr-0.5" />
+          )}
+          {connecting ? "..." : connectStatus === "connected" ? "✓" : connectStatus === "failed" ? "↻" : "🔗"}
+          {connecting ? "Connecting" : connectStatus === "connected" ? "Connected" : connectStatus === "failed" ? "Retry" : "Connect"}
+        </Button>
+      )}
     </div>
   );
 }
