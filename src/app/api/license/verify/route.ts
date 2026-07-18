@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, updateDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import type { KeyType } from "@/lib/admin-store";
+import { checkRateLimit, rateLimitErrorResponse, logClientIP } from "@/lib/rate-limiter";
 
 /**
  * UNIFIED WRITE HELPER — updates a single key's fields in license_keys/{keyStr}.
@@ -158,12 +159,30 @@ interface LicenseRecord {
 
 export async function POST(request: Request) {
   try {
+    // RATE LIMIT: 10 license verify requests per 5 minutes per IP
+    const rateCheck = checkRateLimit(request, "licenseVerify");
+    if (!rateCheck.allowed) {
+      return rateLimitErrorResponse(rateCheck.retryAfter || 60);
+    }
+
+    // Log client IP for security audit
+    logClientIP(request, "license-verify");
+
     const body = await request.json();
     const { licenseKey, deviceId, feature, action } = body;
 
     if (!licenseKey || !deviceId) {
       return NextResponse.json(
         { valid: false, message: "License key and device ID required", code: "MISSING_PARAMS" },
+        { status: 403 }
+      );
+    }
+
+    // SECURITY: Validate key format (must match CRICB-XXXX-XXXX-XXXX pattern)
+    const keyPattern = /^[A-Z]+-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+    if (!keyPattern.test(String(licenseKey).toUpperCase())) {
+      return NextResponse.json(
+        { valid: false, message: "Invalid key format", code: "INVALID_FORMAT" },
         { status: 403 }
       );
     }

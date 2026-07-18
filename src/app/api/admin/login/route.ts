@@ -15,6 +15,7 @@
 
 import { NextResponse } from "next/server";
 import * as crypto from "crypto";
+import { checkRateLimit, rateLimitErrorResponse, logClientIP } from "@/lib/rate-limiter";
 
 export const runtime = "nodejs";
 
@@ -66,6 +67,15 @@ export function verifySessionToken(token: string | null | undefined): boolean {
 
 export async function POST(request: Request) {
   try {
+    // RATE LIMIT: 5 admin login attempts per 15 minutes per IP
+    const rateCheck = checkRateLimit(request, "adminLogin");
+    if (!rateCheck.allowed) {
+      return rateLimitErrorResponse(rateCheck.retryAfter || 900);
+    }
+
+    // Log client IP for security audit
+    logClientIP(request, "admin-login");
+
     const body = await request.json();
     const { password } = body;
 

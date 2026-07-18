@@ -9,6 +9,7 @@ import {
   useAdmin,
   type KeyType,
 } from "./admin-store";
+import { detectTampering, verifyLicenseIntegrity, resetTamperCount } from "./anti-tamper";
 
 /**
  * Server Time Cache
@@ -168,6 +169,27 @@ export function useLicense() {
   // Network errors / inconclusive results PRESERVE the license (user stays logged in).
   const hasVerifiedRef = useRef(false);
   useEffect(() => {
+    // ANTI-TAMPER: Check for localStorage manipulation on mount
+    if (typeof window !== "undefined") {
+      const tampered = detectTampering();
+      if (tampered) {
+        console.error("[useLicense] ⚠️ Tampering detected — forcing re-verification");
+        clearLicense();
+        setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
+        setIsExpired(true);
+        return;
+      }
+
+      // Verify license integrity
+      if (!verifyLicenseIntegrity()) {
+        console.error("[useLicense] ⚠️ License integrity check FAILED — clearing");
+        clearLicense();
+        setLicenseState({ verified: false, key: null, deviceId: getDeviceId(), keyType: null, expiresAt: null });
+        setIsExpired(true);
+        return;
+      }
+    }
+
     if (hasVerifiedRef.current) return; // Only verify once per session
     if (!licenseState.verified || !licenseState.key) return;
 
@@ -315,6 +337,8 @@ export function useLicense() {
           setIsExpired(false);
           setShowActivate(false);
           setKeyInput("");
+          // Reset tamper count on successful legitimate verification
+          resetTamperCount();
           resolve({ success: true, message: result.message || "✅ License Key Verified Successfully" });
         } else {
           resolve({ success: false, message: result.message || "Verification failed — unknown reason" });
