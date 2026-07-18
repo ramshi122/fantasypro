@@ -1221,6 +1221,9 @@ function ContestsTab() {
   const [selectedApp, setSelectedApp] = useState<FantasyAppSlug>("my11circle");
   const [jwtToken, setJwtToken] = useState("");
   const [authToken, setAuthToken] = useState("");
+  // Vercel Server Integration state
+  const [jwtVerifyStatus, setJwtVerifyStatus] = useState<"idle" | "verifying" | "verified" | "invalid" | "not-configured" | "server-error">("idle");
+  const [jwtVerifyMessage, setJwtVerifyMessage] = useState<string>("");
   const [matchId, setMatchId] = useState("");
   const [contestId, setContestId] = useState("");
   const [teamIds, setTeamIds] = useState("");
@@ -1277,6 +1280,8 @@ function ContestsTab() {
     }
 
     loadTokens();
+    // Check Vercel server JWT status on mount
+    checkServerStatus();
 
     return () => {
       if (unsubJwt) { try { unsubJwt(); } catch { /* ignore */ } }
@@ -1315,6 +1320,75 @@ function ContestsTab() {
         localStorage.setItem("user_token", tokenToSave);
       }
       toast.error("⚠️ JWT save failed: " + (err?.message || "Unknown error"));
+    }
+  }
+
+  // === Vercel Server Integration — Verify JWT against server-side secret ===
+  async function handleVerifyServerJwt() {
+    if (!jwtToken.trim()) {
+      toast.error("⚠️ JWT token നൽകുക — ആദ്യം token save ചെയ്യുക");
+      setJwtVerifyStatus("invalid");
+      setJwtVerifyMessage("No token — enter JWT token first");
+      return;
+    }
+
+    setJwtVerifyStatus("verifying");
+    setJwtVerifyMessage("Verifying JWT against server secret...");
+
+    try {
+      const res = await fetch("/api/admin/verify-jwt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: jwtToken.trim() }),
+      });
+      const data = await res.json();
+
+      if (!data.serverConnected) {
+        setJwtVerifyStatus("server-error");
+        setJwtVerifyMessage(data.message || "Server error — could not connect");
+        toast.error("❌ Server error — could not verify JWT");
+        return;
+      }
+
+      if (!data.configured) {
+        // JWT_SECRET not set in Vercel environment
+        setJwtVerifyStatus("not-configured");
+        setJwtVerifyMessage(data.message || "JWT Not Configured on server");
+        toast.warning("⚠️ JWT secret not configured on Vercel — set JWT_SECRET env var");
+        return;
+      }
+
+      if (data.verified) {
+        setJwtVerifyStatus("verified");
+        const payloadInfo = data.payload?.exp
+          ? ` (expires: ${new Date(data.payload.exp * 1000).toLocaleDateString()})`
+          : "";
+        setJwtVerifyMessage(`✅ JWT Verified — token is valid${payloadInfo}`);
+        toast.success("✅ Server Connected + JWT Verified");
+      } else {
+        setJwtVerifyStatus("invalid");
+        setJwtVerifyMessage(data.message || "Invalid JWT");
+        toast.error("❌ Invalid JWT — " + (data.message || "verification failed"));
+      }
+    } catch (err: any) {
+      console.error("[VerifyJWT] Error:", err);
+      setJwtVerifyStatus("server-error");
+      setJwtVerifyMessage("Network error — could not reach server");
+      toast.error("❌ Network error — could not verify JWT");
+    }
+  }
+
+  // Check server status on mount (without sending token)
+  async function checkServerStatus() {
+    try {
+      const res = await fetch("/api/admin/verify-jwt", { method: "GET" });
+      const data = await res.json();
+      if (data.serverConnected && !data.configured) {
+        setJwtVerifyStatus("not-configured");
+        setJwtVerifyMessage(data.message || "JWT secret not configured on server");
+      }
+    } catch {
+      // silent fail — don't bother user on mount
     }
   }
 
@@ -1527,6 +1601,86 @@ function ContestsTab() {
         </div>
         {jwtToken && (
           <p className="text-[9px] text-emerald-400 mt-1">✓ JWT token active</p>
+        )}
+      </div>
+
+      {/* Vercel Server Integration — NEW OPTIONAL SECTION */}
+      {/* Does NOT modify existing JWT Token settings above */}
+      <div className="bg-slate-800/70 rounded-xl p-3 border border-slate-700/50">
+        <h4 className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5 mb-1.5">
+          <Shield className="w-3 h-3 text-sky-400" />
+          Vercel Server Integration
+        </h4>
+        <p className="text-[9px] text-slate-500 mb-2">
+          Server-side JWT verification using Vercel Environment Variables (JWT_SECRET / ADMIN_JWT_SECRET). Secret is never shown in UI.
+        </p>
+
+        <div className="flex gap-2 items-center">
+          <Button
+            size="sm"
+            variant="outline"
+            className="bg-sky-900/30 border-sky-700 text-sky-300 hover:bg-sky-900/50 h-8 text-[10px]"
+            disabled={jwtVerifyStatus === "verifying" || !jwtToken.trim()}
+            onClick={handleVerifyServerJwt}
+          >
+            {jwtVerifyStatus === "verifying" ? (
+              <>
+                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                Verifying...
+              </>
+            ) : (
+              <>
+                <Shield className="w-3 h-3 mr-1" />
+                Verify Server JWT
+              </>
+            )}
+          </Button>
+
+          {/* Status indicator */}
+          {jwtVerifyStatus !== "idle" && jwtVerifyStatus !== "verifying" && (
+            <div className="flex items-center gap-1 text-[10px] font-bold">
+              {jwtVerifyStatus === "verified" && (
+                <>
+                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                  <span className="text-emerald-400">✅ Server Connected · JWT Verified</span>
+                </>
+              )}
+              {jwtVerifyStatus === "invalid" && (
+                <>
+                  <AlertTriangle className="w-3 h-3 text-red-400" />
+                  <span className="text-red-400">⚠️ Invalid JWT</span>
+                </>
+              )}
+              {jwtVerifyStatus === "not-configured" && (
+                <>
+                  <AlertTriangle className="w-3 h-3 text-amber-400" />
+                  <span className="text-amber-400">❌ JWT Not Configured</span>
+                </>
+              )}
+              {jwtVerifyStatus === "server-error" && (
+                <>
+                  <AlertTriangle className="w-3 h-3 text-red-400" />
+                  <span className="text-red-400">❌ Server Error</span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Detailed status message */}
+        {jwtVerifyMessage && (
+          <p className="text-[9px] text-slate-400 mt-1.5 italic">{jwtVerifyMessage}</p>
+        )}
+
+        {/* Setup instructions (only show if not configured) */}
+        {jwtVerifyStatus === "not-configured" && (
+          <div className="mt-2 bg-amber-950/30 border border-amber-800/50 rounded p-2 text-[9px] text-amber-300">
+            <p className="font-bold mb-0.5">Setup Instructions:</p>
+            <p>1. Go to Vercel Dashboard → Project → Settings → Environment Variables</p>
+            <p>2. Add variable: <code className="bg-slate-900 px-1 rounded">JWT_SECRET</code> or <code className="bg-slate-900 px-1 rounded">ADMIN_JWT_SECRET</code></p>
+            <p>3. Set value to your JWT signing secret</p>
+            <p>4. Redeploy the project</p>
+          </div>
         )}
       </div>
 
