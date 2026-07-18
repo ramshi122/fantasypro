@@ -1251,6 +1251,9 @@ function ContestsTab() {
   // Vercel Server Integration state
   const [jwtVerifyStatus, setJwtVerifyStatus] = useState<"idle" | "verifying" | "verified" | "invalid" | "not-configured" | "server-error">("idle");
   const [jwtVerifyMessage, setJwtVerifyMessage] = useState<string>("");
+  // Connect Account state
+  const [connecting, setConnecting] = useState(false);
+  const [connectStatus, setConnectStatus] = useState<"idle" | "connected" | "failed">("idle");
   const [matchId, setMatchId] = useState("");
   const [contestId, setContestId] = useState("");
   const [teamIds, setTeamIds] = useState("");
@@ -1347,6 +1350,58 @@ function ContestsTab() {
         localStorage.setItem("user_token", tokenToSave);
       }
       toast.error("⚠️ JWT save failed: " + (err?.message || "Unknown error"));
+    }
+  }
+
+  // === Connect Account — fetch latest JWT from Firestore + activate ===
+  // This button lets user manually trigger JWT fetch from shared backend.
+  // No need to open Admin Page or press Save — just click Connect Account.
+  async function handleConnectAccount() {
+    setConnecting(true);
+    setConnectStatus("idle");
+    toast.info("🔗 Connecting to account...");
+
+    try {
+      const { fetchJwtTokenFromFirestore } = await import("@/lib/admin-realtime-sync");
+
+      // 1. Fetch latest JWT from Firestore (shared backend/database)
+      const latestJwt = await fetchJwtTokenFromFirestore();
+
+      // 2. Validate token
+      if (!latestJwt || latestJwt.trim().length < 20) {
+        setConnectStatus("failed");
+        toast.error("❌ JWT ലഭിച്ചില്ല — Admin Page-ൽ JWT Token Save ചെയ്യുക");
+        console.error("[ConnectAccount] ❌ No valid JWT in Firestore");
+        return;
+      }
+
+      // 3. Save to localStorage (replace old token with valid token)
+      localStorage.setItem("user_token", latestJwt.trim());
+
+      // 4. Update JWT input field
+      setJwtToken(latestJwt.trim());
+
+      // 5. Authentication refresh — no app restart needed
+      // The next API call will use the new JWT from localStorage
+
+      setConnectStatus("connected");
+      console.log("[ConnectAccount] ✅ Account connected — JWT fetched + activated");
+      toast.success("✅ Account Connected Successfully");
+      toast.success("✅ ഏറ്റവും പുതിയ JWT ലഭിച്ചു");
+      toast.success("✅ Join Contest ചെയ്യാൻ തയ്യാറാണ്");
+    } catch (err: any) {
+      setConnectStatus("failed");
+      console.error("[ConnectAccount] ❌ Connection failed:", err);
+      const errMsg = err?.message || "Unknown error";
+      if (errMsg.toLowerCase().includes("network") || errMsg.toLowerCase().includes("fetch")) {
+        toast.error("⚠️ Network Error — ഇന്റർനെറ്റ് കണക്ഷൻ പരിശോധിക്കുക");
+      } else if (errMsg.toLowerCase().includes("permission")) {
+        toast.error("❌ Server Connection പരാജയപ്പെട്ടു — Permission denied");
+      } else {
+        toast.error("❌ Account Connection Failed: " + errMsg);
+      }
+    } finally {
+      setConnecting(false);
     }
   }
 
@@ -1836,6 +1891,45 @@ function ContestsTab() {
           >
             {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Send className="w-3 h-3 mr-1" />}
             Join All Teams
+          </Button>
+        </div>
+
+        {/* Connect Account — fetch latest JWT from shared backend + activate */}
+        {/* NEW EXTRA BUTTON — does NOT modify any existing UI/features */}
+        <div className="flex items-center gap-2">
+          <Button
+            className={cn(
+              "h-10 text-xs font-bold flex-1",
+              connectStatus === "connected"
+                ? "bg-emerald-700 hover:bg-emerald-800 text-white"
+                : connectStatus === "failed"
+                ? "bg-red-700 hover:bg-red-800 text-white"
+                : "bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-700 hover:to-blue-700 text-white"
+            )}
+            onClick={handleConnectAccount}
+            disabled={connecting}
+          >
+            {connecting ? (
+              <>
+                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                Connecting...
+              </>
+            ) : connectStatus === "connected" ? (
+              <>
+                <CheckCircle2 className="w-3 h-3 mr-1" />
+                Account Connected ✓
+              </>
+            ) : connectStatus === "failed" ? (
+              <>
+                <AlertTriangle className="w-3 h-3 mr-1" />
+                Connection Failed — Retry
+              </>
+            ) : (
+              <>
+                <Shield className="w-3 h-3 mr-1" />
+                🔗 Connect Account
+              </>
+            )}
           </Button>
         </div>
 
