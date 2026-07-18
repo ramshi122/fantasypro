@@ -70,6 +70,28 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
     // UI compatibility.
     admin.subscribeToFirebase();
 
+    // ===== JWT TOKEN AUTO-LOAD from Firestore on Admin Page open =====
+    // This ensures JWT token is fetched from Firestore (source of truth)
+    // IMMEDIATELY when Admin Page opens — regardless of which tab is active.
+    // Without this, JWT only loads when user navigates to Contests tab.
+    // With this, JWT is in localStorage ready for any tab that needs it.
+    (async () => {
+      try {
+        const { fetchJwtTokenFromFirestore, subscribeToJwtToken } = await import("@/lib/admin-realtime-sync");
+        const jwt = await fetchJwtTokenFromFirestore();
+        console.log("[AdminPanel] JWT auto-loaded from Firestore on page open:", jwt ? "✓ active" : "✗ empty");
+        // Subscribe to real-time JWT updates — any admin device saving a new
+        // token will instantly update localStorage on this device.
+        const unsub = subscribeToJwtToken((newToken) => {
+          console.log("[AdminPanel] 📡 JWT real-time sync:", newToken ? "✓ active" : "✗ cleared");
+        });
+        // Store unsub on window for cleanup (can't return from async IIFE)
+        (window as any).__jwtUnsub = unsub;
+      } catch (err) {
+        console.error("[AdminPanel] JWT auto-load failed:", err);
+      }
+    })();
+
     // ===== REAL-TIME SYNC: Refresh from Firebase every 30 seconds =====
     // Real-time updates come from onSnapshot listeners (instant).
     // This 30s polling is a FALLBACK to catch any missed updates.
@@ -78,7 +100,12 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
       admin.syncFromFirebase();
     }, 30_000); // 30 seconds — fallback for missed onSnapshot updates
 
-    return () => clearInterval(syncInterval);
+    return () => {
+      clearInterval(syncInterval);
+      // Cleanup JWT listener
+      const jwtUnsub = (window as any).__jwtUnsub;
+      if (jwtUnsub) { try { jwtUnsub(); } catch { /* ignore */ } }
+    };
   }, [open, admin.isAdminAuthenticated]);
 
   // Login gate
