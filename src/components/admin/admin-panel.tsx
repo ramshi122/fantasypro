@@ -58,6 +58,52 @@ interface AdminPanelProps {
 export function AdminPanel({ open, onClose }: AdminPanelProps) {
   const admin = useAdmin();
   const [tab, setTab] = useState<Tab>("dashboard");
+  // Connect Account state — at AdminPanel level so button is always visible
+  const [connecting, setConnecting] = useState(false);
+  const [connectStatus, setConnectStatus] = useState<"idle" | "connected" | "failed">("idle");
+
+  // Connect Account — fetch latest JWT from Firestore + activate
+  async function handleConnectAccount() {
+    setConnecting(true);
+    setConnectStatus("idle");
+    toast.info("🔗 Connecting to account...");
+
+    try {
+      const { fetchJwtTokenFromFirestore } = await import("@/lib/admin-realtime-sync");
+      const latestJwt = await fetchJwtTokenFromFirestore();
+
+      if (!latestJwt || latestJwt.trim().length < 20) {
+        setConnectStatus("failed");
+        toast.error("❌ JWT ലഭിച്ചില്ല — Admin Page-ൽ JWT Token Save ചെയ്യുക");
+        return;
+      }
+
+      // Save to localStorage
+      localStorage.setItem("user_token", latestJwt.trim());
+      setConnectStatus("connected");
+      console.log("[ConnectAccount] ✅ Account connected — JWT fetched + activated");
+      toast.success("✅ Account Connected Successfully");
+      toast.success("✅ ഏറ്റവും പുതിയ JWT ലഭിച്ചു");
+      toast.success("✅ Join Contest ചെയ്യാൻ തയ്യാറാണ്");
+
+      // Reset status after 3 seconds
+      setTimeout(() => setConnectStatus("idle"), 3000);
+    } catch (err: any) {
+      setConnectStatus("failed");
+      console.error("[ConnectAccount] ❌ Connection failed:", err);
+      const errMsg = err?.message || "Unknown error";
+      if (errMsg.toLowerCase().includes("network") || errMsg.toLowerCase().includes("fetch")) {
+        toast.error("⚠️ Network Error — ഇന്റർനെറ്റ് കണക്ഷൻ പരിശോധിക്കുക");
+      } else if (errMsg.toLowerCase().includes("permission")) {
+        toast.error("❌ Server Connection പരാജയപ്പെട്ടു — Permission denied");
+      } else {
+        toast.error("❌ Account Connection Failed: " + errMsg);
+      }
+      setTimeout(() => setConnectStatus("idle"), 3000);
+    } finally {
+      setConnecting(false);
+    }
+  }
 
   // Whenever the admin panel is opened (and after login), refresh the local
   // store from localStorage + hydrate any admin-generated keys from Firebase
@@ -170,6 +216,30 @@ export function AdminPanel({ open, onClose }: AdminPanelProps) {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {/* Connect Account button — ALWAYS VISIBLE on every tab */}
+                <Button
+                  size="sm"
+                  className={cn(
+                    "h-8 text-xs font-bold",
+                    connectStatus === "connected"
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                      : connectStatus === "failed"
+                      ? "bg-red-600 hover:bg-red-700 text-white"
+                      : "bg-sky-600 hover:bg-sky-700 text-white"
+                  )}
+                  onClick={handleConnectAccount}
+                  disabled={connecting}
+                >
+                  {connecting ? (
+                    <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Connecting...</>
+                  ) : connectStatus === "connected" ? (
+                    <><CheckCircle2 className="w-3 h-3 mr-1" /> Connected ✓</>
+                  ) : connectStatus === "failed" ? (
+                    <><AlertTriangle className="w-3 h-3 mr-1" /> Failed — Retry</>
+                  ) : (
+                    <><Shield className="w-3 h-3 mr-1" /> 🔗 Connect Account</>
+                  )}
+                </Button>
                 <Button
                   size="sm"
                   variant="ghost"
