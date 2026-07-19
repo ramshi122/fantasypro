@@ -168,6 +168,188 @@ function teamFingerprint(players: MatchPlayer[]): string {
     .join("|");
 }
 
+/* ============== MANDATORY POST-LINEUP VALIDATION ============== */
+
+/**
+ * Validate a single player against the confirmed Playing XI.
+ * Returns true if player is CONFIRMED playing, false if invalid.
+ *
+ * Checks:
+ *   ✅ playing === 1 (confirmed in official Playing XI)
+ *   ❌ playing === 0 (bench/substitute/offline/injured/retired/unavailable)
+ *   ❌ playing === undefined (unconfirmed — reject after lineup)
+ */
+function isPlayerConfirmedPlaying(p: MatchPlayer, lineupAnnounced: boolean): boolean {
+  if (!lineupAnnounced) return true; // Before lineup — all players OK
+  // After lineup: ONLY playing === 1 is valid
+  const playing = Number(p.playing);
+  return playing === 1;
+}
+
+/**
+ * Validate an entire team against the confirmed Playing XI.
+ * Returns { valid, invalidPlayers } — list of players that fail validation.
+ */
+function validateTeamAgainstPlayingXI(
+  team: MatchPlayer[],
+  lineupAnnounced: boolean,
+  playingPlayerIds: Set<string>
+): { valid: boolean; invalidPlayers: MatchPlayer[] } {
+  if (!lineupAnnounced) return { valid: true, invalidPlayers: [] };
+
+  const invalid: MatchPlayer[] = [];
+  for (const p of team) {
+    if (!isPlayerConfirmedPlaying(p, true)) {
+      invalid.push(p);
+    }
+    // Double-check: player ID must be in the confirmed playing set
+    const pid = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name);
+    if (!playingPlayerIds.has(pid) && !playingPlayerIds.has(pid.toLowerCase())) {
+      if (!invalid.includes(p)) invalid.push(p);
+    }
+  }
+
+  // Check for duplicate players
+  const seen = new Set<string>();
+  for (const p of team) {
+    const pid = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name);
+    if (seen.has(pid)) {
+      if (!invalid.includes(p)) invalid.push(p);
+    }
+    seen.add(pid);
+  }
+
+  return { valid: invalid.length === 0, invalidPlayers: invalid };
+}
+
+/**
+ * Replace invalid players with best available confirmed Playing XI players.
+ * Strategy:
+ *   1. Find invalid players in the team
+ *   2. For each, find a replacement of the SAME ROLE from confirmed playing pool
+ *   3. If no same-role replacement, pick any available confirmed player
+ *   4. Recalculate credits, role balance, C/VC
+ *   5. Repeat until team is 100% valid (or max retries reached)
+ */
+function replaceInvalidPlayers(
+  team: MatchPlayer[],
+  allPlayers: MatchPlayer[],
+  lineupAnnounced: boolean,
+  playingPlayerIds: Set<string>
+): { team: MatchPlayer[]; replaced: number; valid: boolean } {
+  if (!lineupAnnounced) return { team, replaced: 0, valid: true };
+
+  let currentTeam = [...team];
+  let totalReplaced = 0;
+  const maxRounds = 5; // Maximum replacement rounds to prevent infinite loops
+
+  for (let round = 0; round < maxRounds; round++) {
+    const validation = validateTeamAgainstPlayingXI(currentTeam, true, playingPlayerIds);
+    if (validation.valid) {
+      return { team: currentTeam, replaced: totalReplaced, valid: true };
+    }
+
+    // Get all confirmed playing players (not already in team)
+    const confirmedPool = allPlayers.filter((p) => isPlayerConfirmedPlaying(p, true));
+    const teamIds = new Set(currentTeam.map((p) => String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name)));
+
+    // Sort by credits descending for better replacements
+    const sortedPool = [...confirmedPool].sort((a, b) => Number(b.credits || 0) - Number(a.credits || 0));
+
+    for (const invalidPlayer of validation.invalidPlayers) {
+      const invalidRole = roleFromPlayerType(invalidPlayer.player_type, invalidPlayer.role as number);
+      const invalidId = String(invalidPlayer.player_fixed_id ?? invalidPlayer.pl_id ?? invalidPlayer.pid ?? invalidPlayer.name);
+
+      // Find replacement: same role, confirmed playing, not already in team
+      let replacement: MatchPlayer | null = null;
+
+      // Try same role + same team
+      replacement = sortedPool.find((rp) => {
+        const rpId = String(rp.player_fixed_id ?? rp.pl_id ?? rp.pid ?? rp.name);
+        const rpRole = roleFromPlayerType(rp.player_type, rp.role as number);
+        return rpRole === invalidRole && !teamIds.has(rpId) && rpId !== invalidId;
+      }) || null;
+
+      // Fallback 1: any role, confirmed playing, not in team
+      if (!replacement) {
+        replacement = sortedPool.find((rp) => {
+          const rpId = String(rp.player_fixed_id ?? rp.pl_id ?? rp.pid ?? rp.name);
+          return !teamIds.has(rpId) && rpId !== invalidId;
+        }) || null;
+      }
+
+      if (replacement) {
+        const replaceIdx = currentTeam.findIndex((p) =>
+          String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name) === invalidId
+        );
+        if (replaceIdx >= 0) {
+          currentTeam[replaceIdx] = replacement;
+          teamIds.add(String(replacement.player_fixed_id ?? replacement.pl_id ?? replacement.pid ?? replacement.name));
+          totalReplaced++;
+        }
+      }
+    }
+
+    // Re-validate after this round
+    const reValidation = validateTeamAgainstPlayingXI(currentTeam, true, playingPlayerIds);
+    if (reValidation.valid) {
+      return { team: currentTeam, replaced: totalReplaced, valid: true };
+    }
+  }
+
+  // Max rounds reached — check if still invalid
+  const finalValidation = validateTeamAgainstPlayingXI(currentTeam, true, playingPlayerIds);
+  return { team: currentTeam, replaced: totalReplaced, valid: finalValidation.valid };
+}
+
+/**
+ * FINAL MANDATORY VALIDATION — called before returning teams to UI.
+ * Rejects any team that contains invalid players after lineup.
+ * Returns only 100% valid teams.
+ */
+export function finalValidation(
+  teams: MatchPlayer[][],
+  allPlayers: MatchPlayer[],
+  lineupAnnounced: boolean,
+  playingPlayerIds: Set<string>
+): { validTeams: MatchPlayer[][]; rejected: number; replaced: number } {
+  if (!lineupAnnounced) {
+    return { validTeams: teams, rejected: 0, replaced: 0 };
+  }
+
+  const validTeams: MatchPlayer[][] = [];
+  let rejected = 0;
+  let totalReplaced = 0;
+
+  for (const team of teams) {
+    // Step 1: Try to fix the team by replacing invalid players
+    const { team: fixedTeam, replaced, valid } = replaceInvalidPlayers(
+      team,
+      allPlayers,
+      true,
+      playingPlayerIds
+    );
+    totalReplaced += replaced;
+
+    if (valid) {
+      // Step 2: Final validation — all checks must pass
+      const finalCheck = validateTeamAgainstPlayingXI(fixedTeam, true, playingPlayerIds);
+      if (finalCheck.valid && fixedTeam.length === 11 && isValidRoleBalance(fixedTeam) && isValidCredits(fixedTeam)) {
+        validTeams.push(fixedTeam);
+      } else {
+        rejected++;
+        console.warn(`[FinalValidation] ❌ Team rejected — failed final check`);
+      }
+    } else {
+      rejected++;
+      console.warn(`[FinalValidation] ❌ Team rejected — could not fix invalid players after 5 rounds`);
+    }
+  }
+
+  console.log(`[FinalValidation] ✅ ${validTeams.length} valid, ${rejected} rejected, ${totalReplaced} players replaced`);
+  return { validTeams, rejected, totalReplaced };
+}
+
 /* ============== Strategic Team Builder (DETERMINISTIC) ============== */
 
 type TeamType = "safe" | "balanced" | "differential";
@@ -868,6 +1050,33 @@ export async function generateSweep(
     phase: "deduplicating",
     message: "Validating uniqueness...",
   });
+
+  // === MANDATORY POST-LINEUP VALIDATION ===
+  // Detect if lineup is announced: if ANY player has playing === 1
+  const lineupDetected = cleaned.some((p) => Number(p.playing) === 1);
+  if (lineupDetected) {
+    console.log(`[generator] 🟢 Lineup detected — running mandatory post-lineup validation`);
+    const playerArrays = teams.map((t) => (t.players || []) as unknown as MatchPlayer[]);
+    const playingSet = new Set<string>();
+    // Build playing player IDs set from the cleaned pool
+    for (const p of cleaned) {
+      if (Number(p.playing) === 1) {
+        playingSet.add(String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name));
+      }
+    }
+    const validation = finalValidation(playerArrays, cleaned, true, playingSet);
+    if (validation.rejected > 0) {
+      console.warn(`[generator] ⚠️ ${validation.rejected} teams rejected by final validation, ${validation.replaced} players replaced`);
+    }
+    // Replace teams with validated ones
+    for (let i = 0; i < teams.length && i < validation.validTeams.length; i++) {
+      teams[i].players = validation.validTeams[i] as any;
+    }
+    // Remove rejected teams (they were not fixed)
+    if (validation.validTeams.length < teams.length) {
+      teams.length = validation.validTeams.length;
+    }
+  }
 
   // Final dedupe
   const finalTeams: TeamRow[] = [];
