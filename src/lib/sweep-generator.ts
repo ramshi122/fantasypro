@@ -584,6 +584,12 @@ export async function generateSweep(
     }
   };
 
+  // CRITICAL: Session seed — makes EVERY generateSweep call produce DIFFERENT teams.
+  // Without this, rotationOffset is deterministic (i*3+tries) → same teams every time.
+  // With this, each run gets a unique seed → different shuffle → different teams.
+  const sessionSeed = Date.now() % 2147483647;
+  console.log(`[generator] Session seed: ${sessionSeed} (ensures unique teams this run)`);
+
   // Generate teams in chunks
   const CHUNK = Math.max(5, Math.floor(count / 20));
   for (let i = 0; i < count; i++) {
@@ -596,8 +602,9 @@ export async function generateSweep(
       attempts++;
       if (attempts > maxAttempts) break;
 
-      // Rotation offset = i * 3 + tries (deterministic, varies picks)
-      const rotationOffset = i * 3 + tries;
+      // Rotation offset = sessionSeed + i * 3 + tries (UNIQUE per run)
+      // sessionSeed changes every millisecond → different shuffle every time
+      const rotationOffset = sessionSeed + i * 3 + tries;
       // PERFORMANCE: pass lookups to enable memoized shuffle cache
       const candidate = buildStrategicTeam(byRole, strategy, team1Name, team2Name, rotationOffset, lookups);
       if (!candidate) continue;

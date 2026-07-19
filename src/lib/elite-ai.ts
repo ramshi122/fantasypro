@@ -1940,13 +1940,16 @@ export function generateEliteTeams(
   const playerUsageCount = new Map<string, number>();
   const MAX_PLAYER_USAGE = Math.ceil(teamCount * 0.7); // max 70% of teams can have same player
 
+  // CRITICAL: Session seed — makes EVERY generateEliteTeams call produce DIFFERENT teams.
+  // Without this, seed is deterministic → same teams every time.
+  const sessionSeed = Date.now() % 2147483647;
+  console.log(`[EliteAI] Session seed: ${sessionSeed} (ensures unique teams this run)`);
+
   for (let i = 0; i < roleCompositions.length; i++) {
     const cfg = roleCompositions[i];
     const isMaxWin = i === 0; // First team = MAX WIN
-    // FIX: Shift rotation EVERY team (not every 4) for maximum diversity
-    // Each team gets a unique offset based on its index
-    const rotationOffset = i; // shifts every team
-    const seed = (i + 1) * 1337 + 42 + i * 7919;
+    const rotationOffset = i + sessionSeed; // shifts every team + unique per run
+    const seed = (i + 1) * 1337 + 42 + i * 7919 + sessionSeed;
     const rng = mulberry32(seed);
 
     // Pick players per role
