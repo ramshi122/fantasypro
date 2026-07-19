@@ -154,7 +154,13 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
 
       // Store in state for preview
       setGeneratedTeams(res.teams);
-      toast.success(`${announced ? "🟢 After Lineup" : "🟡 Before Lineup"}: Generated ${res.teams.length} teams in ${res.stats.durationMs}ms`);
+
+      // AUTO-SAVE: Immediately replace old teams with new ones in localStorage
+      // Don't wait for "Save Teams" button — user expects teams to be replaced
+      // immediately after generation
+      onGenerated(res.teams);
+
+      toast.success(`${announced ? "🟢 After Lineup" : "🟡 Before Lineup"}: Generated ${res.teams.length} teams in ${res.stats.durationMs}ms — old teams REPLACED!`);
     } catch (err: any) {
       toast.error(err?.message || "Generation failed");
     } finally {
