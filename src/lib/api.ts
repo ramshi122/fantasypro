@@ -1728,7 +1728,7 @@ export async function bulkTransferToLinkedAccount(
       players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
       fantasyApp: params.fantasyApp,
       authToken: params.authToken,
-      sportIndex: params.sportIndex ?? 0,
+      sportIndex: params.sportIndex ?? (params.fantasyApp === "my11circle" ? 1 : 0),
       type: isReplace ? "edit" : "new",
     };
     if (isReplace && params.existingTeamIds) body.id = params.existingTeamIds[i];

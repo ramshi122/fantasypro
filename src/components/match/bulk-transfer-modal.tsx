@@ -239,7 +239,7 @@ export function BulkTransferModal({
             matchId: matchNumericId,
             fantasyApp: selectedApp,
             authToken: account.token,
-            sportIndex: 0,
+            sportIndex: selectedApp === "my11circle" ? 1 : 0,
             my11circleChallenge: account.my11circleChallenge || undefined,
             my11circleUserId: account.my11circleUserId || undefined,
             mobileNumber: account.mobile || undefined,

@@ -326,7 +326,9 @@ export async function POST(request: Request) {
     const viceCaptainVal = vice_captain ?? viceCaptainId ?? vicecaptain;
 
     const app = fantasyApp || "dream11";
-    const sport = typeof sportIndex === "number" ? sportIndex : 0;
+    // My11Circle uses sportIndex 1 in the backend, Dream11 uses 0
+    // If sportIndex not explicitly provided, use platform-specific default
+    const sport = typeof sportIndex === "number" ? sportIndex : (app === "my11circle" ? 1 : 0);
     const operation: "add" | "edit" = type === "edit" ? "edit" : "add";
 
     // Parse player IDs - preserve types
