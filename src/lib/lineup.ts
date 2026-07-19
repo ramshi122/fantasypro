@@ -43,14 +43,30 @@ function normalizeId(id: string): string {
 
 /**
  * Filter players to only show confirmed playing XI after lineup is announced.
- * Before lineup, returns all players.
+ * Before lineup, returns all players EXCEPT those explicitly marked as not playing.
+ *
+ * SECURITY: Even before lineup, if a player has playing === 0 or playing === -1,
+ * they are EXCLUDED. This prevents offline/injured/dropped players from being
+ * included in generated teams.
  */
 export function filterPlayingPlayers(
   players: MatchPlayer[],
   lineupAnnounced: boolean
 ): MatchPlayer[] {
-  if (!lineupAnnounced) return players;
-  // After lineup: only show players with playing === 1
+  if (!lineupAnnounced) {
+    // Pre-lineup: exclude players EXPLICITLY marked as not playing
+    // playing === 0, -1, "false", "no" → excluded
+    // playing === undefined → kept (unknown status, might play)
+    // playing === 1 → kept (confirmed playing)
+    return players.filter((p) => {
+      const playing = p.playing;
+      if (playing === 0 || playing === -1 || playing === "false" || playing === "no") {
+        return false; // Explicitly not playing
+      }
+      return true;
+    });
+  }
+  // After lineup: ONLY playing === 1 — NO EXCEPTIONS
   return players.filter((p) => Number(p.playing) === 1);
 }
 

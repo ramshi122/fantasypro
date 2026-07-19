@@ -116,9 +116,10 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         const rightPlayers = (matchDetail as any).right_team_players || [];
         allPlayers = [...leftPlayers, ...rightPlayers].filter(Boolean);
 
-        // Detect lineup status
+        // Detect lineup status — check BOTH lineup_status AND player.playing field
         const lineupStatus = (matchDetail as any).lineup_status;
-        const announced = Number(lineupStatus) === 1;
+        const hasPlayingPlayers = allPlayers.some((p: any) => Number(p.playing) === 1);
+        const announced = Number(lineupStatus) === 1 || hasPlayingPlayers;
         setLineupAnnounced(announced);
 
         // Build set of confirmed playing player IDs

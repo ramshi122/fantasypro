@@ -104,14 +104,26 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
       if (allPlayers.length < 11) { toast.error(`Only ${allPlayers.length} players available`); setGenerating(false); return; }
 
       // === AFTER LINEUP: Filter to ONLY confirmed playing XI ===
-      // Remove bench players — only playing === 1
-      if (announced) {
+      // ALSO detect lineup even if lineup_status is not set but players have playing===1
+      const hasPlayingPlayers = allPlayers.some((p: any) => Number(p.playing) === 1);
+      const lineupActive = announced || hasPlayingPlayers;
+
+      if (lineupActive) {
+        // STRICT: ONLY playing === 1 players — NO exceptions
         const playingOnly = allPlayers.filter((p: any) => Number(p.playing) === 1);
+        console.log(`[generator] Lineup active: ${playingOnly.length} playing players out of ${allPlayers.length} total`);
+
         if (playingOnly.length >= 11) {
           allPlayers = playingOnly;
-          setProgress(`✅ Lineup announced — using ${allPlayers.length} confirmed playing XI players only`);
+          setProgress(`✅ Lineup confirmed — using ${allPlayers.length} playing XI players ONLY (bench removed)`);
+        } else if (playingOnly.length > 0) {
+          // Even if < 11 playing, still use ONLY playing players
+          // Generator will handle if not enough
+          allPlayers = playingOnly;
+          setProgress(`⚠️ Only ${playingOnly.length} confirmed playing — using them only (some teams may fail)`);
         } else {
-          setProgress(`⚠️ Lineup announced but only ${playingOnly.length} confirmed — using all ${allPlayers.length}`);
+          // No playing players marked — can't determine lineup
+          setProgress(`🟡 No playing status found — using all ${allPlayers.length} players (pre-lineup mode)`);
         }
       } else {
         setProgress(`🟡 Lineup pending — using all ${allPlayers.length} players (pre-lineup mode)`);
