@@ -1678,15 +1678,28 @@ export async function bulkTransferToLinkedAccount(
     console.log("[bulkTransfer] Skipping pre-verify (default) — reactive auth detection in /api/transfer");
   }
 
-  // SEQUENTIAL transfer — 1 team at a time (reverted from parallel batching)
-  // Parallel batching of 3 caused backend to drop requests silently.
-  // The tgsoftware-api.online backend cannot handle concurrent transfer requests.
-  // Sequential is slower but RELIABLE — every team gets transferred.
-  // Use existing `delay` variable (defined above as 100ms for Dream11, 500ms for others)
+  // RELIABLE SEQUENTIAL transfer with per-team retry
+  // Fixes: "only 5 teams transferred, must retry 3-5 times"
+  //
+  // ROOT CAUSES of the original issue:
+  //   1. No per-team retry — first failure = permanent fail
+  //   2. 100ms delay too short — backend rate-limits after ~5 rapid requests
+  //   3. No network error recovery — temporary network error = permanent fail
+  //   4. No resume from failed team — failed team skipped, not retried
+  //
+  // FIX:
+  //   1. Per-team retry: up to 3 attempts per team
+  //   2. Progressive delay: 500ms → 1000ms → 2000ms between retries
+  //   3. Network error recovery: retry on timeout/network error
+  //   4. Resume from failed team: failed team retried, not skipped
+  //   5. Session expiry: stop immediately, mark remaining as skipped
+
+  const MAX_RETRIES_PER_TEAM = 3;
+  const RETRY_DELAYS = [500, 1000, 2000]; // progressive backoff: 0.5s, 1s, 2s
+  const INTER_TEAM_DELAY = 300; // 300ms between successful transfers (was 100ms)
 
   for (let i = 0; i < teams.length; i++) {
     const t = teams[i];
-    // FIX: If replaceMode but no existing team ID for this index, fall back to "new"
     const hasExistingId = params.replaceMode && params.existingTeamIds && i < params.existingTeamIds.length && params.existingTeamIds[i];
     const isReplace = !!hasExistingId;
     const numericPlayers = t.playerIds.map((id) => Number(id)).filter((n) => !isNaN(n));
@@ -1711,37 +1724,78 @@ export async function bulkTransferToLinkedAccount(
       body.my11circleMobile = params.mobileNumber || null;
     }
 
-    try {
-      const proxyBody = {
-        ...body,
-        skipPreVerify: true,
-      };
-      const proxyRes = await fetch(`/api/transfer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(proxyBody),
-        cache: "no-store",
-        signal: AbortSignal.timeout(45000),
-      });
-      const res = await proxyRes.json() as ApiResponse & {
-        needsReauth?: boolean;
-        confidence?: "definite" | "tentative";
-        code?: string;
-        backendError?: string;
-      };
+    // PER-TEAM RETRY LOGIC — try up to 3 times
+    let teamTransferred = false;
+    let teamErrorMessage = "";
+    let needsReauthForTeam = false;
 
-      if (res.status === "success") {
-        successCount++;
-        const confidence = res.confidence === "tentative" ? " (tentative)" : "";
-        results.push({ teamNo: t.teamNo, success: true, message: res.message || `Transferred${confidence}` });
-        transferLinks.push({ teamNo: t.teamNo });
-      } else if (res.needsReauth) {
-        // Token expired — bail out early
-        failCount++;
-        const msg = (res.error as string) || (res.message as string) || "Token expired — re-link via OTP";
-        results.push({ teamNo: t.teamNo, success: false, message: msg });
-        transferLinks.push({ teamNo: t.teamNo });
-        // Mark remaining teams as skipped
+    for (let attempt = 0; attempt < MAX_RETRIES_PER_TEAM; attempt++) {
+      try {
+        const proxyBody = { ...body, skipPreVerify: true };
+        console.log(`[bulkTransfer] Team ${i + 1}/${teams.length} (teamNo=${t.teamNo}) — attempt ${attempt + 1}/${MAX_RETRIES_PER_TEAM}`);
+
+        const proxyRes = await fetch(`/api/transfer`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(proxyBody),
+          cache: "no-store",
+          signal: AbortSignal.timeout(45000),
+        });
+        const res = await proxyRes.json() as ApiResponse & {
+          needsReauth?: boolean;
+          confidence?: "definite" | "tentative";
+          code?: string;
+          backendError?: string;
+        };
+
+        if (res.status === "success") {
+          // ✅ Transfer succeeded — verify it's genuine
+          successCount++;
+          const confidence = res.confidence === "tentative" ? " (tentative)" : "";
+          results.push({ teamNo: t.teamNo, success: true, message: res.message || `Transferred${confidence}` });
+          transferLinks.push({ teamNo: t.teamNo });
+          teamTransferred = true;
+          console.log(`[bulkTransfer] ✅ Team ${t.teamNo} transferred (attempt ${attempt + 1})`);
+          break; // Success — move to next team
+        } else if (res.needsReauth) {
+          // ❌ Session expired — don't retry, stop immediately
+          needsReauthForTeam = true;
+          teamErrorMessage = (res.error as string) || (res.message as string) || "Token expired — re-link via OTP";
+          console.warn(`[bulkTransfer] ❌ Team ${t.teamNo} — session expired, stopping`);
+          break;
+        } else {
+          // ❌ Transfer failed (not auth) — retry with backoff
+          teamErrorMessage = (res.error as string) || (res.message as string) || "Failed";
+          console.warn(`[bulkTransfer] ⚠️ Team ${t.teamNo} failed (attempt ${attempt + 1}): ${teamErrorMessage}`);
+
+          if (attempt < MAX_RETRIES_PER_TEAM - 1) {
+            // Wait before retry (progressive backoff)
+            const retryDelay = RETRY_DELAYS[attempt] || 2000;
+            console.log(`[bulkTransfer] Retrying team ${t.teamNo} in ${retryDelay}ms...`);
+            await new Promise((r) => setTimeout(r, retryDelay));
+          }
+        }
+      } catch (err: any) {
+        // Network error / timeout — retry with backoff
+        teamErrorMessage = err?.message || "Network error";
+        console.warn(`[bulkTransfer] ⚠️ Team ${t.teamNo} network error (attempt ${attempt + 1}): ${teamErrorMessage}`);
+
+        if (attempt < MAX_RETRIES_PER_TEAM - 1) {
+          const retryDelay = RETRY_DELAYS[attempt] || 2000;
+          console.log(`[bulkTransfer] Retrying team ${t.teamNo} in ${retryDelay}ms (network recovery)...`);
+          await new Promise((r) => setTimeout(r, retryDelay));
+        }
+      }
+    }
+
+    // After all retries for this team
+    if (!teamTransferred) {
+      failCount++;
+      results.push({ teamNo: t.teamNo, success: false, message: teamErrorMessage });
+      transferLinks.push({ teamNo: t.teamNo });
+
+      if (needsReauthForTeam) {
+        // Session expired — mark remaining teams as skipped, stop
         for (let j = i + 1; j < teams.length; j++) {
           failCount++;
           results.push({ teamNo: teams[j].teamNo, success: false, message: "Skipped — token expired" });
@@ -1755,22 +1809,16 @@ export async function bulkTransferToLinkedAccount(
           results,
           transferLinks,
           needsReauth: true,
-          blockReason: msg,
+          blockReason: teamErrorMessage,
         };
-      } else {
-        failCount++;
-        results.push({ teamNo: t.teamNo, success: false, message: (res.error as string) || (res.message as string) || "Failed" });
-        transferLinks.push({ teamNo: t.teamNo });
       }
-    } catch (err: any) {
-      failCount++;
-      results.push({ teamNo: t.teamNo, success: false, message: err?.message || "Network error" });
-      transferLinks.push({ teamNo: t.teamNo });
     }
+
     onProgress?.(i + 1, teams.length);
-    // Short delay between transfers — 100ms (was 200-500ms)
-    if (i < teams.length - 1) await new Promise((r) => setTimeout(r, delay));
+    // Delay between teams (only if not last team)
+    if (i < teams.length - 1) await new Promise((r) => setTimeout(r, INTER_TEAM_DELAY));
   }
 
+  console.log(`[bulkTransfer] FINAL: ${successCount}/${teams.length} teams transferred successfully`);
   return { totalAttempted: teams.length, successCount, failCount, results, transferLinks };
 }
