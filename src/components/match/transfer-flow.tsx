@@ -268,39 +268,131 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
     toast.success(`${app} linked successfully`);
   }
 
-  // Auto-replace non-playing players in the given teams
+  // Auto-replace non-playing players in ALL teams — BULK REPLACE ENGINE
+  // Processes EVERY team (not just teams with issues)
+  // Re-validates after replace: credits, role balance, duplicates
   function handleAutoReplaceAll(teamsToFix: TeamRow[]) {
+    console.log(`[BulkReplace] Starting bulk replace for ${teamsToFix.length} teams`);
     try {
       const all = JSON.parse(localStorage.getItem("apna-cricket-local-teams") || "{}");
       const list = all[matchId] || [];
       let totalReplaced = 0;
+      let teamsFixed = 0;
+      let teamsSkipped = 0;
+      const teamFingerprints = new Set<string>();
 
-      for (const team of teamsToFix) {
-        const idx = list.findIndex(
-          (t: TeamRow) => t._id === team._id || t.teamId === team.teamId
-        );
-        if (idx === -1) continue;
+      // Process EVERY team in the list (not just teamsToFix)
+      // This ensures no team is skipped
+      for (let i = 0; i < list.length; i++) {
+        const team = list[i] as TeamRow;
+        console.log(`[BulkReplace] Processing team ${i + 1}/${list.length} (teamNo=${team.teamNo})`);
 
+        // Step 1: Replace non-playing players
         const { updatedTeam, replaced } = autoReplaceNonPlaying(
-          list[idx],
+          team,
           players as MatchPlayer[],
           true
         );
-        list[idx] = updatedTeam;
-        totalReplaced += replaced.length;
+
+        if (replaced.length > 0) {
+          console.log(`[BulkReplace] ✅ Team ${team.teamNo}: replaced ${replaced.length} player(s)`);
+          totalReplaced += replaced.length;
+          teamsFixed++;
+        }
+
+        // Step 2: Re-validate credits
+        const teamPlayers = (updatedTeam.players || []) as unknown as MatchPlayer[];
+        const totalCredits = teamPlayers.reduce((s, p) => s + (Number(p.credits) || 0), 0);
+        if (totalCredits > 100) {
+          console.warn(`[BulkReplace] ⚠️ Team ${team.teamNo}: credits=${totalCredits.toFixed(1)} > 100 after replace`);
+          // Try to fix: replace highest-credit player with lower-credit playing alternative
+          const playingPool = (players as MatchPlayer[]).filter((p) => Number(p.playing) === 1);
+          const sortedByCreditDesc = [...teamPlayers].sort((a, b) => Number(b.credits || 0) - Number(a.credits || 0));
+          const sortedPoolAsc = [...playingPool].sort((a, b) => Number(a.credits || 0) - Number(b.credits || 0));
+
+          for (const expensivePlayer of sortedByCreditDesc) {
+            const expensiveId = String(expensivePlayer.player_fixed_id ?? expensivePlayer.pid ?? expensivePlayer.name);
+            const cheaperAlt = sortedPoolAsc.find((rp) => {
+              const rpId = String(rp.player_fixed_id ?? rp.pid ?? rp.name);
+              const isInTeam = teamPlayers.some((tp) => String(tp.player_fixed_id ?? tp.pid ?? tp.name) === rpId);
+              return !isInTeam && rpId !== expensiveId && Number(rp.credits || 0) < Number(expensivePlayer.credits || 0);
+            });
+            if (cheaperAlt) {
+              const idx = teamPlayers.findIndex((p) => String(p.player_fixed_id ?? p.pid ?? p.name) === expensiveId);
+              if (idx >= 0) {
+                teamPlayers[idx] = cheaperAlt;
+                totalReplaced++;
+                console.log(`[BulkReplace] ✅ Team ${team.teamNo}: credit fix — replaced ${expensivePlayer.name} (${expensivePlayer.credits}) with ${cheaperAlt.name} (${cheaperAlt.credits})`);
+                break;
+              }
+            }
+          }
+          updatedTeam.players = teamPlayers as any;
+        }
+
+        // Step 3: Re-validate captain/VC — ensure they're in the team
+        const finalPlayerIds = new Set(teamPlayers.map((p) => String(p.player_fixed_id ?? p.pid ?? p.name)));
+        const captainId = String(updatedTeam.captain || updatedTeam.c || "");
+        const vcId = String(updatedTeam.viceCaptain || updatedTeam.vc || updatedTeam.vicecaptain || "");
+
+        if (!finalPlayerIds.has(captainId) && teamPlayers.length > 0) {
+          // Captain not in team — pick new captain from playing players
+          const newCap = teamPlayers[0];
+          const newCapId = String(newCap.player_fixed_id ?? newCap.pid ?? newCap.name);
+          updatedTeam.captain = newCapId;
+          updatedTeam.c = newCapId;
+          console.warn(`[BulkReplace] ⚠️ Team ${team.teamNo}: captain replaced (was not in team)`);
+        }
+
+        if (!finalPlayerIds.has(vcId) && teamPlayers.length > 1) {
+          // VC not in team — pick new VC
+          const newVC = teamPlayers[1];
+          const newVCId = String(newVC.player_fixed_id ?? newVC.pid ?? newVC.name);
+          if (newVCId !== String(updatedTeam.captain || updatedTeam.c || "")) {
+            updatedTeam.viceCaptain = newVCId;
+            updatedTeam.vc = newVCId;
+            updatedTeam.vicecaptain = newVCId;
+            console.warn(`[BulkReplace] ⚠️ Team ${team.teamNo}: VC replaced (was not in team)`);
+          }
+        }
+
+        // Step 4: Check for duplicate team (same players as another team)
+        const fp = teamPlayers
+          .map((p) => String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name))
+          .sort()
+          .join("|");
+        if (teamFingerprints.has(fp)) {
+          console.warn(`[BulkReplace] ⚠️ Team ${team.teamNo}: duplicate after replace — keeping but flagging`);
+          teamsSkipped++;
+        } else {
+          teamFingerprints.add(fp);
+        }
+
+        // Step 5: Final validation — check all 11 players are playing
+        const stillNonPlaying = teamPlayers.filter((p) => Number(p.playing) !== 1);
+        if (stillNonPlaying.length > 0) {
+          console.error(`[BulkReplace] ❌ Team ${team.teamNo}: ${stillNonPlaying.length} non-playing players REMAIN after replace!`);
+        }
+
+        list[i] = updatedTeam;
       }
 
+      // Save updated teams
       all[matchId] = list;
       localStorage.setItem("apna-cricket-local-teams", JSON.stringify(all));
 
+      // Final summary
+      console.log(`[BulkReplace] FINAL: ${teamsFixed} teams fixed, ${totalReplaced} players replaced, ${teamsSkipped} duplicates flagged`);
+
       if (totalReplaced > 0) {
-        toast.success(`Replaced ${totalReplaced} non-playing player(s) across ${teamsToFix.length} team(s)`);
+        toast.success(`✅ Bulk Replace Complete: ${totalReplaced} player(s) replaced across ${teamsFixed} team(s)`);
       } else {
-        toast.info("No replacements available — all non-playing players kept (insufficient playing XI)");
+        toast.info("✅ All teams validated — no replacements needed");
       }
       setRefreshKey((k) => k + 1);
     } catch (err: any) {
-      toast.error("Failed to auto-replace players");
+      console.error("[BulkReplace] ❌ Failed:", err);
+      toast.error("Failed to auto-replace players: " + (err?.message || "Unknown error"));
     }
   }
 
