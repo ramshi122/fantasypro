@@ -73,7 +73,7 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
           onCardClick();
         }
       }}
-      className="w-full text-left bg-white dark:bg-card rounded-2xl shadow-sm border border-violet-100 dark:border-violet-900/30 hover:shadow-md hover:border-violet-200 dark:hover:border-violet-800 transition-all overflow-hidden group cursor-pointer"
+      className="w-full text-left premium-card rounded-2xl overflow-hidden group cursor-pointer"
     >
       {/* Series name / match title strip */}
       <div className="px-4 pt-3 pb-2 flex items-center justify-between">
@@ -81,7 +81,7 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
           {match.series || match.title || match.subTitle || "Match"}
         </p>
         {live && (
-          <span className="ml-2 flex-shrink-0 inline-flex items-center gap-1 text-[9px] font-bold text-red-600 bg-red-50 dark:bg-red-950/40 px-2 py-0.5 rounded-full">
+          <span className="ml-2 flex-shrink-0 inline-flex items-center gap-1 text-[9px] font-bold text-red-400 bg-red-950/40 border border-red-500/30 px-2 py-0.5 rounded-full premium-live-pulse tracking-wider">
             <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
             LIVE
           </span>
@@ -100,14 +100,14 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
 
         {/* Countdown */}
         <div className="flex flex-col items-center px-3">
-          <div className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground mb-0.5">
+          <div className="flex items-center gap-1 premium-micro-label text-muted-foreground mb-1">
             <Clock className="w-3 h-3" />
             <span>{live ? "In progress" : "Starts in"}</span>
           </div>
           <div
             className={cn(
-              "text-sm font-bold tabular-nums",
-              live ? "text-red-600" : "text-violet-700 dark:text-violet-300"
+              "text-base font-black tabular-nums tracking-tight",
+              live ? "text-red-400" : "premium-gold-text"
             )}
           >
             {countdown}
@@ -126,7 +126,7 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
       {/* Fantasy app support badges */}
       {supportedApps.length > 0 && (
         <div className="px-4 pb-2 flex items-center gap-1 flex-wrap">
-          <span className="text-[8px] font-bold text-muted-foreground uppercase tracking-wider mr-0.5">
+          <span className="premium-micro-label text-muted-foreground mr-0.5">
             Supports:
           </span>
           {supportedApps.map((app) => {
@@ -135,7 +135,7 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
               <span
                 key={app}
                 className={cn(
-                  "inline-flex items-center gap-0.5 text-[8px] font-bold px-1.5 py-0.5 rounded-md",
+                  "inline-flex items-center gap-0.5 text-[8px] font-bold px-1.5 py-0.5 rounded-md border border-white/15 premium-inner-highlight",
                   meta.bg,
                   meta.text
                 )}
@@ -149,7 +149,7 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
       )}
 
       {/* Footer badges */}
-      <div className="px-4 pb-3 pt-2 border-t border-violet-50 dark:border-violet-900/20 flex items-center justify-between">
+      <div className="px-4 pb-3 pt-2 border-t border-white/[0.06] flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <Badge variant="gl">MEGA GL</Badge>
           <Badge variant="sl">SL</Badge>
@@ -158,10 +158,10 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
         <button
           onClick={onSaveClick}
           className={cn(
-            "flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors",
+            "flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full transition-all active:scale-95 border",
             saved
-              ? "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
-              : "text-muted-foreground hover:bg-violet-50 dark:hover:bg-violet-900/20"
+              ? "brand-gradient text-black border-amber-400/40 premium-inner-highlight font-bold"
+              : "text-muted-foreground border-white/10 hover:border-amber-500/30 hover:text-amber-400"
           )}
         >
           <Bookmark
@@ -179,7 +179,7 @@ function TeamAvatar({ name, logo }: { name: string; logo?: string }) {
   const color = teamColor(name);
   if (logo) {
     return (
-      <div className="w-11 h-11 rounded-full bg-violet-50 dark:bg-violet-900/20 p-0.5 flex items-center justify-center">
+      <div className="w-11 h-11 rounded-full bg-violet-50 dark:bg-violet-900/20 p-0.5 flex items-center justify-center ring-1 ring-amber-500/20 shadow-sm">
         <img
           src={logo}
           alt={name}
@@ -193,7 +193,7 @@ function TeamAvatar({ name, logo }: { name: string; logo?: string }) {
   }
   return (
     <div
-      className="w-11 h-11 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-md"
+      className="w-11 h-11 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-md ring-1 ring-amber-500/25 premium-inner-highlight"
       style={{ backgroundColor: color }}
     >
       {shortName(name, 3)}
@@ -203,12 +203,12 @@ function TeamAvatar({ name, logo }: { name: string; logo?: string }) {
 
 function Badge({ variant, children }: { variant: "gl" | "sl" | "h2h"; children: React.ReactNode }) {
   const styles = {
-    gl: "bg-gradient-to-r from-amber-100 to-yellow-100 text-amber-700 dark:from-amber-950/40 dark:to-yellow-950/40 dark:text-amber-300",
-    sl: "bg-gradient-to-r from-emerald-100 to-green-100 text-emerald-700 dark:from-emerald-950/40 dark:to-green-950/40 dark:text-emerald-300",
-    h2h: "bg-gradient-to-r from-sky-100 to-blue-100 text-sky-700 dark:from-sky-950/40 dark:to-blue-950/40 dark:text-sky-300",
+    gl: "bg-gradient-to-r from-amber-100 to-yellow-100 text-amber-700 dark:from-amber-950/50 dark:to-yellow-950/50 dark:text-amber-300 border-amber-500/30",
+    sl: "bg-gradient-to-r from-emerald-100 to-green-100 text-emerald-700 dark:from-emerald-950/50 dark:to-green-950/50 dark:text-emerald-300 border-emerald-500/30",
+    h2h: "bg-gradient-to-r from-sky-100 to-blue-100 text-sky-700 dark:from-sky-950/50 dark:to-blue-950/50 dark:text-sky-300 border-sky-500/30",
   } as const;
   return (
-    <span className={cn("text-[9px] font-bold px-2 py-0.5 rounded-full", styles[variant])}>
+    <span className={cn("text-[9px] font-bold px-2 py-0.5 rounded-full border tracking-wider premium-inner-highlight", styles[variant])}>
       {children}
     </span>
   );

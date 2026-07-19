@@ -1161,3 +1161,115 @@ Stage Summary:
   6. /api/transfer routes to /api/fantasy/edit-team with correct payload
   7. Backend replaces the existing team instead of creating a new one
 - Pushed to GitHub: commit 48dff70
+
+---
+Task ID: premium-ui-refinement
+Agent: frontend-styling-expert
+Task: Premium branded UI refinement — CSS only, no logic changes
+
+Work Log:
+- Read worklog.md (last 50 lines) for context. Previous task was My11Circle
+  replace fix (unrelated to UI).
+- Read all 6 target files (globals.css, top-header.tsx, bottom-nav.tsx,
+  home-screen.tsx, match-card.tsx, brand-logo.tsx) before editing.
+- globals.css: refined body background to deeper navy (#07071a) with subtle
+  purple-tinted + gold ambient radial overlays (fixed attachment); refined
+  .premium-gold-text to metallic gold gradient (5 stops: #fff7d6 → #fde68a →
+  #fbbf24 → #f59e0b → #b45309); added 11 new premium utility classes:
+  .gold-text-gradient, .premium-hairline, .premium-inner-highlight,
+  .premium-card (+ :hover), .premium-card-gold (+ :hover), .premium-chip,
+  .premium-header, .premium-nav, .premium-glow-soft, .premium-shimmer,
+  .premium-nav-active, .premium-pulse-dot, .premium-live-pulse,
+  .premium-micro-label, .premium-status-pill (::before pseudo-element for
+  PREMIUM pill — no DOM added), .premium-icon-btn (+ :hover).
+  PRESERVED all V77 Fantasy Theme tokens (--bg, --panel, --gold, --cyan,
+  etc.) and all existing utility classes — only ADDED new ones + refined
+  premium-gold-text + body bg.
+- top-header.tsx: swapped <header> inline style + conflicting classes for
+  `premium-header` class (refined backdrop blur 18px + saturate, gold-tinted
+  bottom border, inset shadow). Added `premium-icon-btn` to menu + bell
+  buttons (hairline border + inner highlight + gold hover glow). Added
+  `premium-status-pill` class to bell button — its ::before pseudo-element
+  renders a gold "PREMIUM" pill to the left of the bell (no DOM added).
+  Notification dot: swapped to amber-400 + ring-[#07071a] + premium-pulse-dot
+  (soft pulsing gold glow). No DOM/JSX/props changed.
+- bottom-nav.tsx: swapped nav border/bg/backdrop classes for `premium-nav`
+  (refined backdrop 18px saturate, top-edge highlight, top hairline border).
+  Active tab: replaced `bg-amber-50 dark:bg-amber-950/30` with
+  `premium-nav-active` (soft radial gold glow underneath via inset shadow).
+  Active icon: scale-110 + amber-400 + font-semibold on label. Active dot:
+  added `premium-pulse-dot` for soft pulse. No DOM/JSX/props changed.
+- home-screen.tsx: hero banner — replaced border-amber-600/30 with
+  `premium-hairline premium-glow-soft` (hairline + soft ambient gold glow).
+  StatCard: added `border border-white/15 premium-inner-highlight
+  hover:scale-[1.02] transition-transform`; label uses premium-micro-label
+  (uppercase tracked-out 0.2em); value uses tabular-nums + tracking-tight
+  + font-black. No DOM/JSX/props changed.
+- match-card.tsx: main card className swapped from
+  `bg-white dark:bg-card rounded-2xl shadow-sm border-violet-100 ...` to
+  `premium-card rounded-2xl` (layered gradient bg, hairline border, inset
+  top highlight, hover translateY(-2px) + gold border glow + shadow).
+  LIVE badge: refined to red-400 text on red-950/40 bg with red-500/30
+  border + premium-live-pulse (soft red glow pulse). Team avatars: added
+  ring-1 ring-amber-500/20-25 + shadow-sm + premium-inner-highlight.
+  Countdown: bumped text-sm → text-base font-black tracking-tight,
+  non-live uses premium-gold-text (metallic gold), label uses
+  premium-micro-label. Fantasy app badges: added border-white/15 +
+  premium-inner-highlight (chip-like). Footer badges (MEGA GL/SL/H2H):
+  added border + premium-inner-highlight + tracking-wider, deeper 950/50
+  dark bgs for richer chip look. Save button: saved state uses
+  brand-gradient (gold) + amber border + premium-inner-highlight + bold;
+  unsaved uses subtle white/10 border with gold hover; added active:scale-95
+  click feedback. Footer border-t refined to white/[0.06]. No DOM/JSX/
+  props/handlers changed.
+- brand-logo.tsx: logo container (both image + fallback gradient mark)
+  added ring-1 ring-amber-500/20-30 + premium-inner-highlight; shadow
+  color changed from violet-500/30 to amber-500/30 (on-brand). "Fantasy
+  Team" subtitle uses premium-micro-label + amber-400/80. No DOM/JSX/
+  props changed.
+
+Strict rule compliance check:
+- ✅ ONLY CSS/styling/className changes — no logic, state, props, handlers,
+  hooks, types, or function signatures modified.
+- ✅ No imports added/removed.
+- ✅ No JSX restructured — no DOM elements moved/added/removed. The
+  "PREMIUM" pill is rendered via CSS ::before pseudo-element on the existing
+  bell button (no new DOM node).
+- ✅ All V77 fantasy theme tokens preserved (untouched).
+- ✅ All existing utility classes (.brand-gradient, .brand-gradient-text,
+  .premium-gold-gradient, .premium-dark-card, .premium-glow,
+  .scrollbar-thin, .no-scrollbar, .animate-shimmer, .animate-pulse-glow)
+  preserved.
+- ✅ No files under /api/, /lib/, /prisma/, /db/, /scripts/ touched.
+- ✅ Admin panel UI untouched.
+- ✅ Dark-mode behavior preserved (app is dark-only).
+
+Stage Summary:
+- Files changed (6):
+  1. src/app/globals.css — body bg refined + premium-gold-text refined +
+     15 new premium utility classes added (no existing class removed).
+  2. src/components/nav/top-header.tsx — premium-header, premium-icon-btn,
+     premium-status-pill (CSS PREMIUM pill), premium-pulse-dot on notif.
+  3. src/components/nav/bottom-nav.tsx — premium-nav, premium-nav-active,
+     premium-pulse-dot, active icon scale + amber color.
+  4. src/components/home/home-screen.tsx — hero banner premium-hairline +
+     premium-glow-soft; StatCard premium-inner-highlight + hover scale +
+     premium-micro-label + tabular-nums.
+  5. src/components/home/match-card.tsx — premium-card, premium-live-pulse,
+     premium-gold-text countdown, premium-micro-label, gold-ringed avatars,
+     chip-style badges, gold-gradient save button, active:scale-95.
+  6. src/components/brand-logo.tsx — gold ring + premium-inner-highlight on
+     logo container, amber shadow, premium-micro-label subtitle.
+- Visual improvements: deeper navy bg with ambient gold/purple radial glow;
+  metallic gold text gradient; layered premium cards with hairline borders +
+  inset top highlights + hover lift + gold border glow; refined header with
+  gold-tinted bottom border + PREMIUM status pill (CSS-only); refined bottom
+  nav with top-edge highlight + active-tab radial gold glow + pulsing dot;
+  premium chip badges with hairline borders; gold-ringed team avatars;
+  metallic-gold countdown; pulsing red LIVE badge; gold-gradient saved
+  button with click scale; consistent tabular-nums on all numeric displays;
+  uppercase tracked-out micro-labels throughout.
+- Build status: ✓ npm run build — Compiled successfully in 20.5s. All 46
+  static pages generated. Zero TypeScript errors. Zero regressions. (2
+  pre-existing warnings about html2canvas-pro in titan-research.tsx — a
+  file NOT touched by this task.)

@@ -34,13 +34,13 @@ export function TopHeader({ onAdminTrigger }: { onAdminTrigger?: () => void }) {
   }
 
   return (
-    <header className="sticky top-0 z-40 backdrop-blur-xl border-b border-amber-600/30" style={{ background: "rgba(10, 10, 26, 0.92)" }}>
+    <header className="sticky top-0 z-40 premium-header">
       <div className="max-w-3xl mx-auto px-4 h-16 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
               <button
-                className="p-2 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors"
+                className="p-2 rounded-lg premium-icon-btn hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors"
                 aria-label="Open menu"
               >
                 <Menu className="w-5 h-5 text-amber-600 dark:text-amber-400" />
@@ -103,11 +103,11 @@ export function TopHeader({ onAdminTrigger }: { onAdminTrigger?: () => void }) {
         </div>
 
         <button
-          className="relative p-2 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors"
+          className="relative p-2 rounded-lg premium-icon-btn premium-status-pill hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors"
           aria-label="Notifications"
         >
           <Bell className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-amber-500 rounded-full ring-2 ring-white dark:ring-background animate-pulse-glow" />
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-amber-400 rounded-full ring-2 ring-[#07071a] premium-pulse-dot" />
         </button>
       </div>
     </header>

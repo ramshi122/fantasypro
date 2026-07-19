@@ -21,7 +21,7 @@ export function BrandLogo({
     return (
       <div className={cn("flex items-center gap-2.5", className)}>
         <div
-          className="rounded-xl overflow-hidden flex items-center justify-center shadow-md bg-white/5"
+          className="rounded-xl overflow-hidden flex items-center justify-center shadow-md bg-white/5 ring-1 ring-amber-500/20 premium-inner-highlight"
           style={{ width: size, height: size }}
         >
           <img
@@ -33,7 +33,7 @@ export function BrandLogo({
               (e.currentTarget as HTMLImageElement).style.display = "none";
               const parent = (e.currentTarget as HTMLImageElement).parentElement;
               if (parent) {
-                parent.className = "brand-gradient rounded-xl flex items-center justify-center shadow-lg shadow-violet-500/30";
+                parent.className = "brand-gradient rounded-xl flex items-center justify-center shadow-lg shadow-amber-500/30 ring-1 ring-amber-300/30 premium-inner-highlight";
                 parent.innerHTML = `<span style="font-size: ${size * 0.4}" class="font-black text-white leading-none">AC</span>`;
               }
             }}
@@ -49,7 +49,7 @@ export function BrandLogo({
             >
               Apna Cricket
             </span>
-            <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold tracking-wider uppercase">
+            <span className="premium-micro-label text-amber-400/80 mt-1">
               Fantasy Team
             </span>
           </div>
@@ -62,7 +62,7 @@ export function BrandLogo({
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
       <div
-        className="brand-gradient rounded-2xl flex items-center justify-center shadow-lg shadow-violet-500/30"
+        className="brand-gradient rounded-2xl flex items-center justify-center shadow-lg shadow-amber-500/30 ring-1 ring-amber-300/30 premium-inner-highlight"
         style={{ width: size, height: size }}
       >
         <span
@@ -82,7 +82,7 @@ export function BrandLogo({
           >
             Apna Cricket
           </span>
-          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold tracking-wider uppercase">
+          <span className="premium-micro-label text-amber-400/80 mt-1">
             Fantasy Team
           </span>
         </div>

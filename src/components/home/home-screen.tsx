@@ -66,7 +66,7 @@ export function HomeScreen() {
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="block w-full rounded-2xl overflow-hidden shadow-xl relative bg-slate-950 border border-amber-600/30"
+        className="block w-full rounded-2xl overflow-hidden shadow-xl relative bg-slate-950 premium-hairline premium-glow-soft"
         style={{ aspectRatio: "16/9" }}
       >
         {/* Cinematic cricket slideshow — Ken Burns effect (video-like) */}
@@ -158,9 +158,9 @@ export function HomeScreen() {
 
 function StatCard({ label, value, gradient }: { label: string; value: string; gradient: string }) {
   return (
-    <div className={`rounded-2xl bg-gradient-to-br ${gradient} p-3 text-white shadow-md`}>
-      <p className="text-[10px] font-medium text-white/80">{label}</p>
-      <p className="text-base font-black mt-0.5 leading-tight">{value}</p>
+    <div className={`rounded-2xl bg-gradient-to-br ${gradient} p-3 text-white shadow-md border border-white/15 premium-inner-highlight hover:scale-[1.02] transition-transform duration-200`}>
+      <p className="premium-micro-label text-white/75">{label}</p>
+      <p className="text-base font-black mt-1 leading-tight tabular-nums tracking-tight">{value}</p>
     </div>
   );
 }
