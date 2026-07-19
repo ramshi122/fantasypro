@@ -635,13 +635,15 @@ export async function generateSweep(
       const existingIds = existingTeamIdSets[eIdx];
       let common = 0;
       // Iterate smaller set for performance + early exit
+      // STRICTER: max 7 common players (was 9) — per DUPLICATE PREVENTION spec
       for (const id of currentTeamIds) {
         if (existingIds.has(id)) {
           common++;
-          if (common >= 9) break; // early exit
+          if (common >= 8) break; // early exit at 8 (will be flagged at 8+)
         }
       }
-      if (common >= 9) {
+      // Teams with 8+ common players are too similar → swap 3 players for diversity
+      if (common >= 8) {
         tooSimilar = true;
         break;
       }
@@ -649,12 +651,12 @@ export async function generateSweep(
     perfLog.similarityCheckMs += Date.now() - simStart;
 
     if (tooSimilar) {
-      // Swap 2 players from different roles for diversity
-      // PERFORMANCE: use lookups.roleMap for O(1) role lookup (was O(N) find)
+      // Swap 3 players from different roles for MORE diversity (was 2)
+      // PERFORMANCE: use lookups.roleMap for O(1) role lookup
       let swapsMade = 0;
       const teamPlayerIds = new Set(team.map((p) => String(p.player_fixed_id ?? p.pid ?? p.name)));
       for (const role of ["BAT", "BOWL", "AR", "WK"] as const) {
-        if (swapsMade >= 2) break;
+        if (swapsMade >= 3) break;
         const swapIdx = team.findIndex((p) => {
           const pid = String(p.player_fixed_id ?? p.pid ?? p.name);
           return lookups.roleMap.get(pid) === role;
