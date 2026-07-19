@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Zap, Target, Brain, Layers, Crown,
   Loader2, CheckCircle2, Send, Lock, ChevronLeft, Plus, X,
@@ -55,6 +55,48 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
   const [captainStrategy, setCaptainStrategy] = useState<string>("AI Best");
   const [vcStrategy, setVcStrategy] = useState<string>("AI Best");
   const [teamBalance, setTeamBalance] = useState<string>("Balanced");
+
+  // === Manual Exclude Players (Checkbox-based) ===
+  const [manualExclude, setManualExclude] = useState<Set<string>>(new Set());
+  const [playerPool, setPlayerPool] = useState<any[]>([]);
+
+  // Load saved exclude list from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem(`apna-exclude-${matchId}`);
+    if (saved) {
+      try { setManualExclude(new Set(JSON.parse(saved))); } catch {}
+    }
+  }, [matchId]);
+
+  // Save exclude list to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem(`apna-exclude-${matchId}`, JSON.stringify([...manualExclude]));
+  }, [manualExclude, matchId]);
+
+  function toggleExcludePlayer(playerId: string) {
+    setManualExclude(prev => {
+      const next = new Set(prev);
+      if (next.has(playerId)) next.delete(playerId);
+      else next.add(playerId);
+      return next;
+    });
+  }
+
+  function clearAllExcludes() {
+    setManualExclude(new Set());
+    toast.info("All excludes cleared");
+  }
+
+  // Fetch player pool on mount for exclude checkboxes
+  useEffect(() => {
+    (async () => {
+      const detail = await getMatchDetail(matchId).catch(() => null);
+      if (detail) {
+        const all = [...((detail as any).left_team_players || []), ...((detail as any).right_team_players || [])].filter(Boolean);
+        setPlayerPool(all);
+      }
+    })();
+  }, [matchId]);
 
   function addCombo() {
     const c = newCombo;
@@ -129,7 +171,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
         setProgress(`🟡 Lineup pending — using all ${allPlayers.length} players (pre-lineup mode)`);
       }
 
-      // === APPLY USER SETTINGS: Exclude players ===
+      // === APPLY USER SETTINGS: Exclude players (text input) ===
       const excludeList = parsePlayers(excludedPlayers);
       if (excludeList.length > 0) {
         const before = allPlayers.length;
@@ -137,7 +179,17 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
           const name = String(p.name || "").toLowerCase();
           return !excludeList.some(ex => name.includes(ex));
         });
-        console.log(`[generator] Excluded ${before - allPlayers.length} players (user exclusion)`);
+        console.log(`[generator] Excluded ${before - allPlayers.length} players (text exclusion)`);
+      }
+
+      // === APPLY MANUAL EXCLUDE (checkbox-based) — HIGHEST PRIORITY ===
+      if (manualExclude.size > 0) {
+        const before = allPlayers.length;
+        allPlayers = allPlayers.filter((p: any) => {
+          const pid = String(p.player_fixed_id ?? p.pid ?? p.name);
+          return !manualExclude.has(pid);
+        });
+        console.log(`[generator] Excluded ${before - allPlayers.length} players (manual checkbox exclusion) — ${manualExclude.size} total excluded`);
       }
 
       // === APPLY USER SETTINGS: Lock players (force include) ===
@@ -451,6 +503,52 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
                 </div>
               ))}
             </div>
+          )}
+        </div>
+
+        {/* === Manual Exclude Players (Checkbox-based) === */}
+        <div className="bg-red-50 dark:bg-red-950/20 rounded-lg p-3 border border-red-200 dark:border-red-900/30">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[11px] font-bold text-red-600 dark:text-red-400 flex items-center gap-1">
+              🚫 Manual Exclude Players
+            </p>
+            {manualExclude.size > 0 && (
+              <button onClick={clearAllExcludes} className="text-[9px] text-red-500 hover:text-red-700 font-bold underline">
+                Clear All ({manualExclude.size})
+              </button>
+            )}
+          </div>
+          <p className="text-[9px] text-muted-foreground mb-2">
+            Tick players to EXCLUDE from ALL team generation. Excluded players will never appear in any team. Saved automatically.
+          </p>
+          {playerPool.length > 0 ? (
+            <div className="max-h-[30vh] overflow-y-auto grid grid-cols-2 gap-1">
+              {playerPool.map((p, i) => {
+                const pid = String(p.player_fixed_id ?? p.pid ?? p.name ?? `p${i}`);
+                const name = String(p.name || `Player ${i+1}`);
+                const team = String(p.team_name || p.team || "");
+                const isExcluded = manualExclude.has(pid);
+                return (
+                  <label key={i} className={cn(
+                    "flex items-center gap-1 text-[10px] rounded px-1.5 py-1 cursor-pointer border",
+                    isExcluded
+                      ? "bg-red-100 dark:bg-red-950/40 border-red-300 dark:border-red-800 line-through text-red-500"
+                      : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-foreground"
+                  )}>
+                    <input
+                      type="checkbox"
+                      checked={isExcluded}
+                      onChange={() => toggleExcludePlayer(pid)}
+                      className="w-3 h-3 rounded accent-red-500"
+                    />
+                    <span className="truncate">{name}</span>
+                    {team && <span className="text-[8px] text-muted-foreground">({team.slice(0,3)})</span>}
+                  </label>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-[9px] text-muted-foreground italic">Loading players...</p>
           )}
         </div>
 
