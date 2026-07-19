@@ -92,15 +92,26 @@ export async function refreshToken(account: FantasyApp | FantasyAccount): Promis
   try {
     console.log(`[token-persist] Refreshing ${app} token for account ${accountObj.id}...`);
 
+    // IMPORTANT: Field names MUST match what /api/auth/verify expects.
+    // Previous code sent `app` / `token` / `mobile` which were silently ignored
+    // by /api/auth/verify (which expects `fantasyApp` / `authToken` / `my11circleMobile`).
+    // This caused refresh to ALWAYS fail with:
+    //   {"validToken":false,"error":"fantasyApp and authToken are required"}
+    // → tokens were never refreshed → eventually expired → user had to re-login.
+    //
+    // Verified field names against /api/auth/verify/route.ts:
+    //   const { fantasyApp, authToken, matchId, my11circleChallenge,
+    //           my11circleUserId, my11circleMobile } = body;
     const response = await fetch("/api/auth/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        app,
-        token: accountObj.token,
-        mobile: accountObj.mobile,
+        fantasyApp: app,
+        authToken: accountObj.token,
+        matchId: "", // optional but safe — matches original teamgeneration.in
         my11circleChallenge: accountObj.my11circleChallenge,
         my11circleUserId: accountObj.my11circleUserId,
+        my11circleMobile: accountObj.mobile,
       }),
     });
 
@@ -111,13 +122,27 @@ export async function refreshToken(account: FantasyApp | FantasyAccount): Promis
 
     const data = await response.json();
 
-    // Backend may return a fresh token in `authToken` or `token`
+    // If backend explicitly says token is invalid, do NOT mark as refreshed.
+    // (Previous code skipped this check — it marked invalid tokens as "refreshed",
+    //  which delayed the user's re-link prompt and caused more failures downstream.)
+    // Note: validToken === null means "couldn't verify due to network error" —
+    // in that case we fall through and mark as checked (don't block transfer).
+    if (data.validToken === false) {
+      console.warn(`[token-persist] ${app} token is invalid (backend rejected): ${data.message || data.error || "Invalid token"}`);
+      return false;
+    }
+
+    // Backend may return a fresh token in `authToken` (or `token` as legacy fallback)
+    // when `updateUiToken` is true. This matches original teamgeneration.in:
+    //   if (n.data.updateUiToken && n.data.authToken) { lo(e.slug, {authToken: n.data.authToken, ...}) }
     const newToken = data.authToken || data.token || data.data?.authToken;
     if (newToken && newToken !== accountObj.token) {
       updateFantasyAccount(accountObj.id, {
         token: newToken,
         lastRefreshed: Date.now(),
-        mobile: data.mobile || accountObj.mobile,
+        // Per original teamgeneration.in: only update my11circle fields from verify response.
+        // Mobile is NOT returned by backend — keep the existing one.
+        mobile: accountObj.mobile,
         my11circleChallenge: data.my11circleChallenge || accountObj.my11circleChallenge,
         my11circleUserId: data.my11circleUserId || accountObj.my11circleUserId,
         maxAllowedTeam: data.maxAllowedTeam ?? accountObj.maxAllowedTeam,
