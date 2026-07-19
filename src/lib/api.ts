@@ -1709,7 +1709,8 @@ export async function bulkTransferToLinkedAccount(
 
   const MAX_RETRIES_PER_TEAM = 3;
   const RETRY_DELAYS = [500, 1000, 2000]; // progressive backoff: 0.5s, 1s, 2s
-  const INTER_TEAM_DELAY = 300; // 300ms between successful transfers (was 100ms)
+  // My11Circle needs longer delay between teams (backend is slower)
+  const INTER_TEAM_DELAY = params.fantasyApp === "my11circle" ? 500 : 300;
 
   for (let i = 0; i < teams.length; i++) {
     const t = teams[i];
@@ -1735,6 +1736,7 @@ export async function bulkTransferToLinkedAccount(
       body.my11circleChallenge = params.my11circleChallenge || null;
       body.my11circleUserId = params.my11circleUserId || null;
       body.my11circleMobile = params.mobileNumber || null;
+      body.mobileNumber = params.mobileNumber || null; // Also send as mobileNumber
     }
 
     // PER-TEAM RETRY LOGIC — try up to 3 times

@@ -195,9 +195,12 @@ const PLATFORM_ENDPOINTS: Record<string, EndpointConfig> = {
   my11circle: {
     addEndpoints: [
       `${BACKEND_URL}/api/fantasy/add-team`,
+      `${BACKEND_URL}/api/classic/my11circle/addteam`,
+      `${BACKEND_URL}/api/my11circle/add-team`,
     ],
     editEndpoints: [
       `${BACKEND_URL}/api/fantasy/edit-team`,
+      `${BACKEND_URL}/api/classic/my11circle/editteam`,
     ],
     delayBetweenRetries: 3000,
   },
@@ -461,6 +464,9 @@ export async function POST(request: Request) {
       if (my11circleChallenge) payload.my11circleChallenge = my11circleChallenge;
       if (my11circleUserId) payload.my11circleUserId = my11circleUserId;
       if (my11circleMobile) payload.my11circleMobile = my11circleMobile;
+      // Also include mobileNumber for My11Circle (backend may use either field)
+      if (mobileNumber) payload.mobileNumber = mobileNumber;
+      if (my11circleMobile) payload.mobileNumber = my11circleMobile;
     }
 
     if (app === "vision11" && userId) {
