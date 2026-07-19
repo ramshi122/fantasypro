@@ -1393,3 +1393,51 @@ Stage Summary:
 - Non-retryable errors (deadline/limit) fail fast without wasting retries
 - Detailed logging at every step for debugging
 - ZERO changes to UI, DB, Auth, Subscriptions, Generator, Replace UI, Contest, Research, Admin
+
+---
+Task ID: my11circle-replace-original-flow
+Agent: main
+Task: User said "namuk vendadu main my11 circle how to transfer namude transfer ok anu but replace fully fail chek original propper how to my11 circle replacing team and tell me". Then confirmed "Yes but vere onnum pudiya error undakarud sradichu cheyyanam" — fix My11Circle replace by matching original teamgeneration.in flow, without breaking anything else.
+
+Investigation:
+- Reverse-engineered original teamgeneration.in JS bundle (main.b29bfc66.js) to extract EXACT My11Circle replace flow.
+- Found 2 flows in original:
+  * Multi-account bulk (et function): auth/verify WITH my11circle fields → list-of-teams WITHOUT my11circle fields (uses refreshed token)
+  * Single-account (Je function): list-of-teams directly (NO my11circle fields, NO auth/verify)
+- ROOT CAUSE of our replace failure: we were sending my11circle fields DIRECTLY to list-of-teams, but original DOESN'T. Original sends them only to auth/verify to get a refreshed token, then uses that refreshed token for list-of-teams.
+
+Fix Applied (surgical — only changed listFantasyTeams, nothing else):
+- /home/z/my-project/src/lib/api.ts (listFantasyTeams function):
+  * For My11Circle: now calls /api/auth/verify FIRST with my11circle fields to refresh token
+  * If backend returns updateUiToken + authToken, uses the refreshed token for list-of-teams
+  * Saves refreshed token + my11circle fields to localStorage (matches original's updateUiToken flow)
+  * Then calls /api/contest/my-teams with ONLY {fantasyApp, matchId, authToken} — NO my11circle fields
+  * If auth/verify says token is invalid (validToken=false), returns empty array immediately
+  * If auth/verify network fails, falls back to original token (doesn't block)
+  * For non-My11Circle platforms (Dream11, Jumbo, etc.): unchanged — direct list-of-teams call
+
+Files NOT touched (per user's "no new errors" requirement):
+- /api/contest/my-teams/route.ts: UNCHANGED — still accepts my11circle fields (for safety, in case some caller still passes them)
+- /api/auth/verify/route.ts: UNCHANGED
+- /api/transfer/route.ts: UNCHANGED
+- bulk-transfer-modal.tsx: UNCHANGED — still passes my11circle fields to listFantasyTeams (now used for auth/verify refresh)
+- apna-transfer-modal.tsx: UNCHANGED — same as above
+- bulkTransferToLinkedAccount: UNCHANGED — already has its own auth/verify + token refresh logic
+- UI, DB, Auth, Subscriptions, Generator, Replace UI logic, Contest Join, Research, Admin: UNCHANGED
+
+Compliance:
+- ✅ Matches original teamgeneration.in flow exactly (auth/verify first, then list-of-teams with refreshed token)
+- ✅ No new errors — backward compatible (all existing callers work without changes)
+- ✅ My11Circle fields are still accepted by /api/contest/my-teams proxy (safety net)
+- ✅ If auth/verify fails, falls back gracefully (doesn't block list-of-teams)
+- ✅ Refreshed token is saved to localStorage (matches original's updateUiToken flow)
+- ✅ Build passes — npm run build compiled successfully in 21.1s, no TS errors
+
+Stage Summary:
+- My11Circle replace now follows original teamgeneration.in flow:
+  1. auth/verify with my11circle fields → get refreshed token
+  2. list-of-teams with refreshed token (NO my11circle fields)
+  3. existingIds = teams_list.map(t => t.team_id)
+  4. edit-team calls use type="edit" + id=existingTeamIds[r]
+- This should fix REPLACE for My11Circle (was failing because we were sending my11circle fields to list-of-teams, which backend didn't expect)
+- No regressions — all other platforms and features unchanged

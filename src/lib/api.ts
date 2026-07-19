@@ -790,27 +790,40 @@ export async function verifyBeforeTransfer(params: {
 /**
  * List teams already created by the user on Dream11/My11Circle for a match.
  *
- * Routes through our /api/contest/my-teams server-side proxy (NOT direct backend
- * call) so that:
- *   1. My11Circle-specific fields (my11circleChallenge, my11circleUserId,
- *      my11circleMobile) are forwarded correctly — the backend needs these to
- *      authenticate My11Circle list-of-teams calls. Without them, My11Circle
- *      list-of-teams returns empty/404 → existingIds=[] → all teams use
- *      type="new" instead of "edit" → REPLACE doesn't work.
- *   2. CORS, network errors, and HTTP 401/403 are handled by the proxy.
- *   3. The proxy's response format ({status, teams: [{teamId, teamNo, fantasyApp}]})
- *      is normalized back into the TeamRow[] shape callers expect.
+ * IMPORTANT — matches original teamgeneration.in flow:
  *
- * For My11Circle callers, pass the my11circle fields from the linked account
- * (account.my11circleChallenge, account.my11circleUserId, account.mobile).
- * If they're missing, the call still works for Dream11/Jumbo but may return
- * empty for My11Circle.
+ *   For My11Circle, the original calls auth/verify FIRST (with my11circle fields)
+ *   to refresh the token, THEN calls list-of-teams with the refreshed token
+ *   (and WITHOUT my11circle fields — list-of-teams only needs the token).
+ *
+ *   If we skip the auth/verify step and call list-of-teams directly with the
+ *   stored (potentially stale) token, the backend may return empty even when
+ *   teams exist → existingIds=[] → all teams use type="new" → REPLACE fails.
+ *
+ * Flow:
+ *   1. If fantasyApp === "my11circle" AND my11circle fields are provided:
+ *      a. Call /api/auth/verify with {fantasyApp, authToken, matchId,
+ *         my11circleChallenge, my11circleUserId, my11circleMobile}
+ *      b. If backend returns updateUiToken + authToken, use the refreshed token
+ *      c. Call /api/contest/my-teams with {fantasyApp, matchId, authToken}
+ *         (NO my11circle fields — matches original)
+ *   2. Otherwise (Dream11, Jumbo, etc.):
+ *      a. Call /api/contest/my-teams with {fantasyApp, matchId, authToken}
+ *
+ * The /api/contest/my-teams proxy still accepts my11circle fields (for safety),
+ * but they're NOT sent in the normal flow per original teamgeneration.in.
+ *
+ * Routes through our /api/contest/my-teams server-side proxy so CORS, network
+ * errors, and HTTP 401/403 are handled. The proxy's response format
+ * ({status, teams: [{teamId, teamNo, fantasyApp}]}) is normalized back into
+ * the TeamRow[] shape callers expect.
  */
 export async function listFantasyTeams(params: {
   fantasyApp: FantasyApp;
   authToken: string;
   matchId: string | number;
-  /** My11Circle-only fields — required for My11Circle list-of-teams to return existing teams */
+  /** My11Circle-only fields — used for the auth/verify refresh call (NOT list-of-teams itself).
+   *  Required for My11Circle to refresh the token before list-of-teams. */
   my11circleChallenge?: string;
   my11circleUserId?: string;
   my11circleMobile?: string;
@@ -820,17 +833,72 @@ export async function listFantasyTeams(params: {
     return [];
   }
 
-  // Build the payload — include my11circle fields for My11Circle
+  // === STEP 1: For My11Circle, refresh token via auth/verify FIRST ===
+  // This matches original teamgeneration.in (et function):
+  //   1. auth/verify with my11circle fields → get refreshed token
+  //   2. list-of-teams with refreshed token (NO my11circle fields)
+  let effectiveAuthToken = params.authToken;
+
+  if (params.fantasyApp === "my11circle"
+      && (params.my11circleChallenge || params.my11circleUserId || params.my11circleMobile)) {
+    try {
+      console.log("[listFantasyTeams] My11Circle: refreshing token via auth/verify before list-of-teams...");
+      const verifyRes = await fetch(`/api/auth/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fantasyApp: "my11circle",
+          authToken: params.authToken,
+          matchId: params.matchId,
+          my11circleChallenge: params.my11circleChallenge,
+          my11circleUserId: params.my11circleUserId,
+          my11circleMobile: params.my11circleMobile,
+        }),
+        cache: "no-store",
+      });
+      const verifyData = await verifyRes.json() as {
+        validToken?: boolean | null;
+        updateUiToken?: boolean;
+        authToken?: string;
+        my11circleChallenge?: string;
+        my11circleUserId?: string;
+        message?: string;
+      };
+
+      // If backend explicitly says token is invalid, return empty (don't proceed)
+      if (verifyData.validToken === false) {
+        console.warn(`[listFantasyTeams] My11Circle auth/verify says token is invalid: ${verifyData.message || "Invalid token"}`);
+        return [];
+      }
+
+      // If backend returned a refreshed token, use it (matches original's updateUiToken flow)
+      if (verifyData.updateUiToken && verifyData.authToken && verifyData.authToken !== params.authToken) {
+        console.log("[listFantasyTeams] My11Circle: using refreshed token from updateUiToken");
+        effectiveAuthToken = verifyData.authToken;
+        // Also save the refreshed token + my11circle fields to localStorage (matches original)
+        saveFantasyToken("my11circle", verifyData.authToken, {
+          mobile: params.my11circleMobile,
+          my11circleChallenge: verifyData.my11circleChallenge || params.my11circleChallenge,
+          my11circleUserId: verifyData.my11circleUserId || params.my11circleUserId,
+        });
+      } else {
+        console.log("[listFantasyTeams] My11Circle: token is valid (no refresh needed)");
+      }
+    } catch (err: any) {
+      console.warn(`[listFantasyTeams] My11Circle auth/verify failed (continuing with stored token): ${err?.message}`);
+      // Don't fail the whole call — try list-of-teams with the original token
+    }
+  }
+
+  // === STEP 2: Call list-of-teams (via our /api/contest/my-teams proxy) ===
+  // Per original teamgeneration.in: list-of-teams payload is GENERIC across all platforms.
+  // Only {fantasyApp, matchId, authToken} is sent — NO my11circle fields.
+  // The backend uses the (refreshed) token to authenticate.
   const body: Record<string, unknown> = {
     fantasyApp: params.fantasyApp,
     matchId: params.matchId,
-    authToken: params.authToken,
+    authToken: effectiveAuthToken,
   };
-  if (params.fantasyApp === "my11circle") {
-    if (params.my11circleChallenge) body.my11circleChallenge = params.my11circleChallenge;
-    if (params.my11circleUserId) body.my11circleUserId = params.my11circleUserId;
-    if (params.my11circleMobile) body.my11circleMobile = params.my11circleMobile;
-  }
 
   try {
     const res = await fetch(`/api/contest/my-teams`, {
@@ -853,6 +921,7 @@ export async function listFantasyTeams(params: {
       || [];
 
     if (Array.isArray(teamsList) && teamsList.length > 0) {
+      console.log(`[listFantasyTeams] ${params.fantasyApp}: found ${teamsList.length} existing teams`);
       return teamsList.map((t: any) => ({
         teamId: String(t.teamId ?? t.team_id ?? ""),
         teamNo: t.teamNo ?? t.team_number,
@@ -863,9 +932,10 @@ export async function listFantasyTeams(params: {
     }
 
     // Backend failed or no teams — return empty
+    console.log(`[listFantasyTeams] ${params.fantasyApp}: no existing teams found`);
     return [];
   } catch (err: any) {
-    console.error("[listFantasyTeams] proxy call failed:", err?.message);
+    console.error(`[listFantasyTeams] ${params.fantasyApp} proxy call failed:`, err?.message);
     return [];
   }
 }
