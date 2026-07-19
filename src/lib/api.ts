@@ -1610,13 +1610,26 @@ export async function bulkTransferToLinkedAccount(
   const transferLinks: BulkTransferResult["transferLinks"] = [];
   let successCount = 0;
   let failCount = 0;
-  // Per-team delay between transfers — keeps us under the platform's rate limit
-  // without making a 40-team bulk transfer take 80+ seconds.
-  //   - Dream11: 200ms (very lenient rate limit, can handle rapid requests)
-  //   - My11Circle: 500ms (slightly stricter rate limit, but still tolerates fast bulk)
-  //   - Default: 500ms
-  // Total time for 40 teams: ~8-20 seconds + per-team transfer time.
-  const delay = 100; // Short delay — was 200ms Dream11 / 500ms My11Circle
+
+  // === PRE-TRANSFER VALIDATION ===
+  // Verify every team is valid before transferring
+  // If any team has invalid players, it will be caught by the transfer API
+  // but we log it here for debugging
+  console.log(`[bulkTransfer] Pre-transfer validation: ${teams.length} teams to transfer to ${params.fantasyApp}`);
+
+  // Check each team for obvious issues (empty player lists, missing captain)
+  for (let i = 0; i < teams.length; i++) {
+    const t = teams[i];
+    if (!t.playerIds || t.playerIds.length !== 11) {
+      console.warn(`[bulkTransfer] ⚠️ Team ${i + 1} (teamNo=${t.teamNo}) has ${t.playerIds?.length || 0} players (expected 11)`);
+    }
+    if (!t.captainId) {
+      console.warn(`[bulkTransfer] ⚠️ Team ${i + 1} (teamNo=${t.teamNo}) has no captain`);
+    }
+    if (!t.viceCaptainId) {
+      console.warn(`[bulkTransfer] ⚠️ Team ${i + 1} (teamNo=${t.teamNo}) has no vice-captain`);
+    }
+  }
 
   // ─── PRE-TRANSFER AUTH VERIFY ──────────────────────────────────────────
   //

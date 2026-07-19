@@ -655,12 +655,88 @@ function pickCaptainVCDeterministic(
 
 /* ============== Main Generator ============== */
 
-export function cleanPlayerPool(players: MatchPlayer[]): MatchPlayer[] {
-  return players.filter((p) => {
-    if (!p.name) return false;
-    if (!p.credits || Number(p.credits) <= 0) return false;
-    return true;
-  });
+/**
+ * Check if a player is VALID for team generation (pre-lineup + post-lineup).
+ *
+ * PRE-LINEUP checks (lineup not announced yet):
+ *   ❌ playing === 0 AND player has explicit "not playing" indicators
+ *   ❌ Player name contains injury/dropped/unavailable keywords
+ *   ✅ playing === undefined (unknown status — allowed before lineup)
+ *   ✅ playing === 1 (confirmed playing)
+ *
+ * POST-LINEUP checks (lineup announced):
+ *   ❌ playing !== 1 (bench, substitute, offline, injured, etc.)
+ *   ✅ playing === 1 ONLY
+ *
+ * ADDITIONAL checks (always):
+ *   ❌ Player name contains: "injur", "dropped", "unavailable", "retired",
+ *      "suspended", "ruled out", "not in squad"
+ *   ❌ Player has playing === -1 or playing === "false" or playing === "no"
+ */
+function isPlayerValidForGeneration(p: MatchPlayer, lineupAnnounced: boolean): boolean {
+  if (!p.name) return false;
+  if (!p.credits || Number(p.credits) <= 0) return false;
+
+  const playing = Number(p.playing);
+  const nameLower = String(p.name || "").toLowerCase();
+
+  // === ALWAYS REJECT: Players with explicit "unavailable" indicators ===
+  // Check player name for injury/dropped/unavailable keywords
+  const unavailableKeywords = [
+    "injur", "dropped", "unavailable", "retired", "suspended",
+    "ruled out", "not in squad", "not playing", "rested",
+  ];
+  for (const keyword of unavailableKeywords) {
+    if (nameLower.includes(keyword)) {
+      console.log(`[PlayerValidation] ❌ Rejecting "${p.name}" — name contains "${keyword}"`);
+      return false;
+    }
+  }
+
+  // Check playing field for explicit "not playing" values
+  // playing === -1, "false", "no", "0" with lineup announced → reject
+  // playing === 0 with lineup NOT announced → keep (may just be "not confirmed yet")
+  if (playing === -1 || p.playing === "false" || p.playing === "no") {
+    console.log(`[PlayerValidation] ❌ Rejecting "${p.name}" — playing=${p.playing} (explicit not playing)`);
+    return false;
+  }
+
+  // === POST-LINEUP: Only playing === 1 is valid ===
+  if (lineupAnnounced) {
+    if (playing !== 1) {
+      console.log(`[PlayerValidation] ❌ Rejecting "${p.name}" — post-lineup: playing=${p.playing} (not in Playing XI)`);
+      return false;
+    }
+  }
+
+  // === PRE-LINEUP: playing === 0 is SUSPICIOUS but may be "not confirmed yet" ===
+  // Only reject if player has OTHER indicators of being unavailable
+  if (!lineupAnnounced && playing === 0) {
+    // Check if player has additional "not available" fields
+    const playerAny = p as any;
+    if (playerAny.is_injured === true || playerAny.injured === true ||
+        playerAny.is_dropped === true || playerAny.dropped === true ||
+        playerAny.is_unavailable === true || playerAny.unavailable === true ||
+        playerAny.status === "injured" || playerAny.status === "dropped" ||
+        playerAny.status === "unavailable" || playerAny.status === "retired") {
+      console.log(`[PlayerValidation] ❌ Rejecting "${p.name}" — pre-lineup: status indicates unavailable`);
+      return false;
+    }
+    // playing === 0 but no explicit unavailable indicators → keep (might be confirmed later)
+    // This is the safe approach — don't exclude players who might be in the XI
+  }
+
+  return true;
+}
+
+export function cleanPlayerPool(players: MatchPlayer[], lineupAnnounced: boolean = false): MatchPlayer[] {
+  const before = players.length;
+  const cleaned = players.filter((p) => isPlayerValidForGeneration(p, lineupAnnounced));
+  const removed = before - cleaned.length;
+  if (removed > 0) {
+    console.log(`[cleanPlayerPool] Removed ${removed} invalid players (offline/injured/dropped/unavailable) — ${cleaned.length} remaining`);
+  }
+  return cleaned;
 }
 
 export interface GenerationSettings {
@@ -708,8 +784,10 @@ export async function generateSweep(
   });
 
   // 1. Clean and rank players by EFV
+  // Detect lineup: if ANY player has playing === 1, lineup is announced
+  const lineupDetectedPreClean = players.some((p) => Number(p.playing) === 1);
   const cleanStart = Date.now();
-  const cleaned = cleanPlayerPool(players);
+  const cleaned = cleanPlayerPool(players, lineupDetectedPreClean);
   perfLog.cleanPoolMs = Date.now() - cleanStart;
 
   if (cleaned.length < 11) {
