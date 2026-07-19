@@ -245,7 +245,8 @@ function buildStrategicTeam(
   team1Name: string,
   team2Name: string,
   rotationOffset: number,
-  lookups?: CachedLookups
+  lookups?: CachedLookups,
+  customCfg?: { WK: number; BAT: number; AR: number; BOWL: number }
 ): MatchPlayer[] | null {
   const availWK = byRole.WK.length;
   const availBAT = byRole.BAT.length;
@@ -254,15 +255,22 @@ function buildStrategicTeam(
 
   if (availWK < 1 || availBAT < 1 || availAR < 1 || availBOWL < 1) return null;
 
-  // Determine role counts — STRATEGIC for GL Rank 1:
-  // Target: 1 WK, 3-5 BAT (top-order), 1-3 AR (dual scorers), 3-5 BOWL (wicket takers)
-  let wk = 1;
-  let ar = Math.min(availAR, Math.max(1, (rotationOffset % 3) + 1)); // 1-3 AR
-  let remaining = 11 - wk - ar;
-
-  // Split remaining between BAT and BOWL
-  let bat = Math.min(availBAT, Math.max(2, Math.floor(remaining / 2) + ((rotationOffset % 2) - 1)));
-  let bowl = remaining - bat;
+  // Determine role counts
+  let wk: number, bat: number, ar: number, bowl: number;
+  if (customCfg) {
+    // CUSTOM COMBINATION: use user-specified role counts
+    wk = customCfg.WK;
+    ar = customCfg.AR;
+    bat = customCfg.BAT;
+    bowl = customCfg.BOWL;
+  } else {
+    // AUTO: Strategic for GL Rank 1
+    wk = 1;
+    ar = Math.min(availAR, Math.max(1, (rotationOffset % 3) + 1));
+    const remaining = 11 - wk - ar;
+    bat = Math.min(availBAT, Math.max(2, Math.floor(remaining / 2) + ((rotationOffset % 2) - 1)));
+    bowl = remaining - bat;
+  }
 
   // Clamp to available
   if (bat > availBAT) { bowl += bat - availBAT; bat = availBAT; }
@@ -475,7 +483,8 @@ export async function generateSweep(
   team1Name: string,
   team2Name: string,
   onProgress?: (p: SweepProgress) => void,
-  mode?: "smart" | "gl" | "advanced" | "combination"
+  mode?: "smart" | "gl" | "advanced" | "combination",
+  customCombos?: Array<{ wk: number; bat: number; ar: number; bowl: number }>
 ): Promise<SweepResult> {
   const startedAt = Date.now();
   // PERFORMANCE: Track each phase timing for diagnostics
@@ -587,11 +596,12 @@ export async function generateSweep(
   };
 
   // CRITICAL: Session seed — makes EVERY generateSweep call produce DIFFERENT teams.
-  // Use Math.random() for a SMALL seed (0-99999) to avoid number overflow in shuffle.
-  // Date.now() % 2147483647 was too large — multiplied by 2654435761 exceeded
-  // Number.MAX_SAFE_INTEGER, causing precision loss → same shuffle every time.
   const sessionSeed = Math.floor(Math.random() * 99999) + 1;
-  console.log(`[generator] Session seed: ${sessionSeed} (ensures unique teams this run)`);
+  console.log(`[generator] Session seed: ${sessionSeed} (ensures unique teams this run)${customCombos ? ` + ${customCombos.length} custom combos` : ""}`);
+
+  // CUSTOM COMBINATIONS: If provided, distribute teams across all combos
+  // Example: 40 teams + 3 combos → ~13-14 teams per combo
+  const useCustomCombos = customCombos && customCombos.length > 0;
 
   // Generate teams in chunks
   const CHUNK = Math.max(5, Math.floor(count / 20));
@@ -606,10 +616,15 @@ export async function generateSweep(
       if (attempts > maxAttempts) break;
 
       // Rotation offset = sessionSeed + i * 3 + tries (UNIQUE per run)
-      // sessionSeed changes every millisecond → different shuffle every time
       const rotationOffset = sessionSeed + i * 3 + tries;
-      // PERFORMANCE: pass lookups to enable memoized shuffle cache
-      const candidate = buildStrategicTeam(byRole, strategy, team1Name, team2Name, rotationOffset, lookups);
+      // If custom combos provided, distribute teams across them
+      const customCfg = useCustomCombos ? {
+        WK: customCombos![i % customCombos!.length].wk,
+        BAT: customCombos![i % customCombos!.length].bat,
+        AR: customCombos![i % customCombos!.length].ar,
+        BOWL: customCombos![i % customCombos!.length].bowl,
+      } : undefined;
+      const candidate = buildStrategicTeam(byRole, strategy, team1Name, team2Name, rotationOffset, lookups, customCfg);
       if (!candidate) continue;
       if (!isValidRoleBalance(candidate)) continue;
       if (!isValidCredits(candidate)) continue;

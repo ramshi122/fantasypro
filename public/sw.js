@@ -1,8 +1,9 @@
-// Apna Cricket - Service Worker v2.0
+// Apna Cricket - Service Worker v3.0
 // PWA with offline mode — caches teams + match list for offline viewing.
+// v3.0: Bumped cache version to force-clear old JS (team generation fix)
 
-const CACHE_NAME = 'apna-cricket-v2.0';
-const DYNAMIC_CACHE = 'apna-cricket-dynamic-v2.0';
+const CACHE_NAME = 'apna-cricket-v3.0';
+const DYNAMIC_CACHE = 'apna-cricket-dynamic-v3.0';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',

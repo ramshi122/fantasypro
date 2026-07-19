@@ -3,7 +3,7 @@
 import { useState } from "react";
 import {
   Zap, Target, Brain, Layers, Crown,
-  Loader2, CheckCircle2, Send, Lock, ChevronLeft,
+  Loader2, CheckCircle2, Send, Lock, ChevronLeft, Plus, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -39,6 +39,35 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
   const [generatedTeams, setGeneratedTeams] = useState<TeamRow[]>([]);
   const [saved, setSaved] = useState(false);
   const [lineupAnnounced, setLineupAnnounced] = useState(false);
+
+  // === Multiple Custom Combination Selection ===
+  interface Combo { wk: number; bat: number; ar: number; bowl: number; }
+  const [customCombos, setCustomCombos] = useState<Combo[]>([]);
+  const [newCombo, setNewCombo] = useState<Combo>({ wk: 1, bat: 4, ar: 3, bowl: 3 });
+
+  function addCombo() {
+    const c = newCombo;
+    if (c.wk + c.bat + c.ar + c.bowl !== 11) {
+      toast.error(`Total must be 11 (current: ${c.wk + c.bat + c.ar + c.bowl})`);
+      return;
+    }
+    // Check for duplicate
+    const isDup = customCombos.some(existing =>
+      existing.wk === c.wk && existing.bat === c.bat && existing.ar === c.ar && existing.bowl === c.bowl
+    );
+    if (isDup) {
+      toast.error("This combination already added — duplicate not allowed");
+      return;
+    }
+    setCustomCombos([...customCombos, { ...c }]);
+    toast.success(`✅ Added: WK ${c.wk} | BAT ${c.bat} | AR ${c.ar} | BOWL ${c.bowl} (${customCombos.length + 1} total)`);
+  }
+
+  function removeCombo(idx: number) {
+    setCustomCombos(customCombos.filter((_, i) => i !== idx));
+    toast.info("Combination removed");
+  }
+
   const info = MODE_INFO[mode];
   const Icon = info.icon;
 
@@ -76,10 +105,10 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
       // Small delay to show status
       await new Promise(r => setTimeout(r, 500));
 
-      setProgress(`Generating ${teamCount} teams — ${info.label}...`);
+      setProgress(`Generating ${teamCount} teams — ${info.label}${customCombos.length > 0 ? ` + ${customCombos.length} custom combos` : ""}...`);
       const res = await generateSweep(allPlayers, teamCount, team1Name, team2Name, (p) => {
         setProgress(`${p.phase}: ${p.message}`);
-      }, mode);
+      }, mode, customCombos.length > 0 ? customCombos : undefined);
 
       if (res.teams.length === 0) { toast.error("Failed to generate teams — try smaller count"); setGenerating(false); return; }
 
@@ -307,6 +336,64 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
               <button key={n} onClick={() => setTeamCount(n as SweepCount)} className={cn("h-9 rounded-lg font-bold text-xs border-2", teamCount === n ? "bg-gradient-to-r from-violet-600 to-purple-600 text-white border-transparent" : "bg-white dark:bg-card border-violet-100 dark:border-violet-900/30 text-foreground")}>{n}</button>
             ))}
           </div>
+        </div>
+
+        {/* === Multiple Custom Combination Selection (NEW) === */}
+        <div className="bg-violet-50 dark:bg-violet-950/20 rounded-lg p-3 border border-violet-200 dark:border-violet-900/30">
+          <p className="text-[11px] font-bold text-foreground mb-2 flex items-center gap-1">
+            <Layers className="w-3 h-3 text-violet-500" />
+            Custom Combinations (Optional)
+          </p>
+          <p className="text-[9px] text-muted-foreground mb-2">
+            Add multiple role combinations. Teams will be distributed across all selected combos.
+          </p>
+
+          {/* Combination inputs */}
+          <div className="grid grid-cols-4 gap-1.5 mb-2">
+            <div>
+              <label className="text-[9px] text-muted-foreground block mb-0.5">WK</label>
+              <input type="number" min={0} max={8} value={newCombo.wk} onChange={(e) => setNewCombo({ ...newCombo, wk: Math.max(0, Math.min(8, parseInt(e.target.value) || 0)) })} className="w-full h-8 text-center text-xs rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900" />
+            </div>
+            <div>
+              <label className="text-[9px] text-muted-foreground block mb-0.5">BAT</label>
+              <input type="number" min={0} max={8} value={newCombo.bat} onChange={(e) => setNewCombo({ ...newCombo, bat: Math.max(0, Math.min(8, parseInt(e.target.value) || 0)) })} className="w-full h-8 text-center text-xs rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900" />
+            </div>
+            <div>
+              <label className="text-[9px] text-muted-foreground block mb-0.5">AR</label>
+              <input type="number" min={0} max={8} value={newCombo.ar} onChange={(e) => setNewCombo({ ...newCombo, ar: Math.max(0, Math.min(8, parseInt(e.target.value) || 0)) })} className="w-full h-8 text-center text-xs rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900" />
+            </div>
+            <div>
+              <label className="text-[9px] text-muted-foreground block mb-0.5">BOWL</label>
+              <input type="number" min={0} max={8} value={newCombo.bowl} onChange={(e) => setNewCombo({ ...newCombo, bowl: Math.max(0, Math.min(8, parseInt(e.target.value) || 0)) })} className="w-full h-8 text-center text-xs rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900" />
+            </div>
+          </div>
+
+          {/* Total indicator */}
+          <div className="flex items-center justify-between mb-2">
+            <span className={cn("text-[10px] font-bold", newCombo.wk + newCombo.bat + newCombo.ar + newCombo.bowl === 11 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500")}>
+              Total: {newCombo.wk + newCombo.bat + newCombo.ar + newCombo.bowl} / 11
+            </span>
+            <Button size="sm" className="h-7 text-[10px] bg-violet-600 hover:bg-violet-700 text-white" onClick={addCombo}>
+              <Plus className="w-3 h-3 mr-0.5" /> Add Combination
+            </Button>
+          </div>
+
+          {/* Selected combinations list */}
+          {customCombos.length > 0 && (
+            <div className="space-y-1 mt-2">
+              <p className="text-[9px] text-muted-foreground font-bold">Selected Combinations ({customCombos.length}):</p>
+              {customCombos.map((c, i) => (
+                <div key={i} className="flex items-center justify-between bg-white dark:bg-slate-800 rounded px-2 py-1 border border-slate-200 dark:border-slate-700">
+                  <span className="text-[10px] font-mono text-foreground">
+                    {i + 1}. WK {c.wk} | BAT {c.bat} | AR {c.ar} | BOWL {c.bowl}
+                  </span>
+                  <button onClick={() => removeCombo(i)} className="text-red-500 hover:text-red-700 p-0.5">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Progress */}
