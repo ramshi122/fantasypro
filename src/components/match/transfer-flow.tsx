@@ -320,11 +320,11 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
       const all = raw ? JSON.parse(raw) : {};
       const existing = all[key] || [];
       console.log("[TransferFlow] Existing teams for matchId", key, ":", existing.length);
-      // Add new teams to existing list
-      all[key] = [...existing, ...teams];
+      // REPLACE old teams with new generated teams (was appending — caused duplicates)
+      all[key] = teams;
       const newCount = all[key].length;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
-      console.log("[TransferFlow] ✅ Saved", teams.length, "new teams. Total for matchId", key, ":", newCount);
+      console.log("[TransferFlow] ✅ REPLACED old teams with", teams.length, "new teams. Total for matchId", key, ":", newCount);
 
       // VERIFY the save worked by reading back
       const verify = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
