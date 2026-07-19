@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertCircle,
@@ -13,6 +13,7 @@ import {
   EyeOff,
   Layers,
   Loader2,
+  Plus,
   Send,
   Shield,
   Sparkles,
@@ -66,23 +67,66 @@ export function EliteAIGenerator({
   const [eliteMode, setEliteMode] = useState<"smart" | "gl" | "advanced" | "combination">("smart");
   const [showChecksPreview, setShowChecksPreview] = useState(false); // Hide 150+ checks preview by default
 
-  const matchId = (match?.matchId ?? match?.id ?? "") as string;
+  // === Manual Playing XI Selection + Exclude + Custom Combos ===
+  const [manualPlayingXI, setManualPlayingXI] = useState<Set<string>>(new Set());
+  const [manualExclude, setManualExclude] = useState<Set<string>>(new Set());
+  interface Combo { wk: number; bat: number; ar: number; bowl: number; }
+  const [customCombos, setCustomCombos] = useState<Combo[]>([]);
+  const [newCombo, setNewCombo] = useState<Combo>({ wk: 1, bat: 4, ar: 3, bowl: 3 });
 
-  // Defensive: ensure players is always an array
+  const matchId = (match?.matchId ?? match?.id ?? "") as string;
   const safePlayers = Array.isArray(players) ? players : [];
 
+  useEffect(() => {
+    const sXI = localStorage.getItem(`apna-playingxi-${matchId}`);
+    if (sXI) { try { setManualPlayingXI(new Set(JSON.parse(sXI))); } catch {} }
+    const sEx = localStorage.getItem(`apna-exclude-${matchId}`);
+    if (sEx) { try { setManualExclude(new Set(JSON.parse(sEx))); } catch {} }
+  }, [matchId]);
+  useEffect(() => { localStorage.setItem(`apna-playingxi-${matchId}`, JSON.stringify([...manualPlayingXI])); }, [manualPlayingXI, matchId]);
+  useEffect(() => { localStorage.setItem(`apna-exclude-${matchId}`, JSON.stringify([...manualExclude])); }, [manualExclude, matchId]);
+
+  function toggleXI(pid: string) { setManualPlayingXI(p => { const n = new Set(p); n.has(pid) ? n.delete(pid) : n.add(pid); return n; }); }
+  function toggleEx(pid: string) { setManualExclude(p => { const n = new Set(p); n.has(pid) ? n.delete(pid) : n.add(pid); return n; }); }
+  function selectAllXI() { setManualPlayingXI(new Set(safePlayers.map((p: any) => String(p.player_fixed_id ?? p.pid ?? p.name)))); }
+  function autoOfficialXI() {
+    const pl = safePlayers.filter((p: any) => Number(p.playing) === 1);
+    if (pl.length === 0) { toast.warning("No official Playing XI found"); return; }
+    setManualPlayingXI(new Set(pl.map((p: any) => String(p.player_fixed_id ?? p.pid ?? p.name))));
+    toast.success(`Auto-selected ${pl.length} official Playing XI`);
+  }
+  function clearXI() { setManualPlayingXI(new Set()); }
+  function clearEx() { setManualExclude(new Set()); }
+  function addCombo() {
+    const c = newCombo;
+    if (c.wk + c.bat + c.ar + c.bowl !== 11) { toast.error(`Total must be 11 (current: ${c.wk + c.bat + c.ar + c.bowl})`); return; }
+    if (customCombos.some(e => e.wk === c.wk && e.bat === c.bat && e.ar === c.ar && e.bowl === c.bowl)) { toast.error("Duplicate"); return; }
+    setCustomCombos([...customCombos, { ...c }]); toast.success(`Added: WK ${c.wk} | BAT ${c.bat} | AR ${c.ar} | BOWL ${c.bowl}`);
+  }
+  function removeCombo(idx: number) { setCustomCombos(customCombos.filter((_, i) => i !== idx)); }
+  const xiCount = manualPlayingXI.size;
+  const directMode = xiCount === 11;
+
   async function handleRun() {
-    if (safePlayers.length < 11) {
-      toast.error("Need at least 11 players in pool");
-      return;
+    // Apply Manual Playing XI + Exclude filters
+    let pool = [...safePlayers];
+    if (manualExclude.size > 0) {
+      pool = pool.filter((p: any) => !manualExclude.has(String(p.player_fixed_id ?? p.pid ?? p.name)));
     }
+    if (manualPlayingXI.size > 0) {
+      pool = pool.filter((p: any) => manualPlayingXI.has(String(p.player_fixed_id ?? p.pid ?? p.name)));
+      if (pool.length < 11) { toast.error(`Only ${pool.length} players selected — need at least 11`); return; }
+      if (directMode) { toast.info("🎯 Direct Mode — 11 players selected, AI picks only C/VC"); }
+      else { toast.info(`🧠 AI Mode — ${pool.length} players selected`); }
+    }
+    if (pool.length < 11) { toast.error("Need at least 11 players in pool"); return; }
     setRunning(true);
     setResult(null);
     setProgress({ check: 0, total: 173, message: "Initializing Elite AI — 150+ Data Point Analysis..." });
 
     try {
       const res = await runEliteAI(
-        safePlayers,
+        pool,
         team1Name || "T1",
         team2Name || "T2",
         lineupAnnounced,
@@ -457,6 +501,81 @@ export function EliteAIGenerator({
                     <p className="text-[9px] text-white/60 uppercase">Average Win Rate</p>
                     <p className="text-2xl font-black text-emerald-300">89%—95%</p>
                   </div>
+                </div>
+                {/* === Manual Playing XI Selection === */}
+                <div className="bg-emerald-50 dark:bg-emerald-950/20 rounded-lg p-3 border border-emerald-200 dark:border-emerald-900/30">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">✅ Manual Playing XI</p>
+                    <div className="flex gap-1.5">
+                      <button onClick={selectAllXI} className="text-[8px] text-emerald-600 underline">All</button>
+                      <button onClick={autoOfficialXI} className="text-[8px] text-sky-600 underline">Official XI</button>
+                      <button onClick={clearXI} className="text-[8px] text-red-500 underline">Clear</button>
+                    </div>
+                  </div>
+                  <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded-full", directMode ? "bg-amber-500 text-white" : xiCount >= 11 ? "bg-emerald-500 text-white" : "bg-red-500 text-white")}>
+                    {xiCount} {directMode ? "· 🎯 Direct" : xiCount >= 11 ? "· 🧠 AI" : "· ❌ 11+"}
+                  </span>
+                  <div className="max-h-[20vh] overflow-y-auto grid grid-cols-3 gap-0.5 mt-1">
+                    {safePlayers.map((p: any, i: number) => {
+                      const pid = String(p.player_fixed_id ?? p.pid ?? p.name ?? `p${i}`);
+                      const sel = manualPlayingXI.has(pid);
+                      return (
+                        <label key={i} className={cn("flex items-center gap-0.5 text-[8px] px-1 py-0.5 rounded border cursor-pointer", sel ? "bg-emerald-100 dark:bg-emerald-950/40 border-emerald-400 text-emerald-700" : "bg-white dark:bg-slate-800 border-slate-200")}>
+                          <input type="checkbox" checked={sel} onChange={() => toggleXI(pid)} className="w-2.5 h-2.5 accent-emerald-500" />
+                          <span className="truncate">{String(p.name || `P${i+1}`).slice(0, 8)}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* === Manual Exclude === */}
+                <div className="bg-red-50 dark:bg-red-950/20 rounded-lg p-2 border border-red-200 dark:border-red-900/30">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-[10px] font-bold text-red-600 dark:text-red-400">🚫 Exclude</p>
+                    {manualExclude.size > 0 && <button onClick={clearEx} className="text-[8px] text-red-500 underline">Clear ({manualExclude.size})</button>}
+                  </div>
+                  <div className="max-h-[15vh] overflow-y-auto grid grid-cols-3 gap-0.5">
+                    {safePlayers.map((p: any, i: number) => {
+                      const pid = String(p.player_fixed_id ?? p.pid ?? p.name ?? `p${i}`);
+                      const ex = manualExclude.has(pid);
+                      return (
+                        <label key={i} className={cn("flex items-center gap-0.5 text-[8px] px-1 py-0.5 rounded border cursor-pointer", ex ? "bg-red-100 dark:bg-red-950/40 border-red-400 text-red-500 line-through" : "bg-white dark:bg-slate-800 border-slate-200")}>
+                          <input type="checkbox" checked={ex} onChange={() => toggleEx(pid)} className="w-2.5 h-2.5 accent-red-500" />
+                          <span className="truncate">{String(p.name || `P${i+1}`).slice(0, 8)}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* === Custom Combinations === */}
+                <div className="bg-violet-50 dark:bg-violet-950/20 rounded-lg p-2 border border-violet-200 dark:border-violet-900/30">
+                  <p className="text-[10px] font-bold text-violet-600 dark:text-violet-400 mb-1">📊 Custom Combos</p>
+                  <div className="grid grid-cols-4 gap-1 mb-1">
+                    {(["WK","BAT","AR","BOWL"] as const).map((r) => (
+                      <div key={r}>
+                        <label className="text-[7px] text-muted-foreground">{r}</label>
+                        <input type="number" min={0} max={8} value={(newCombo as any)[r.toLowerCase()]} onChange={(e) => setNewCombo({ ...newCombo, [r.toLowerCase()]: Math.max(0, Math.min(8, parseInt(e.target.value) || 0)) })} className="w-full h-7 text-center text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900" />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className={cn("text-[8px] font-bold", newCombo.wk + newCombo.bat + newCombo.ar + newCombo.bowl === 11 ? "text-emerald-600" : "text-red-500")}>
+                      Total: {newCombo.wk + newCombo.bat + newCombo.ar + newCombo.bowl}/11
+                    </span>
+                    <Button size="sm" className="h-6 text-[8px] bg-violet-600 hover:bg-violet-700 text-white" onClick={addCombo}><Plus className="w-2 h-2 mr-0.5" />Add</Button>
+                  </div>
+                  {customCombos.length > 0 && (
+                    <div className="mt-1 space-y-0.5">
+                      {customCombos.map((c, i) => (
+                        <div key={i} className="flex items-center justify-between bg-white dark:bg-slate-800 rounded px-1 py-0.5 border border-slate-200 dark:border-slate-700">
+                          <span className="text-[8px] font-mono">{i+1}. WK {c.wk} | BAT {c.bat} | AR {c.ar} | BOWL {c.bowl}</span>
+                          <button onClick={() => removeCombo(i)} className="text-red-500"><X className="w-2.5 h-2.5" /></button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <Button
