@@ -481,6 +481,18 @@ export function cleanPlayerPool(players: MatchPlayer[]): MatchPlayer[] {
   });
 }
 
+export interface GenerationSettings {
+  lockedPlayers?: string[];
+  excludedPlayers?: string[];
+  captainLock?: string;
+  vcLock?: string;
+  riskLevel?: string;
+  differentialPct?: number;
+  captainStrategy?: string;
+  vcStrategy?: string;
+  teamBalance?: string;
+}
+
 export async function generateSweep(
   players: MatchPlayer[],
   count: SweepCount,
@@ -488,7 +500,8 @@ export async function generateSweep(
   team2Name: string,
   onProgress?: (p: SweepProgress) => void,
   mode?: "smart" | "gl" | "advanced" | "combination",
-  customCombos?: Array<{ wk: number; bat: number; ar: number; bowl: number }>
+  customCombos?: Array<{ wk: number; bat: number; ar: number; bowl: number }>,
+  settings?: GenerationSettings
 ): Promise<SweepResult> {
   const startedAt = Date.now();
   // PERFORMANCE: Track each phase timing for diagnostics
@@ -601,11 +614,52 @@ export async function generateSweep(
 
   // CRITICAL: Session seed — makes EVERY generateSweep call produce DIFFERENT teams.
   const sessionSeed = Math.floor(Math.random() * 99999) + 1;
-  console.log(`[generator] Session seed: ${sessionSeed} (ensures unique teams this run)${customCombos ? ` + ${customCombos.length} custom combos` : ""}`);
+  console.log(`[generator] Session seed: ${sessionSeed} (ensures unique teams this run)${customCombos ? ` + ${customCombos.length} custom combos` : ""}${settings ? ` + user settings` : ""}`);
 
   // CUSTOM COMBINATIONS: If provided, distribute teams across all combos
-  // Example: 40 teams + 3 combos → ~13-14 teams per combo
   const useCustomCombos = customCombos && customCombos.length > 0;
+
+  // === APPLY USER SETTINGS: Build locked player IDs set ===
+  // Locked players are forced into EVERY generated team
+  const lockedPlayerIds = new Set<string>();
+  if (settings?.lockedPlayers && settings.lockedPlayers.length > 0) {
+    for (const lockedName of settings.lockedPlayers) {
+      const match = cleaned.find((p) => {
+        const name = String(p.name || "").toLowerCase();
+        return name.includes(lockedName.toLowerCase());
+      });
+      if (match) {
+        const id = String(match.player_fixed_id ?? match.pid ?? match.name);
+        lockedPlayerIds.add(id);
+      }
+    }
+    console.log(`[generator] Locked players: ${lockedPlayerIds.size} forced into every team`);
+  }
+
+  // === APPLY USER SETTINGS: Risk level affects strategy distribution ===
+  // If riskLevel is "Aggressive" → more differential teams
+  // If riskLevel is "Safe" → more safe teams
+  const riskAdjustedMode = settings?.riskLevel === "Aggressive" ? "gl" :
+                           settings?.riskLevel === "Safe" ? "smart" : mode;
+
+  // === APPLY USER SETTINGS: Team balance affects role composition ===
+  // "Bat Heavy" → more BAT, "Bowl Heavy" → more BOWL, "Balanced" → default
+  const balanceAdjust = settings?.teamBalance === "Bat Heavy" ? { batBonus: 1, bowlBonus: -1 } :
+                        settings?.teamBalance === "Bowl Heavy" ? { batBonus: -1, bowlBonus: 1 } :
+                        { batBonus: 0, bowlBonus: 0 };
+
+  // === APPLY USER SETTINGS: Captain/VC locks ===
+  const captainLockId = settings?.captainLock ? (() => {
+    const match = cleaned.find((p) => String(p.name || "").toLowerCase().includes(settings!.captainLock!.toLowerCase()));
+    return match ? String(match.player_fixed_id ?? match.pid ?? match.name) : "";
+  })() : "";
+  const vcLockId = settings?.vcLock ? (() => {
+    const match = cleaned.find((p) => String(p.name || "").toLowerCase().includes(settings!.vcLock!.toLowerCase()));
+    return match ? String(match.player_fixed_id ?? match.pid ?? match.name) : "";
+  })() : "";
+
+  if (captainLockId) console.log(`[generator] Captain locked: ${captainLockId}`);
+  if (vcLockId) console.log(`[generator] VC locked: ${vcLockId}`);
 
   // Generate teams in chunks
   const CHUNK = Math.max(5, Math.floor(count / 20));
@@ -725,7 +779,27 @@ export async function generateSweep(
     });
 
     const cvStart = Date.now();
-    const cv = pickCaptainVCDeterministic(team, ranked, i, usedCVPairs, lookups.efvMap);
+    // === APPLY USER SETTINGS: Captain/VC lock override ===
+    let cv: { captain: string; viceCaptain: string } | null;
+    if (captainLockId || vcLockId) {
+      const teamPlayerIds = team.map((p) => String(p.player_fixed_id ?? p.pid ?? p.name));
+      let finalCap = captainLockId && teamPlayerIds.includes(captainLockId) ? captainLockId : "";
+      let finalVC = vcLockId && teamPlayerIds.includes(vcLockId) ? vcLockId : "";
+      if (!finalCap || !finalVC) {
+        const autoCv = pickCaptainVCDeterministic(team, ranked, i, usedCVPairs, lookups.efvMap);
+        if (!autoCv) { perfLog.cvPickMs += Date.now() - cvStart; continue; }
+        if (!finalCap) finalCap = autoCv.captain;
+        if (!finalVC) finalVC = autoCv.viceCaptain;
+      }
+      if (finalCap === finalVC) {
+        const autoCv = pickCaptainVCDeterministic(team, ranked, i, usedCVPairs, lookups.efvMap);
+        if (autoCv) finalVC = autoCv.viceCaptain;
+      }
+      usedCVPairs.add(`${finalCap}|${finalVC}`);
+      cv = { captain: finalCap, viceCaptain: finalVC };
+    } else {
+      cv = pickCaptainVCDeterministic(team, ranked, i, usedCVPairs, lookups.efvMap);
+    }
     perfLog.cvPickMs += Date.now() - cvStart;
     if (!cv) continue;
 

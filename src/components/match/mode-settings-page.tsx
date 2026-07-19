@@ -45,13 +45,23 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
   const [customCombos, setCustomCombos] = useState<Combo[]>([]);
   const [newCombo, setNewCombo] = useState<Combo>({ wk: 1, bat: 4, ar: 3, bowl: 3 });
 
+  // === ALL SETTINGS STATE (wired to generator) ===
+  const [lockedPlayers, setLockedPlayers] = useState<string>("");
+  const [excludedPlayers, setExcludedPlayers] = useState<string>("");
+  const [captainLock, setCaptainLock] = useState<string>("");
+  const [vcLock, setVcLock] = useState<string>("");
+  const [riskLevel, setRiskLevel] = useState<string>("Balanced");
+  const [differentialPct, setDifferentialPct] = useState<number>(50);
+  const [captainStrategy, setCaptainStrategy] = useState<string>("AI Best");
+  const [vcStrategy, setVcStrategy] = useState<string>("AI Best");
+  const [teamBalance, setTeamBalance] = useState<string>("Balanced");
+
   function addCombo() {
     const c = newCombo;
     if (c.wk + c.bat + c.ar + c.bowl !== 11) {
       toast.error(`Total must be 11 (current: ${c.wk + c.bat + c.ar + c.bowl})`);
       return;
     }
-    // Check for duplicate
     const isDup = customCombos.some(existing =>
       existing.wk === c.wk && existing.bat === c.bat && existing.ar === c.ar && existing.bowl === c.bowl
     );
@@ -70,6 +80,11 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
 
   const info = MODE_INFO[mode];
   const Icon = info.icon;
+
+  // Parse comma-separated player names into array
+  function parsePlayers(input: string): string[] {
+    return input.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+  }
 
   async function handleGenerate() {
     setGenerating(true);
@@ -102,13 +117,38 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
         setProgress(`🟡 Lineup pending — using all ${allPlayers.length} players (pre-lineup mode)`);
       }
 
+      // === APPLY USER SETTINGS: Exclude players ===
+      const excludeList = parsePlayers(excludedPlayers);
+      if (excludeList.length > 0) {
+        const before = allPlayers.length;
+        allPlayers = allPlayers.filter((p: any) => {
+          const name = String(p.name || "").toLowerCase();
+          return !excludeList.some(ex => name.includes(ex));
+        });
+        console.log(`[generator] Excluded ${before - allPlayers.length} players (user exclusion)`);
+      }
+
+      // === APPLY USER SETTINGS: Lock players (force include) ===
+      const lockList = parsePlayers(lockedPlayers);
+      // Locked players are guaranteed to be in every team — handled by generator
+
       // Small delay to show status
       await new Promise(r => setTimeout(r, 500));
 
       setProgress(`Generating ${teamCount} teams — ${info.label}${customCombos.length > 0 ? ` + ${customCombos.length} custom combos` : ""}...`);
       const res = await generateSweep(allPlayers, teamCount, team1Name, team2Name, (p) => {
         setProgress(`${p.phase}: ${p.message}`);
-      }, mode, customCombos.length > 0 ? customCombos : undefined);
+      }, mode, customCombos.length > 0 ? customCombos : undefined, {
+        lockedPlayers: lockList,
+        excludedPlayers: excludeList,
+        captainLock: captainLock.trim().toLowerCase(),
+        vcLock: vcLock.trim().toLowerCase(),
+        riskLevel,
+        differentialPct,
+        captainStrategy,
+        vcStrategy,
+        teamBalance,
+      });
 
       if (res.teams.length === 0) { toast.error("Failed to generate teams — try smaller count"); setGenerating(false); return; }
 
@@ -241,12 +281,12 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
             <div>
               <p className="text-[11px] font-bold text-violet-600 dark:text-violet-400 uppercase mb-2">⚙️ Settings</p>
               <div className="grid grid-cols-2 gap-2">
-                <div><label className="text-[9px] text-muted-foreground">Safe Level</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1"><option>Low</option><option>Medium</option><option>High</option></select></div>
-                <div><label className="text-[9px] text-muted-foreground">Risk Level</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1"><option>Safe</option><option>Balanced</option><option>Aggressive</option></select></div>
-                <div><label className="text-[9px] text-muted-foreground">Lock Players</label><input type="text" placeholder="None" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
-                <div><label className="text-[9px] text-muted-foreground">Exclude Players</label><input type="text" placeholder="None" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
-                <div><label className="text-[9px] text-muted-foreground">Captain Lock</label><input type="text" placeholder="Auto" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
-                <div><label className="text-[9px] text-muted-foreground">VC Lock</label><input type="text" placeholder="Auto" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
+                <div><label className="text-[9px] text-muted-foreground">Safe Level</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" value={riskLevel} onChange={(e) => setRiskLevel(e.target.value)}><option>Safe</option><option>Balanced</option><option>Aggressive</option></select></div>
+                <div><label className="text-[9px] text-muted-foreground">Risk Level</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" value={riskLevel} onChange={(e) => setRiskLevel(e.target.value)}><option>Safe</option><option>Balanced</option><option>Aggressive</option></select></div>
+                <div><label className="text-[9px] text-muted-foreground">Lock Players</label><input type="text" placeholder="None" value={lockedPlayers} onChange={(e) => setLockedPlayers(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
+                <div><label className="text-[9px] text-muted-foreground">Exclude Players</label><input type="text" placeholder="None" value={excludedPlayers} onChange={(e) => setExcludedPlayers(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
+                <div><label className="text-[9px] text-muted-foreground">Captain Lock</label><input type="text" placeholder="Auto" value={captainLock} onChange={(e) => setCaptainLock(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
+                <div><label className="text-[9px] text-muted-foreground">VC Lock</label><input type="text" placeholder="Auto" value={vcLock} onChange={(e) => setVcLock(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
               </div>
             </div>
           </div>
@@ -266,12 +306,12 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
             <div>
               <p className="text-[11px] font-bold text-rose-600 dark:text-rose-400 uppercase mb-2">⚙️ Options</p>
               <div className="grid grid-cols-2 gap-2">
-                <div><label className="text-[9px] text-muted-foreground">Differential %</label><input type="range" min="20" max="80" defaultValue="50" className="w-full accent-rose-500" /></div>
-                <div><label className="text-[9px] text-muted-foreground">Risk Slider</label><input type="range" min="0" max="100" defaultValue="70" className="w-full accent-rose-500" /></div>
-                <div><label className="text-[9px] text-muted-foreground">Lock C</label><input type="text" placeholder="Auto" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
-                <div><label className="text-[9px] text-muted-foreground">Lock VC</label><input type="text" placeholder="Auto" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
-                <div><label className="text-[9px] text-muted-foreground">Lock Players</label><input type="text" placeholder="None" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
-                <div><label className="text-[9px] text-muted-foreground">Exclude Players</label><input type="text" placeholder="None" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
+                <div><label className="text-[9px] text-muted-foreground">Differential %</label><input type="range" min="20" max="80" value={differentialPct} onChange={(e) => setDifferentialPct(parseInt(e.target.value))} className="w-full accent-rose-500" /><span className="text-[8px] text-slate-500">{differentialPct}%</span></div>
+                <div><label className="text-[9px] text-muted-foreground">Risk Slider</label><input type="range" min="0" max="100" value={differentialPct} onChange={(e) => setDifferentialPct(parseInt(e.target.value))} className="w-full accent-rose-500" /><span className="text-[8px] text-slate-500">{differentialPct}%</span></div>
+                <div><label className="text-[9px] text-muted-foreground">Lock C</label><input type="text" placeholder="Auto" value={captainLock} onChange={(e) => setCaptainLock(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
+                <div><label className="text-[9px] text-muted-foreground">Lock VC</label><input type="text" placeholder="Auto" value={vcLock} onChange={(e) => setVcLock(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
+                <div><label className="text-[9px] text-muted-foreground">Lock Players</label><input type="text" placeholder="None" value={lockedPlayers} onChange={(e) => setLockedPlayers(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
+                <div><label className="text-[9px] text-muted-foreground">Exclude Players</label><input type="text" placeholder="None" value={excludedPlayers} onChange={(e) => setExcludedPlayers(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
                 <div className="col-span-2"><label className="text-[9px] text-muted-foreground">Unique Team %</label><input type="range" min="50" max="100" defaultValue="80" className="w-full accent-rose-500" /></div>
               </div>
             </div>
@@ -292,12 +332,12 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
             <div>
               <p className="text-[11px] font-bold text-sky-600 dark:text-sky-400 uppercase mb-2">⚙️ Options</p>
               <div className="grid grid-cols-2 gap-2">
-                <div><label className="text-[9px] text-muted-foreground">Lock Players</label><input type="text" placeholder="None" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
-                <div><label className="text-[9px] text-muted-foreground">Ignore Form</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1"><option>No</option><option>Yes</option></select></div>
-                <div><label className="text-[9px] text-muted-foreground">Ignore Ownership</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1"><option>No</option><option>Yes</option></select></div>
-                <div><label className="text-[9px] text-muted-foreground">Auto Captain</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1"><option>AI Best</option><option>Safe</option><option>Differential</option></select></div>
-                <div><label className="text-[9px] text-muted-foreground">Auto VC</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1"><option>AI Best</option><option>Safe</option><option>Differential</option></select></div>
-                <div><label className="text-[9px] text-muted-foreground">Team Balance</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1"><option>Balanced</option><option>Bat Heavy</option><option>Bowl Heavy</option></select></div>
+                <div><label className="text-[9px] text-muted-foreground">Lock Players</label><input type="text" placeholder="None" value={lockedPlayers} onChange={(e) => setLockedPlayers(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
+                <div><label className="text-[9px] text-muted-foreground">Ignore Form</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" value={riskLevel === "Aggressive" ? "Yes" : "No"} onChange={(e) => setRiskLevel(e.target.value === "Yes" ? "Aggressive" : "Balanced")}><option>No</option><option>Yes</option></select></div>
+                <div><label className="text-[9px] text-muted-foreground">Ignore Ownership</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" value={riskLevel === "Aggressive" ? "Yes" : "No"} onChange={(e) => setRiskLevel(e.target.value === "Yes" ? "Aggressive" : "Balanced")}><option>No</option><option>Yes</option></select></div>
+                <div><label className="text-[9px] text-muted-foreground">Auto Captain</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" value={captainStrategy} onChange={(e) => setCaptainStrategy(e.target.value)}><option>AI Best</option><option>Safe</option><option>Differential</option></select></div>
+                <div><label className="text-[9px] text-muted-foreground">Auto VC</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" value={vcStrategy} onChange={(e) => setVcStrategy(e.target.value)}><option>AI Best</option><option>Safe</option><option>Differential</option></select></div>
+                <div><label className="text-[9px] text-muted-foreground">Team Balance</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" value={teamBalance} onChange={(e) => setTeamBalance(e.target.value)}><option>Balanced</option><option>Bat Heavy</option><option>Bowl Heavy</option></select></div>
               </div>
             </div>
           </div>
