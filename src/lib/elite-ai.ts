@@ -2230,22 +2230,31 @@ export function generateEliteTeams(
       return efvB - efvA;
     });
 
+    // ROTATED C/VC selection — uses top 6 candidates with rotation offset
+    // so different teams (even with same strategy) get different C/VC pairs.
+    // rotationOffset = i + sessionSeed ensures different C/VC every run.
+    const topCandidates = sortedByHackEFV.slice(0, Math.min(6, sortedByHackEFV.length));
+    const cRotation = (i + sessionSeed) % topCandidates.length;
+    const vcRotation = (i + sessionSeed + 1) % topCandidates.length;
+
     if (cfg.strategy === "safe") {
-      // C = top hack-boosted EFV, VC = 2nd
-      captain = sortedByHackEFV[0];
-      viceCaptain = sortedByHackEFV[1];
+      // C = rotated top, VC = next
+      captain = topCandidates[cRotation];
+      viceCaptain = topCandidates[vcRotation];
     } else if (cfg.strategy === "balanced") {
-      // C = top, VC = 3rd (for diversity)
-      captain = sortedByHackEFV[0];
-      viceCaptain = sortedByHackEFV[2] || sortedByHackEFV[1];
+      // C = rotated top, VC = 3rd from rotated (for diversity)
+      captain = topCandidates[cRotation];
+      const vcIdx = (cRotation + 2) % topCandidates.length;
+      viceCaptain = topCandidates[vcIdx];
     } else if (cfg.strategy === "differential") {
-      // C = 2nd (contrarian captain), VC = top
-      captain = sortedByHackEFV[1] || sortedByHackEFV[0];
-      viceCaptain = sortedByHackEFV[0];
+      // C = 2nd from rotated (contrarian captain), VC = top from rotated
+      captain = topCandidates[vcRotation];
+      viceCaptain = topCandidates[cRotation];
     } else {
-      // grand-league: C = 3rd, VC = 2nd
-      captain = sortedByHackEFV[2] || sortedByHackEFV[0];
-      viceCaptain = sortedByHackEFV[1] || sortedByHackEFV[0];
+      // grand-league: C = 3rd from rotated, VC = 2nd from rotated
+      const cIdx3 = (cRotation + 2) % topCandidates.length;
+      captain = topCandidates[cIdx3];
+      viceCaptain = topCandidates[vcRotation];
     }
 
     // Ensure C ≠ VC

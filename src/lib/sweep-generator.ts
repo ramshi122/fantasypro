@@ -433,17 +433,17 @@ function pickCaptainVCDeterministic(
     return efvB - efvA;
   });
 
-  // Top 6 candidates for C/VC
-  const candidates = sorted.slice(0, Math.min(6, sorted.length));
+  // Top 8 candidates for C/VC (was 6 — more variety for diverse C/VC)
+  const candidates = sorted.slice(0, Math.min(8, sorted.length));
   if (candidates.length < 2) return null;
 
-  // Deterministic C/VC rotation:
-  // C = candidates[teamIndex % candidates.length]
-  // VC = candidates[(teamIndex + 1) % candidates.length]
-  // Try variations until unique pair found
-  for (let offset = 0; offset < candidates.length * 2; offset++) {
-    const cIdx = (teamIndex + offset) % candidates.length;
-    const vcIdx = (teamIndex + offset + 1 + Math.floor(offset / candidates.length)) % candidates.length;
+  // DIVERSIFIED C/VC rotation — tries ALL possible pairs starting from rotated position.
+  // startOffset = teamIndex * 3 ensures different starting point per team.
+  // This produces different C/VC picks across teams AND across runs.
+  const startOffset = teamIndex * 3;
+  for (let attempt = 0; attempt < candidates.length * candidates.length; attempt++) {
+    const cIdx = (startOffset + attempt) % candidates.length;
+    const vcIdx = (startOffset + attempt + 1 + Math.floor(attempt / candidates.length)) % candidates.length;
     if (cIdx === vcIdx) continue;
 
     const c = candidates[cIdx];
@@ -458,9 +458,13 @@ function pickCaptainVCDeterministic(
     }
   }
 
-  // Fallback: first two candidates
-  const c = candidates[0];
-  const vc = candidates[1];
+  // Fallback: pick a RANDOM pair from candidates (not always first two)
+  // This ensures even fallback C/VC is different each time
+  const randomC = Math.floor(Math.random() * candidates.length);
+  let randomVC = Math.floor(Math.random() * candidates.length);
+  if (randomVC === randomC) randomVC = (randomVC + 1) % candidates.length;
+  const c = candidates[randomC];
+  const vc = candidates[randomVC];
   return {
     captain: String(c.player_fixed_id ?? c.pid ?? c.name),
     viceCaptain: String(vc.player_fixed_id ?? vc.pid ?? vc.name),
