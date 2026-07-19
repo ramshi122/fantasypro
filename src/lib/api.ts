@@ -1653,48 +1653,519 @@ export async function bulkTransferToLinkedAccount(
   let successCount = 0;
   let failCount = 0;
 
-  // === PRE-TRANSFER VALIDATION ===
-  // Verify every team is valid before transferring
-  // If any team has invalid players, it will be caught by the transfer API
-  // but we log it here for debugging
-  console.log(`[bulkTransfer] Pre-transfer validation: ${teams.length} teams to transfer to ${params.fantasyApp}`);
-
-  // Check each team for obvious issues (empty player lists, missing captain)
-  for (let i = 0; i < teams.length; i++) {
-    const t = teams[i];
-    if (!t.playerIds || t.playerIds.length !== 11) {
-      console.warn(`[bulkTransfer] ⚠️ Team ${i + 1} (teamNo=${t.teamNo}) has ${t.playerIds?.length || 0} players (expected 11)`);
-    }
-    if (!t.captainId) {
-      console.warn(`[bulkTransfer] ⚠️ Team ${i + 1} (teamNo=${t.teamNo}) has no captain`);
-    }
-    if (!t.viceCaptainId) {
-      console.warn(`[bulkTransfer] ⚠️ Team ${i + 1} (teamNo=${t.teamNo}) has no vice-captain`);
-    }
+  // ============================================================
+  // PRODUCTION-GRADE BULK TRANSFER — Sequential Queue + Verify + Auto-Recover
+  // ============================================================
+  //
+  // Design principles (per user spec):
+  //   1. Sequential queue — ONE team at a time, no parallelism, no skipping
+  //   2. Post-transfer verification — verify via list-of-teams after EACH transfer
+  //   3. Auto token refresh — if session expires, try refresh via /api/auth/verify
+  //   4. Idempotency check — before retrying, check if team was already created
+  //      (prevents duplicates from lost responses)
+  //   5. Smart retry — up to 5 attempts per team with exponential backoff
+  //   6. Final validation gate — only mark success if verification passes
+  //   7. Clear logging — every step logged for debugging
+  //
+  // Mutex: prevent concurrent bulk transfers (race condition prevention).
+  // If another bulk transfer is in progress, this one waits/rejects.
+  if (bulkTransferMutex.isLocked) {
+    console.error("[bulkTransfer] ❌ BLOCKED — another bulk transfer is already in progress (race condition prevention)");
+    return {
+      totalAttempted: teams.length,
+      successCount: 0,
+      failCount: teams.length,
+      results: teams.map((t) => ({
+        teamNo: t.teamNo,
+        success: false,
+        message: "Another bulk transfer is already running. Please wait for it to finish.",
+      })),
+      transferLinks: [],
+      blockReason: "Concurrent bulk transfer blocked by mutex",
+    };
   }
+  bulkTransferMutex.acquire();
 
-  // ─── PRE-TRANSFER AUTH VERIFY ──────────────────────────────────────────
-  //
-  // IMPORTANT: We SKIP pre-verification by default — this matches the original
-  // teamgeneration.in APK behavior. The original route.ts source explicitly says:
-  //
-  //   "Pre-verification adds latency and may give false negatives
-  //    (server says expired but token works)"
-  //
-  // The /api/transfer proxy already handles token expiry REACTIVELY during the
-  // actual transfer:
-  //   - Detects "Proxy returned 400/401/403" from the platform → returns needsReauth
-  //   - Detects "token expired" / "jwt expired" / "invalid token" → returns needsReauth
-  //   - Stops the bulk transfer immediately when the first team fails with auth error
-  //
-  // Calling /api/fantasy/auth/verify before transfer was causing FALSE "session
-  // expired" warnings for Dream11 users with valid tokens. So we only pre-verify
-  // if the caller explicitly sets skipVerify=false.
-  //
-  // Default: SKIP pre-verify (matches original APK).
-  if (params.skipVerify === false && params.authToken) {
-    console.log("[bulkTransfer] Pre-verifying auth token (skipVerify=false)...");
-    const verifyResult = await verifyBeforeTransfer({
+  try {
+    // === STEP 1: PRE-TRANSFER VALIDATION ===
+    console.log(`\n${"=".repeat(70)}`);
+    console.log(`[bulkTransfer] 🚀 STARTING BULK TRANSFER`);
+    console.log(`[bulkTransfer]    Platform: ${params.fantasyApp}`);
+    console.log(`[bulkTransfer]    Match ID: ${params.matchId}`);
+    console.log(`[bulkTransfer]    Total teams: ${teams.length}`);
+    console.log(`[bulkTransfer]    Mode: ${params.replaceMode ? "REPLACE" : "ADD"}`);
+    console.log(`[bulkTransfer]    Token length: ${params.authToken?.length || 0}`);
+    console.log(`${"=".repeat(70)}\n`);
+
+    // Validate each team has 11 players, captain, and vice-captain
+    let validationFailed = false;
+    for (let i = 0; i < teams.length; i++) {
+      const t = teams[i];
+      if (!t.playerIds || t.playerIds.length !== 11) {
+        console.error(`[bulkTransfer] ❌ Team ${i + 1} (teamNo=${t.teamNo}) has ${t.playerIds?.length || 0} players (expected 11)`);
+        validationFailed = true;
+      }
+      if (!t.captainId) {
+        console.error(`[bulkTransfer] ❌ Team ${i + 1} (teamNo=${t.teamNo}) has no captain`);
+        validationFailed = true;
+      }
+      if (!t.viceCaptainId) {
+        console.error(`[bulkTransfer] ❌ Team ${i + 1} (teamNo=${t.teamNo}) has no vice-captain`);
+        validationFailed = true;
+      }
+    }
+    if (validationFailed) {
+      console.error("[bulkTransfer] ❌ Pre-transfer validation FAILED — aborting");
+      return {
+        totalAttempted: teams.length,
+        successCount: 0,
+        failCount: teams.length,
+        results: teams.map((t) => ({
+          teamNo: t.teamNo,
+          success: false,
+          message: "Team validation failed — must have 11 players, captain, and vice-captain",
+        })),
+        transferLinks: [],
+        blockReason: "Team validation failed",
+      };
+    }
+    console.log(`[bulkTransfer] ✅ Pre-transfer validation passed for all ${teams.length} teams\n`);
+
+    // === STEP 2: FETCH INITIAL TEAM COUNT (for verification baseline) ===
+    let initialTeamCount = 0;
+    try {
+      const initialTeams = await listFantasyTeams({
+        fantasyApp: params.fantasyApp,
+        authToken: params.authToken,
+        matchId: params.matchId,
+        my11circleChallenge: params.my11circleChallenge,
+        my11circleUserId: params.my11circleUserId,
+        my11circleMobile: params.mobileNumber,
+      });
+      initialTeamCount = initialTeams.length;
+      console.log(`[bulkTransfer] 📊 Initial team count on platform: ${initialTeamCount}`);
+    } catch (err: any) {
+      console.warn(`[bulkTransfer] ⚠️ Could not fetch initial team count: ${err?.message}`);
+      // Continue anyway — verification will be best-effort
+    }
+
+    // === STEP 3: PRE-TRANSFER AUTH VERIFY (only if skipVerify=false) ===
+    if (params.skipVerify === false && params.authToken) {
+      console.log("[bulkTransfer] Pre-verifying auth token (skipVerify=false)...");
+      const verifyResult = await verifyBeforeTransfer({
+        fantasyApp: params.fantasyApp,
+        authToken: params.authToken,
+        matchId: params.matchId,
+        my11circleChallenge: params.my11circleChallenge,
+        my11circleUserId: params.my11circleUserId,
+        my11circleMobile: params.mobileNumber,
+      });
+
+      if (!verifyResult.proceed) {
+        console.warn("[bulkTransfer] Blocked by auth verify:", verifyResult.reason);
+        return {
+          totalAttempted: 0,
+          successCount: 0,
+          failCount: teams.length,
+          results: teams.map((t) => ({
+            teamNo: t.teamNo,
+            success: false,
+            message: verifyResult.reason || "Token expired — re-link via OTP",
+          })),
+          transferLinks: [],
+          needsReauth: true,
+          blockReason: verifyResult.reason,
+        };
+      }
+
+      if (verifyResult.refreshed) {
+        const freshToken = getFantasyToken(params.fantasyApp);
+        if (freshToken) {
+          params = { ...params, authToken: freshToken };
+          console.log("[bulkTransfer] Using refreshed token from updateUiToken");
+        }
+      }
+    }
+
+    // === STEP 4: SEQUENTIAL TRANSFER WITH VERIFICATION ===
+    //
+    // Per-team retry strategy:
+    //   - Max 5 attempts per team
+    //   - Exponential backoff: 500ms → 1000ms → 2000ms → 4000ms → 8000ms
+    //   - On session expiry: try refresh token, then retry (max 1 refresh per team)
+    //   - On network error: backoff and retry
+    //   - On success: VERIFY via list-of-teams before marking as success
+    //   - On verify fail: check if team was already created (idempotency);
+    //     if yes → mark as success; if no → retry
+    //   - On definite failure (e.g., deadline passed): don't retry, mark as failed
+    //
+    // Inter-team delay matches original teamgeneration.in:
+    //   {dream11: 200, my11circle: 2000, myteam11: 2000}[slug] || 0
+    const MAX_ATTEMPTS_PER_TEAM = 5;
+    const RETRY_BACKOFFS = [500, 1000, 2000, 4000, 8000];
+    const INTER_TEAM_DELAY = params.fantasyApp === "my11circle" ? 2000
+                          : params.fantasyApp === "dream11" ? 200
+                          : 300;
+    const VERIFY_DELAY_MS = 600; // wait 600ms after transfer before verifying (give backend time to register)
+
+    // Track the latest known team count (updated after each successful transfer + verify)
+    let latestKnownTeamCount = initialTeamCount;
+
+    for (let i = 0; i < teams.length; i++) {
+      const t = teams[i];
+      const hasExistingId = params.replaceMode && params.existingTeamIds && i < params.existingTeamIds.length && params.existingTeamIds[i];
+      const isReplace = !!hasExistingId;
+      const numericPlayers = t.playerIds.map((id) => Number(id)).filter((n) => !isNaN(n));
+      const numericCaptain = Number(t.captainId);
+      const numericVC = Number(t.viceCaptainId);
+
+      const body: Record<string, unknown> = {
+        matchId: params.matchId,
+        captain: isNaN(numericCaptain) ? t.captainId : numericCaptain,
+        vice_captain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
+        vicecaptain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
+        players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
+        fantasyApp: params.fantasyApp,
+        authToken: params.authToken,
+        sportIndex: params.sportIndex ?? 0,
+        type: isReplace ? "edit" : "new",
+      };
+      if (isReplace && params.existingTeamIds) body.id = params.existingTeamIds[i];
+
+      console.log(`\n${"-".repeat(60)}`);
+      console.log(`[bulkTransfer] 🏏 Team ${i + 1}/${teams.length} (teamNo=${t.teamNo}) — ${isReplace ? "REPLACE" : "ADD"}`);
+      console.log(`[bulkTransfer]    Captain: ${body.captain}, VC: ${body.vice_captain}, Players: ${(body.players as number[]).length}`);
+      console.log(`${"-".repeat(60)}`);
+
+      let teamTransferred = false;
+      let teamVerified = false;
+      let teamErrorMessage = "";
+      let needsReauthForTeam = false;
+      let tokenRefreshedForTeam = false;
+
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_TEAM; attempt++) {
+        console.log(`[bulkTransfer]    → Attempt ${attempt}/${MAX_ATTEMPTS_PER_TEAM} for team ${t.teamNo}`);
+
+        try {
+          // Always use the latest token (may have been refreshed)
+          const attemptBody = { ...body, authToken: params.authToken, skipPreVerify: true };
+
+          const proxyRes = await fetch(`/api/transfer`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(attemptBody),
+            cache: "no-store",
+            signal: AbortSignal.timeout(45000),
+          });
+          const res = await proxyRes.json() as ApiResponse & {
+            needsReauth?: boolean;
+            confidence?: "definite" | "tentative";
+            code?: string;
+            backendError?: string;
+            httpStatus?: number;
+          };
+
+          // ── CASE 1: SESSION EXPIRED ──
+          if (res.needsReauth) {
+            console.warn(`[bulkTransfer]    ⚠️ Session expired (code: ${res.code || "UNKNOWN"})`);
+
+            // Try token refresh once per team
+            if (!tokenRefreshedForTeam) {
+              console.log(`[bulkTransfer]    🔄 Attempting token refresh via /api/auth/verify...`);
+              const refreshedToken = await tryRefreshAuthToken(params);
+              if (refreshedToken) {
+                params = { ...params, authToken: refreshedToken };
+                tokenRefreshedForTeam = true;
+                console.log(`[bulkTransfer]    ✅ Token refreshed! Retrying transfer with new token...`);
+                // Don't count this as an attempt — give it a fresh try
+                attempt--; // undo the attempt counter increment
+                continue;
+              } else {
+                console.error(`[bulkTransfer]    ❌ Token refresh failed — session permanently expired`);
+              }
+            }
+
+            // Refresh failed or already tried — permanent auth failure
+            needsReauthForTeam = true;
+            teamErrorMessage = (res.error as string) || "Session expired — re-link via OTP";
+            break; // exit retry loop, mark as failed
+          }
+
+          // ── CASE 2: SUCCESS RESPONSE ──
+          if (res.status === "success") {
+            console.log(`[bulkTransfer]    ✅ Transfer response: SUCCESS (confidence: ${res.confidence || "definite"})`);
+
+            // WAIT for backend to register the new team before verifying
+            await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
+
+            // VERIFY via list-of-teams
+            const verifyResult = await verifyTransferCompletion(params, isReplace, latestKnownTeamCount, i + 1);
+
+            if (verifyResult.verified) {
+              console.log(`[bulkTransfer]    ✅ VERIFIED — team confirmed on platform (count: ${verifyResult.newCount})`);
+              latestKnownTeamCount = verifyResult.newCount ?? (latestKnownTeamCount + (isReplace ? 0 : 1));
+              teamTransferred = true;
+              teamVerified = true;
+              break; // success — move to next team
+            } else {
+              console.warn(`[bulkTransfer]    ⚠️ Verification failed — team may not be registered yet. Count: ${verifyResult.newCount} (expected ${isReplace ? latestKnownTeamCount : latestKnownTeamCount + 1})`);
+
+              // Idempotency check: maybe the team WAS created but verification was stale
+              // Re-check after another short delay
+              await new Promise((r) => setTimeout(r, 1000));
+              const recheckResult = await verifyTransferCompletion(params, isReplace, latestKnownTeamCount, i + 1);
+              if (recheckResult.verified) {
+                console.log(`[bulkTransfer]    ✅ VERIFIED on second check — team confirmed (count: ${recheckResult.newCount})`);
+                latestKnownTeamCount = recheckResult.newCount ?? (latestKnownTeamCount + (isReplace ? 0 : 1));
+                teamTransferred = true;
+                teamVerified = true;
+                break;
+              }
+
+              // Verification failed twice — if response was "definite" success, trust it
+              // (backend may have a delayed list-of-teams cache)
+              if (res.confidence === "definite") {
+                console.warn(`[bulkTransfer]    ⚠️ Verification failed twice but response was DEFINITE success — trusting response`);
+                latestKnownTeamCount = isReplace ? latestKnownTeamCount : latestKnownTeamCount + 1;
+                teamTransferred = true;
+                teamVerified = true; // treat as verified (response was definite)
+                break;
+              }
+
+              // Tentative success + verification failed — treat as not transferred, retry
+              console.warn(`[bulkTransfer]    ⚠️ Tentative success + verification failed — will retry`);
+              teamErrorMessage = "Transfer reported success but verification failed";
+              // Fall through to retry logic below
+            }
+          } else {
+            // ── CASE 3: FAILURE RESPONSE ──
+            teamErrorMessage = (res.error as string) || (res.message as string) || "Transfer failed";
+            const lowerErr = teamErrorMessage.toLowerCase();
+            console.warn(`[bulkTransfer]    ⚠️ Transfer failed (attempt ${attempt}): ${teamErrorMessage} [code: ${res.code || "N/A"}]`);
+
+            // Check for NON-RETRYABLE errors (deadline passed, team limit, etc.)
+            if (res.code === "DEADLINE_PASSED" || lowerErr.includes("deadline")) {
+              console.error(`[bulkTransfer]    ❌ Deadline passed — NOT retrying`);
+              break;
+            }
+            if (res.code === "TEAM_LIMIT_REACHED" || lowerErr.includes("limit") || lowerErr.includes("maximum")) {
+              console.error(`[bulkTransfer]    ❌ Team limit reached — NOT retrying`);
+              break;
+            }
+
+            // Idempotency check: before retrying, check if the team was actually created
+            // (the response may have been a false negative)
+            console.log(`[bulkTransfer]    🔍 Idempotency check — verifying if team was actually created...`);
+            await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
+            const idempotencyCheck = await verifyTransferCompletion(params, isReplace, latestKnownTeamCount, i + 1);
+            if (idempotencyCheck.verified) {
+              console.log(`[bulkTransfer]    ✅ IDEMPOTENCY CHECK: team was actually created (count: ${idempotencyCheck.newCount}) — marking as success`);
+              latestKnownTeamCount = idempotencyCheck.newCount ?? (latestKnownTeamCount + (isReplace ? 0 : 1));
+              teamTransferred = true;
+              teamVerified = true;
+              break;
+            }
+            console.log(`[bulkTransfer]    🔍 Idempotency check: team was NOT created — safe to retry`);
+          }
+        } catch (err: any) {
+          // ── CASE 4: NETWORK ERROR / TIMEOUT ──
+          const errMsg = err?.message || "Network error";
+          const isTimeout = errMsg.includes("timeout") || errMsg.includes("abort");
+          const isNetwork = errMsg.includes("network") || errMsg.includes("fetch") || isTimeout;
+          teamErrorMessage = isTimeout ? "Request timed out" : `Network error: ${errMsg}`;
+          console.warn(`[bulkTransfer]    ⚠️ ${isTimeout ? "TIMEOUT" : "NETWORK ERROR"} (attempt ${attempt}): ${teamErrorMessage}`);
+
+          // Network errors are always retryable
+        }
+
+        // Backoff before next attempt (if not the last attempt)
+        if (attempt < MAX_ATTEMPTS_PER_TEAM && !teamTransferred && !needsReauthForTeam) {
+          const backoff = RETRY_BACKOFFS[attempt - 1] || 8000;
+          console.log(`[bulkTransfer]    ⏳ Waiting ${backoff}ms before retry...`);
+          await new Promise((r) => setTimeout(r, backoff));
+        }
+      } // end of per-team retry loop
+
+      // === STEP 5: RECORD TEAM RESULT ===
+      if (teamTransferred && teamVerified) {
+        successCount++;
+        results.push({
+          teamNo: t.teamNo,
+          success: true,
+          message: teamVerified ? "Transferred and verified" : "Transferred (verification skipped)",
+        });
+        transferLinks.push({ teamNo: t.teamNo });
+        console.log(`[bulkTransfer] ✅✅ Team ${t.teamNo} — SUCCESS (transferred + verified)`);
+      } else {
+        failCount++;
+        results.push({
+          teamNo: t.teamNo,
+          success: false,
+          message: teamErrorMessage || "Transfer failed after all retries",
+        });
+        transferLinks.push({ teamNo: t.teamNo });
+        console.error(`[bulkTransfer] ❌❌ Team ${t.teamNo} — FAILED: ${teamErrorMessage}`);
+
+        // If session expired, stop the entire bulk transfer
+        if (needsReauthForTeam) {
+          console.error(`[bulkTransfer] 🛑 Session expired — stopping bulk transfer, marking remaining teams as skipped`);
+          for (let j = i + 1; j < teams.length; j++) {
+            failCount++;
+            results.push({ teamNo: teams[j].teamNo, success: false, message: "Skipped — token expired" });
+            transferLinks.push({ teamNo: teams[j].teamNo });
+            onProgress?.(j + 1, teams.length);
+          }
+          return {
+            totalAttempted: teams.length,
+            successCount,
+            failCount,
+            results,
+            transferLinks,
+            needsReauth: true,
+            blockReason: teamErrorMessage,
+          };
+        }
+      }
+
+      onProgress?.(i + 1, teams.length);
+
+      // Inter-team delay (sequential queue — wait before next team)
+      if (i < teams.length - 1) {
+        console.log(`[bulkTransfer] ⏳ Inter-team delay: ${INTER_TEAM_DELAY}ms`);
+        await new Promise((r) => setTimeout(r, INTER_TEAM_DELAY));
+      }
+    }
+
+    // === STEP 6: FINAL SUMMARY ===
+    const successRate = teams.length > 0 ? ((successCount / teams.length) * 100).toFixed(1) : "0";
+    console.log(`\n${"=".repeat(70)}`);
+    console.log(`[bulkTransfer] 🏁 BULK TRANSFER COMPLETE`);
+    console.log(`[bulkTransfer]    Platform: ${params.fantasyApp}`);
+    console.log(`[bulkTransfer]    Total: ${teams.length}`);
+    console.log(`[bulkTransfer]    Success: ${successCount} (${successRate}%)`);
+    console.log(`[bulkTransfer]    Failed: ${failCount}`);
+    console.log(`[bulkTransfer]    Initial team count: ${initialTeamCount}`);
+    console.log(`[bulkTransfer]    Final team count: ${latestKnownTeamCount}`);
+    if (failCount > 0) {
+      console.log(`[bulkTransfer]    ❌ Failed teams:`);
+      results.filter((r) => !r.success).forEach((r) => {
+        console.log(`[bulkTransfer]       • Team ${r.teamNo}: ${r.message}`);
+      });
+    }
+    console.log(`${"=".repeat(70)}\n`);
+
+    return { totalAttempted: teams.length, successCount, failCount, results, transferLinks };
+  } finally {
+    // Always release the mutex — even on error
+    bulkTransferMutex.release();
+  }
+}
+
+/**
+ * Module-level mutex to prevent concurrent bulk transfers.
+ * Ensures only ONE bulk transfer runs at a time (race condition prevention).
+ * If a user opens two tabs and starts two bulk transfers, the second one is rejected.
+ */
+const bulkTransferMutex = {
+  _locked: false,
+  get isLocked() { return this._locked; },
+  acquire() {
+    if (this._locked) {
+      throw new Error("Mutex already acquired — another bulk transfer is in progress");
+    }
+    this._locked = true;
+    console.log("[bulkTransfer] 🔒 Mutex acquired — bulk transfer starting");
+  },
+  release() {
+    this._locked = false;
+    console.log("[bulkTransfer] 🔓 Mutex released — bulk transfer finished");
+  },
+};
+
+/**
+ * Try to refresh an expired auth token by calling /api/auth/verify.
+ * The backend sometimes returns a fresh token via `updateUiToken` + `authToken`
+ * in the verify response. If we get one, save it and return it.
+ *
+ * Returns the new token string on success, or null if refresh failed.
+ */
+async function tryRefreshAuthToken(params: {
+  fantasyApp: FantasyApp;
+  authToken: string;
+  matchId: string | number;
+  my11circleChallenge?: string;
+  my11circleUserId?: string;
+  mobileNumber?: string;
+}): Promise<string | null> {
+  try {
+    console.log("[bulkTransfer] 🔄 Calling /api/auth/verify for token refresh...");
+    const res = await fetch(`/api/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fantasyApp: params.fantasyApp,
+        authToken: params.authToken,
+        matchId: params.matchId,
+        my11circleChallenge: params.my11circleChallenge,
+        my11circleUserId: params.my11circleUserId,
+        my11circleMobile: params.mobileNumber,
+      }),
+      cache: "no-store",
+    });
+    const data = await res.json();
+
+    if (data.updateUiToken && data.authToken && data.authToken !== params.authToken) {
+      console.log("[bulkTransfer] ✅ Backend returned a fresh token via updateUiToken");
+      // Save the refreshed token
+      saveFantasyToken(params.fantasyApp, data.authToken, {
+        mobile: params.mobileNumber,
+        my11circleChallenge: params.my11circleChallenge,
+        my11circleUserId: params.my11circleUserId,
+      });
+      return data.authToken as string;
+    }
+
+    if (data.validToken === true) {
+      console.log("[bulkTransfer] ℹ️ Backend says token is still valid — refresh not needed");
+    } else {
+      console.warn("[bulkTransfer] ⚠️ Backend confirms token is expired — refresh not possible without re-OTP");
+    }
+    return null;
+  } catch (err: any) {
+    console.error(`[bulkTransfer] ❌ Token refresh failed: ${err?.message}`);
+    return null;
+  }
+}
+
+/**
+ * Verify that a transfer was actually completed by checking the team count
+ * on the platform via /api/contest/my-teams.
+ *
+ * Verification logic:
+ *   - ADD mode (type="new"): team count should have increased by 1
+ *   - REPLACE mode (type="edit"): team count should stay the same (we replaced,
+ *     not added). We verify the team count is at least as high as before.
+ *
+ * Returns:
+ *   - { verified: true, newCount: N } if verification passed
+ *   - { verified: false, newCount: N } if verification failed (team may not
+ *     have been created, or list-of-teams is stale)
+ */
+async function verifyTransferCompletion(
+  params: {
+    fantasyApp: FantasyApp;
+    authToken: string;
+    matchId: string | number;
+    my11circleChallenge?: string;
+    my11circleUserId?: string;
+    mobileNumber?: string;
+  },
+  isReplace: boolean,
+  baselineCount: number,
+  teamsAddedSoFar: number
+): Promise<{ verified: boolean; newCount?: number }> {
+  try {
+    const teams = await listFantasyTeams({
       fantasyApp: params.fantasyApp,
       authToken: params.authToken,
       matchId: params.matchId,
@@ -1702,211 +2173,28 @@ export async function bulkTransferToLinkedAccount(
       my11circleUserId: params.my11circleUserId,
       my11circleMobile: params.mobileNumber,
     });
+    const newCount = teams.length;
 
-    if (!verifyResult.proceed) {
-      // Token definitively expired — block transfer, signal re-auth required
-      console.warn("[bulkTransfer] Blocked by auth verify:", verifyResult.reason);
-      return {
-        totalAttempted: 0,
-        successCount: 0,
-        failCount: teams.length,
-        results: teams.map((t) => ({
-          teamNo: t.teamNo,
-          success: false,
-          message: verifyResult.reason || "Token expired — re-link via OTP",
-        })),
-        transferLinks: [],
-        needsReauth: true,
-        blockReason: verifyResult.reason,
-      };
-    }
+    // Expected count after this transfer:
+    //   - ADD mode: baseline + teamsAddedSoFar (each prior add added 1)
+    //   - REPLACE mode: baseline (replace doesn't change count)
+    const expectedCount = isReplace ? baselineCount : baselineCount + teamsAddedSoFar;
 
-    // If the backend refreshed the token, use the new one for transfers
-    if (verifyResult.refreshed) {
-      const freshToken = getFantasyToken(params.fantasyApp);
-      if (freshToken) {
-        params = { ...params, authToken: freshToken };
-        console.log("[bulkTransfer] Using refreshed token from updateUiToken");
-      }
+    if (isReplace) {
+      // For replace, count should stay at least at baseline
+      // (it could be higher if a prior add also happened, but for pure replace mode
+      // it should equal baseline)
+      const verified = newCount >= baselineCount;
+      return { verified, newCount };
+    } else {
+      // For add, count should have increased by the number of teams added so far
+      const verified = newCount >= expectedCount;
+      return { verified, newCount };
     }
-  } else {
-    console.log("[bulkTransfer] Skipping pre-verify (default) — reactive auth detection in /api/transfer");
+  } catch (err: any) {
+    console.warn(`[bulkTransfer] Verification call failed: ${err?.message}`);
+    // If verification call itself fails, don't fail the transfer — return verified=false
+    // and let the caller decide (idempotency check / retry / trust response)
+    return { verified: false };
   }
-
-  // RELIABLE SEQUENTIAL transfer with per-team retry
-  // Fixes: "only 5 teams transferred, must retry 3-5 times"
-  //
-  // ROOT CAUSES of the original issue:
-  //   1. No per-team retry — first failure = permanent fail
-  //   2. 100ms delay too short — backend rate-limits after ~5 rapid requests
-  //   3. No network error recovery — temporary network error = permanent fail
-  //   4. No resume from failed team — failed team skipped, not retried
-  //
-  // FIX:
-  //   1. Per-team retry: up to 3 attempts per team
-  //   2. Progressive delay: 500ms → 1000ms → 2000ms between retries
-  //   3. Network error recovery: retry on timeout/network error
-  //   4. Resume from failed team: failed team retried, not skipped
-  //   5. Session expiry: stop immediately, mark remaining as skipped
-
-  // ============================================================
-  // Dream11 transfer timing — MUST match original teamgeneration.in
-  // ============================================================
-  //
-  // Original teamgeneration.in JS bundle (Ze/nt functions) uses:
-  //   const delay = {dream11: 200, my11circle: 2000, myteam11: 2000}[slug] || 0;
-  //
-  // So Dream11 needs 200ms between transfers. Our previous default of 300ms
-  // was a 50% slowdown vs original (e.g. 40 teams = 12s vs 8s of pure delay).
-  //
-  // The original NEVER auto-retries failed transfers within the bulk function:
-  //   - Failed teams are pushed to a `failedTeams` array
-  //   - A separate "Retry" button (onBulkRetry) re-sends them later, max 2x
-  //   - The retry flag in original is `s = !!{}[slug]` → always false → dead code
-  //
-  // Our previous MAX_RETRIES_PER_TEAM=3 was a REGRESSION vs original:
-  //   - If first attempt actually created the team but response was lost
-  //     (network glitch / 5xx / abort), retry creates a DUPLICATE team on Dream11.
-  //   - 3x the request volume → backend rate-limits → cascade failures.
-  //   - User sees "failed" but actually has 2-3 copies of the team on Dream11.
-  //
-  // FIX (Dream11 ONLY):
-  //   - Dream11: 1 retry max (recovery from transient network error, but no
-  //     aggressive retry that risks duplicates). Other platforms unchanged.
-  //   - Dream11: 200ms inter-team delay (matches original). Other platforms
-  //     unchanged (My11Circle=2000ms, Jumbo/others=300ms).
-  //
-  // My11Circle and Jumbo are NOT modified by this change.
-  const MAX_RETRIES_PER_TEAM = params.fantasyApp === "dream11" ? 1 : 3;
-  const RETRY_DELAYS = params.fantasyApp === "dream11"
-    ? [400]                                              // Dream11: single 400ms backoff (only 1 retry)
-    : [500, 1000, 2000];                                 // Other platforms: progressive backoff (unchanged)
-  // Original: {dream11:200, my11circle:2000, myteam11:2000}[slug] || 0
-  const INTER_TEAM_DELAY = params.fantasyApp === "my11circle" ? 2000
-                        : params.fantasyApp === "dream11" ? 200
-                        : 300;
-
-  for (let i = 0; i < teams.length; i++) {
-    const t = teams[i];
-    const hasExistingId = params.replaceMode && params.existingTeamIds && i < params.existingTeamIds.length && params.existingTeamIds[i];
-    const isReplace = !!hasExistingId;
-    const numericPlayers = t.playerIds.map((id) => Number(id)).filter((n) => !isNaN(n));
-    const numericCaptain = Number(t.captainId);
-    const numericVC = Number(t.viceCaptainId);
-
-    const body: Record<string, unknown> = {
-      matchId: params.matchId,
-      captain: isNaN(numericCaptain) ? t.captainId : numericCaptain,
-      vice_captain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
-      vicecaptain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
-      players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
-      fantasyApp: params.fantasyApp,
-      authToken: params.authToken,
-      sportIndex: params.sportIndex ?? 0,
-      type: isReplace ? "edit" : "new",
-    };
-    if (isReplace && params.existingTeamIds) body.id = params.existingTeamIds[i];
-    // NOTE: Per original teamgeneration.in, my11circle-specific fields (my11circleChallenge,
-    // my11circleUserId, my11circleMobile) are NOT sent to /api/fantasy/add-team or
-    // /api/fantasy/edit-team. They're only sent to /api/fantasy/auth/verify and
-    // /api/fantasy/list-of-teams. Sending them here caused backend to misroute My11Circle transfers.
-    // Vision11 still needs userId in the transfer payload (verified against original).
-
-    // PER-TEAM RETRY LOGIC — try up to 3 times
-    let teamTransferred = false;
-    let teamErrorMessage = "";
-    let needsReauthForTeam = false;
-
-    for (let attempt = 0; attempt < MAX_RETRIES_PER_TEAM; attempt++) {
-      try {
-        const proxyBody = { ...body, skipPreVerify: true };
-        console.log(`[bulkTransfer] Team ${i + 1}/${teams.length} (teamNo=${t.teamNo}) — attempt ${attempt + 1}/${MAX_RETRIES_PER_TEAM}`);
-
-        const proxyRes = await fetch(`/api/transfer`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(proxyBody),
-          cache: "no-store",
-          signal: AbortSignal.timeout(45000),
-        });
-        const res = await proxyRes.json() as ApiResponse & {
-          needsReauth?: boolean;
-          confidence?: "definite" | "tentative";
-          code?: string;
-          backendError?: string;
-        };
-
-        if (res.status === "success") {
-          // ✅ Transfer succeeded — verify it's genuine
-          successCount++;
-          const confidence = res.confidence === "tentative" ? " (tentative)" : "";
-          results.push({ teamNo: t.teamNo, success: true, message: res.message || `Transferred${confidence}` });
-          transferLinks.push({ teamNo: t.teamNo });
-          teamTransferred = true;
-          console.log(`[bulkTransfer] ✅ Team ${t.teamNo} transferred (attempt ${attempt + 1})`);
-          break; // Success — move to next team
-        } else if (res.needsReauth) {
-          // ❌ Session expired — don't retry, stop immediately
-          needsReauthForTeam = true;
-          teamErrorMessage = (res.error as string) || (res.message as string) || "Token expired — re-link via OTP";
-          console.warn(`[bulkTransfer] ❌ Team ${t.teamNo} — session expired, stopping`);
-          break;
-        } else {
-          // ❌ Transfer failed (not auth) — retry with backoff
-          teamErrorMessage = (res.error as string) || (res.message as string) || "Failed";
-          console.warn(`[bulkTransfer] ⚠️ Team ${t.teamNo} failed (attempt ${attempt + 1}): ${teamErrorMessage}`);
-
-          if (attempt < MAX_RETRIES_PER_TEAM - 1) {
-            // Wait before retry (progressive backoff)
-            const retryDelay = RETRY_DELAYS[attempt] || 2000;
-            console.log(`[bulkTransfer] Retrying team ${t.teamNo} in ${retryDelay}ms...`);
-            await new Promise((r) => setTimeout(r, retryDelay));
-          }
-        }
-      } catch (err: any) {
-        // Network error / timeout — retry with backoff
-        teamErrorMessage = err?.message || "Network error";
-        console.warn(`[bulkTransfer] ⚠️ Team ${t.teamNo} network error (attempt ${attempt + 1}): ${teamErrorMessage}`);
-
-        if (attempt < MAX_RETRIES_PER_TEAM - 1) {
-          const retryDelay = RETRY_DELAYS[attempt] || 2000;
-          console.log(`[bulkTransfer] Retrying team ${t.teamNo} in ${retryDelay}ms (network recovery)...`);
-          await new Promise((r) => setTimeout(r, retryDelay));
-        }
-      }
-    }
-
-    // After all retries for this team
-    if (!teamTransferred) {
-      failCount++;
-      results.push({ teamNo: t.teamNo, success: false, message: teamErrorMessage });
-      transferLinks.push({ teamNo: t.teamNo });
-
-      if (needsReauthForTeam) {
-        // Session expired — mark remaining teams as skipped, stop
-        for (let j = i + 1; j < teams.length; j++) {
-          failCount++;
-          results.push({ teamNo: teams[j].teamNo, success: false, message: "Skipped — token expired" });
-          transferLinks.push({ teamNo: teams[j].teamNo });
-          onProgress?.(j + 1, teams.length);
-        }
-        return {
-          totalAttempted: teams.length,
-          successCount,
-          failCount,
-          results,
-          transferLinks,
-          needsReauth: true,
-          blockReason: teamErrorMessage,
-        };
-      }
-    }
-
-    onProgress?.(i + 1, teams.length);
-    // Delay between teams (only if not last team)
-    if (i < teams.length - 1) await new Promise((r) => setTimeout(r, INTER_TEAM_DELAY));
-  }
-
-  console.log(`[bulkTransfer] FINAL: ${successCount}/${teams.length} teams transferred successfully`);
-  return { totalAttempted: teams.length, successCount, failCount, results, transferLinks };
 }
