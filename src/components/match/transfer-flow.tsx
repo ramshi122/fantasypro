@@ -117,9 +117,11 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         allPlayers = [...leftPlayers, ...rightPlayers].filter(Boolean);
 
         // Detect lineup status — check BOTH lineup_status AND player.playing field
+        // Only treat as lineup announced if lineup_status===1 OR at least 11 players have playing===1
+        // (checking just 1 player was too aggressive — caused false lineup detection)
         const lineupStatus = (matchDetail as any).lineup_status;
-        const hasPlayingPlayers = allPlayers.some((p: any) => Number(p.playing) === 1);
-        const announced = Number(lineupStatus) === 1 || hasPlayingPlayers;
+        const playingCount = allPlayers.filter((p: any) => Number(p.playing) === 1).length;
+        const announced = Number(lineupStatus) === 1 || playingCount >= 11;
         setLineupAnnounced(announced);
 
         // Build set of confirmed playing player IDs

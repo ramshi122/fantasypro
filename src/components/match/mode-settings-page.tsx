@@ -104,9 +104,9 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
       if (allPlayers.length < 11) { toast.error(`Only ${allPlayers.length} players available`); setGenerating(false); return; }
 
       // === AFTER LINEUP: Filter to ONLY confirmed playing XI ===
-      // ALSO detect lineup even if lineup_status is not set but players have playing===1
-      const hasPlayingPlayers = allPlayers.some((p: any) => Number(p.playing) === 1);
-      const lineupActive = announced || hasPlayingPlayers;
+      // Detect lineup: lineup_status===1 OR at least 11 players have playing===1
+      const playingCount = allPlayers.filter((p: any) => Number(p.playing) === 1).length;
+      const lineupActive = announced || playingCount >= 11;
 
       if (lineupActive) {
         // STRICT: ONLY playing === 1 players — NO exceptions
