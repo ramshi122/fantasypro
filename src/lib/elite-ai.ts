@@ -1941,8 +1941,8 @@ export function generateEliteTeams(
   const MAX_PLAYER_USAGE = Math.ceil(teamCount * 0.7); // max 70% of teams can have same player
 
   // CRITICAL: Session seed — makes EVERY generateEliteTeams call produce DIFFERENT teams.
-  // Without this, seed is deterministic → same teams every time.
-  const sessionSeed = Date.now() % 2147483647;
+  // Use Math.random() for a SMALL seed to avoid number overflow in mulberry32.
+  const sessionSeed = Math.floor(Math.random() * 99999) + 1;
   console.log(`[EliteAI] Session seed: ${sessionSeed} (ensures unique teams this run)`);
 
   for (let i = 0; i < roleCompositions.length; i++) {

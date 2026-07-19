@@ -216,7 +216,9 @@ function memoizedShuffle(pool: RankedPlayer[], seed: number, cache: Map<string, 
   const cached = cache.get(cacheKey);
   if (cached) return cached;
   const shuffled = [...pool];
-  let s = (seed * 2654435761) % 2147483647;
+  // SAFETY: apply modulo BEFORE multiplication to prevent number overflow.
+  // seed * 2654435761 can exceed Number.MAX_SAFE_INTEGER if seed > ~3.4M.
+  let s = ((seed % 2147483647) * 2654435761) % 2147483647;
   for (let j = shuffled.length - 1; j > 0; j--) {
     s = (s * 1103515245 + 12345) % 2147483647;
     const k = s % (j + 1);
@@ -306,7 +308,7 @@ function buildStrategicTeam(
       : (() => {
           // Fallback (no cache) — inline shuffle
           const s = [...pool];
-          let seed = (rotationOffset * 2654435761) % 2147483647;
+          let seed = ((rotationOffset % 2147483647) * 2654435761) % 2147483647;
           for (let j = s.length - 1; j > 0; j--) {
             seed = (seed * 1103515245 + 12345) % 2147483647;
             const k = seed % (j + 1);
@@ -585,9 +587,10 @@ export async function generateSweep(
   };
 
   // CRITICAL: Session seed — makes EVERY generateSweep call produce DIFFERENT teams.
-  // Without this, rotationOffset is deterministic (i*3+tries) → same teams every time.
-  // With this, each run gets a unique seed → different shuffle → different teams.
-  const sessionSeed = Date.now() % 2147483647;
+  // Use Math.random() for a SMALL seed (0-99999) to avoid number overflow in shuffle.
+  // Date.now() % 2147483647 was too large — multiplied by 2654435761 exceeded
+  // Number.MAX_SAFE_INTEGER, causing precision loss → same shuffle every time.
+  const sessionSeed = Math.floor(Math.random() * 99999) + 1;
   console.log(`[generator] Session seed: ${sessionSeed} (ensures unique teams this run)`);
 
   // Generate teams in chunks
