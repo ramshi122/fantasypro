@@ -182,15 +182,36 @@ interface EndpointConfig {
 }
 
 const PLATFORM_ENDPOINTS: Record<string, EndpointConfig> = {
+  // Dream11 bulk-transfer endpoint chain — MUST match original teamgeneration.in
+  // (Ze/nt functions in their JS bundle).
+  //
+  // Original uses ONLY:
+  //   /api/fantasy/add-team  (for type="new")
+  //   /api/fantasy/edit-team (for type="edit")
+  //
+  // The /api/classic/dream11/addteam endpoint is NOT a bulk-transfer endpoint —
+  // it is the single-team "Generate Link" feature. It expects a totally different
+  // payload ({tgMatchId, playerData, captainData, vicecaptainData, generateLinkFlag})
+  // and returns an AES-encrypted share LINK, not a transfer result.
+  //
+  // Calling /api/classic/dream11/addteam with a bulk-transfer payload returns
+  // HTTP 404 + {"status":"fail","message":"Error while transfering the team!"}
+  // — confirmed by live smoke test against https://tgsoftware-api.online.
+  // It was previously in this chain as a "fallback" — that was a bug:
+  //   - 100% guaranteed failure when called (wrong payload shape)
+  //   - Caused "404 transfer errors" reported by users
+  //   - Could cause duplicate-transfer risk if user retried after the 404
+  // Removed from this chain. The link-generator endpoint is still available via
+  // the separate /api/classic-addteam route (used by apna-transfer-modal's
+  // handleLinkTransfer for the "Generate Link" button — correct usage).
   dream11: {
     addEndpoints: [
       `${BACKEND_URL}/api/fantasy/add-team`,
-      `${BACKEND_URL}/api/classic/dream11/addteam`,
     ],
     editEndpoints: [
       `${BACKEND_URL}/api/fantasy/edit-team`,
     ],
-    delayBetweenRetries: 2000,
+    delayBetweenRetries: 200,
   },
   my11circle: {
     addEndpoints: [

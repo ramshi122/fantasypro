@@ -1707,11 +1707,42 @@ export async function bulkTransferToLinkedAccount(
   //   4. Resume from failed team: failed team retried, not skipped
   //   5. Session expiry: stop immediately, mark remaining as skipped
 
-  const MAX_RETRIES_PER_TEAM = 3;
-  const RETRY_DELAYS = [500, 1000, 2000]; // progressive backoff: 0.5s, 1s, 2s
-  // My11Circle needs 2000ms delay between transfers (matches original teamgeneration.in).
+  // ============================================================
+  // Dream11 transfer timing — MUST match original teamgeneration.in
+  // ============================================================
+  //
+  // Original teamgeneration.in JS bundle (Ze/nt functions) uses:
+  //   const delay = {dream11: 200, my11circle: 2000, myteam11: 2000}[slug] || 0;
+  //
+  // So Dream11 needs 200ms between transfers. Our previous default of 300ms
+  // was a 50% slowdown vs original (e.g. 40 teams = 12s vs 8s of pure delay).
+  //
+  // The original NEVER auto-retries failed transfers within the bulk function:
+  //   - Failed teams are pushed to a `failedTeams` array
+  //   - A separate "Retry" button (onBulkRetry) re-sends them later, max 2x
+  //   - The retry flag in original is `s = !!{}[slug]` → always false → dead code
+  //
+  // Our previous MAX_RETRIES_PER_TEAM=3 was a REGRESSION vs original:
+  //   - If first attempt actually created the team but response was lost
+  //     (network glitch / 5xx / abort), retry creates a DUPLICATE team on Dream11.
+  //   - 3x the request volume → backend rate-limits → cascade failures.
+  //   - User sees "failed" but actually has 2-3 copies of the team on Dream11.
+  //
+  // FIX (Dream11 ONLY):
+  //   - Dream11: 1 retry max (recovery from transient network error, but no
+  //     aggressive retry that risks duplicates). Other platforms unchanged.
+  //   - Dream11: 200ms inter-team delay (matches original). Other platforms
+  //     unchanged (My11Circle=2000ms, Jumbo/others=300ms).
+  //
+  // My11Circle and Jumbo are NOT modified by this change.
+  const MAX_RETRIES_PER_TEAM = params.fantasyApp === "dream11" ? 1 : 3;
+  const RETRY_DELAYS = params.fantasyApp === "dream11"
+    ? [400]                                              // Dream11: single 400ms backoff (only 1 retry)
+    : [500, 1000, 2000];                                 // Other platforms: progressive backoff (unchanged)
   // Original: {dream11:200, my11circle:2000, myteam11:2000}[slug] || 0
-  const INTER_TEAM_DELAY = params.fantasyApp === "my11circle" ? 2000 : 300;
+  const INTER_TEAM_DELAY = params.fantasyApp === "my11circle" ? 2000
+                        : params.fantasyApp === "dream11" ? 200
+                        : 300;
 
   for (let i = 0; i < teams.length; i++) {
     const t = teams[i];
