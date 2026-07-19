@@ -129,7 +129,16 @@ export function ApnaTransferModal({
 
       if (account) {
         try {
-          const existing = await listFantasyTeams({ fantasyApp: defaultApp, authToken: account.token, matchId: String(d.id || match.matchId || "") });
+          // Pass my11circle fields for My11Circle — required for list-of-teams to
+          // return existing teams (without these, My11Circle replace shows 0 existing teams).
+          const existing = await listFantasyTeams({
+            fantasyApp: defaultApp,
+            authToken: account.token,
+            matchId: String(d.id || match.matchId || ""),
+            my11circleChallenge: account.my11circleChallenge || undefined,
+            my11circleUserId: account.my11circleUserId || undefined,
+            my11circleMobile: account.mobile || undefined,
+          });
           // eslint-disable-next-line react-hooks/set-state-in-effect
           setExistingTeams(existing.map((t) => ({ team_id: String(t.team_id ?? t.teamId ?? ""), team_number: Number(t.team_number ?? t.teamNo ?? 0) })).filter((t) => t.team_id));
         } catch { // eslint-disable-next-line react-hooks/set-state-in-effect

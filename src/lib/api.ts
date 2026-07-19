@@ -789,43 +789,85 @@ export async function verifyBeforeTransfer(params: {
 
 /**
  * List teams already created by the user on Dream11/My11Circle for a match.
- * Falls back to localStorage when no real fantasy token is available.
+ *
+ * Routes through our /api/contest/my-teams server-side proxy (NOT direct backend
+ * call) so that:
+ *   1. My11Circle-specific fields (my11circleChallenge, my11circleUserId,
+ *      my11circleMobile) are forwarded correctly — the backend needs these to
+ *      authenticate My11Circle list-of-teams calls. Without them, My11Circle
+ *      list-of-teams returns empty/404 → existingIds=[] → all teams use
+ *      type="new" instead of "edit" → REPLACE doesn't work.
+ *   2. CORS, network errors, and HTTP 401/403 are handled by the proxy.
+ *   3. The proxy's response format ({status, teams: [{teamId, teamNo, fantasyApp}]})
+ *      is normalized back into the TeamRow[] shape callers expect.
+ *
+ * For My11Circle callers, pass the my11circle fields from the linked account
+ * (account.my11circleChallenge, account.my11circleUserId, account.mobile).
+ * If they're missing, the call still works for Dream11/Jumbo but may return
+ * empty for My11Circle.
  */
 export async function listFantasyTeams(params: {
   fantasyApp: FantasyApp;
   authToken: string;
   matchId: string | number;
+  /** My11Circle-only fields — required for My11Circle list-of-teams to return existing teams */
+  my11circleChallenge?: string;
+  my11circleUserId?: string;
+  my11circleMobile?: string;
 }): Promise<TeamRow[]> {
   // Only skip the API call for empty tokens — always try the real API
   if (!params.authToken) {
     return [];
   }
 
-  const resp = await rawFetch<ApiResponse>(`/api/fantasy/list-of-teams`, {
-    method: "POST",
-    body: JSON.stringify({
-      fantasyApp: params.fantasyApp,
-      matchId: params.matchId,
-      authToken: params.authToken,
-    }),
-  });
-
-  // FIX: Original APK reads data.teams_list (nested under data field)
-  // Our rawFetch returns the body as-is, so check both locations
-  const teamsList = (resp as any).teams_list || (resp as any).data?.teams_list || [];
-
-  if (resp.status === "success" && Array.isArray(teamsList) && teamsList.length > 0) {
-    return teamsList.map((t: any) => ({
-      teamId: String(t.team_id),
-      teamNo: t.team_number,
-      team_id: t.team_id,
-      team_number: t.team_number,
-      fantasyApp: params.fantasyApp,
-    } as TeamRow));
+  // Build the payload — include my11circle fields for My11Circle
+  const body: Record<string, unknown> = {
+    fantasyApp: params.fantasyApp,
+    matchId: params.matchId,
+    authToken: params.authToken,
+  };
+  if (params.fantasyApp === "my11circle") {
+    if (params.my11circleChallenge) body.my11circleChallenge = params.my11circleChallenge;
+    if (params.my11circleUserId) body.my11circleUserId = params.my11circleUserId;
+    if (params.my11circleMobile) body.my11circleMobile = params.my11circleMobile;
   }
 
-  // Backend failed or no teams — return empty
-  return [];
+  try {
+    const res = await fetch(`/api/contest/my-teams`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+    const resp = await res.json() as ApiResponse & {
+      teams?: Array<{ teamId: string; teamNo: number | null; fantasyApp: string }>;
+      teams_list?: Array<{ team_id: string | number; team_number: number }>;
+      data?: { teams_list?: Array<{ team_id: string | number; team_number: number }> };
+    };
+
+    // The proxy returns {status, teams: [{teamId, teamNo, fantasyApp}]}
+    // Also support raw backend format ({teams_list: [...]}) as fallback
+    const teamsList = resp.teams
+      || resp.teams_list
+      || resp.data?.teams_list
+      || [];
+
+    if (Array.isArray(teamsList) && teamsList.length > 0) {
+      return teamsList.map((t: any) => ({
+        teamId: String(t.teamId ?? t.team_id ?? ""),
+        teamNo: t.teamNo ?? t.team_number,
+        team_id: t.teamId ?? t.team_id,
+        team_number: t.teamNo ?? t.team_number,
+        fantasyApp: params.fantasyApp,
+      } as TeamRow));
+    }
+
+    // Backend failed or no teams — return empty
+    return [];
+  } catch (err: any) {
+    console.error("[listFantasyTeams] proxy call failed:", err?.message);
+    return [];
+  }
 }
 
 /* ---------- Local team store (guest mode) ---------- */

@@ -216,7 +216,11 @@ export function BulkTransferModal({
         // and return needsReauth. This matches original APK behavior.
         setProgress({ done: 0, total: items.length });
 
-        // Step 1 (replace mode): Fetch existing teams via /api/fantasy/list-of-teams
+        // Step 1 (replace mode): Fetch existing teams via /api/contest/my-teams proxy
+        // IMPORTANT: For My11Circle, we MUST pass my11circleChallenge, my11circleUserId,
+        // and mobileNumber — without these the backend rejects list-of-teams for
+        // My11Circle and returns empty, which causes all teams to use type="new"
+        // instead of "edit" (REPLACE doesn't work).
         let existingIds: string[] | undefined;
         if (replaceExisting) {
           try {
@@ -224,6 +228,9 @@ export function BulkTransferModal({
               fantasyApp: selectedApp,
               authToken: account.token,
               matchId: matchNumericId,
+              my11circleChallenge: account.my11circleChallenge || undefined,
+              my11circleUserId: account.my11circleUserId || undefined,
+              my11circleMobile: account.mobile || undefined,
             });
             existingIds = existing
               .map((t) => String(t.team_id ?? t.teamId ?? ""))
