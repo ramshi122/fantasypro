@@ -1083,6 +1083,7 @@ export async function generateSweep(
         selected_by: p.selected_by ?? p.sel,
         sel: p.sel,
         image: p.image,
+        playing: p.playing, // CRITICAL: save playing field for replace engine
       })),
       captain: cv.captain,
       viceCaptain: cv.viceCaptain,
