@@ -60,11 +60,18 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
   const [manualExclude, setManualExclude] = useState<Set<string>>(new Set());
   const [playerPool, setPlayerPool] = useState<any[]>([]);
 
-  // Load saved exclude list from localStorage on mount
+  // === Manual Playing XI Selection ===
+  const [manualPlayingXI, setManualPlayingXI] = useState<Set<string>>(new Set());
+
+  // Load saved lists from localStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem(`apna-exclude-${matchId}`);
-    if (saved) {
-      try { setManualExclude(new Set(JSON.parse(saved))); } catch {}
+    const savedExclude = localStorage.getItem(`apna-exclude-${matchId}`);
+    if (savedExclude) {
+      try { setManualExclude(new Set(JSON.parse(savedExclude))); } catch {}
+    }
+    const savedXI = localStorage.getItem(`apna-playingxi-${matchId}`);
+    if (savedXI) {
+      try { setManualPlayingXI(new Set(JSON.parse(savedXI))); } catch {}
     }
   }, [matchId]);
 
@@ -72,6 +79,44 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
   useEffect(() => {
     localStorage.setItem(`apna-exclude-${matchId}`, JSON.stringify([...manualExclude]));
   }, [manualExclude, matchId]);
+
+  // Save Playing XI selection to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem(`apna-playingxi-${matchId}`, JSON.stringify([...manualPlayingXI]));
+  }, [manualPlayingXI, matchId]);
+
+  function togglePlayingXIPlayer(playerId: string) {
+    setManualPlayingXI(prev => {
+      const next = new Set(prev);
+      if (next.has(playerId)) next.delete(playerId);
+      else next.add(playerId);
+      return next;
+    });
+  }
+
+  function selectAllPlayers() {
+    setManualPlayingXI(new Set(playerPool.map((p: any) => String(p.player_fixed_id ?? p.pid ?? p.name))));
+    toast.success(`Selected all ${playerPool.length} players`);
+  }
+
+  function clearPlayingXI() {
+    setManualPlayingXI(new Set());
+    toast.info("Playing XI selection cleared");
+  }
+
+  function autoSelectOfficialXI() {
+    const playingOnly = playerPool.filter((p: any) => Number(p.playing) === 1);
+    if (playingOnly.length === 0) {
+      toast.warning("No official Playing XI found — lineup may not be announced yet");
+      return;
+    }
+    setManualPlayingXI(new Set(playingOnly.map((p: any) => String(p.player_fixed_id ?? p.pid ?? p.name))));
+    toast.success(`✅ Auto-selected ${playingOnly.length} official Playing XI players`);
+  }
+
+  const xiCount = manualPlayingXI.size;
+  const directMode = xiCount === 11;
+  const canGenerateWithXI = xiCount >= 11;
 
   function toggleExcludePlayer(playerId: string) {
     setManualExclude(prev => {
@@ -182,7 +227,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
         console.log(`[generator] Excluded ${before - allPlayers.length} players (text exclusion)`);
       }
 
-      // === APPLY MANUAL EXCLUDE (checkbox-based) — HIGHEST PRIORITY ===
+      // === APPLY MANUAL EXCLUDE (checkbox-based) — HIGH PRIORITY ===
       if (manualExclude.size > 0) {
         const before = allPlayers.length;
         allPlayers = allPlayers.filter((p: any) => {
@@ -192,9 +237,31 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
         console.log(`[generator] Excluded ${before - allPlayers.length} players (manual checkbox exclusion) — ${manualExclude.size} total excluded`);
       }
 
+      // === APPLY MANUAL PLAYING XI SELECTION — HIGHEST PRIORITY ===
+      // If user has selected specific players, ONLY use those players
+      if (manualPlayingXI.size > 0) {
+        const before = allPlayers.length;
+        allPlayers = allPlayers.filter((p: any) => {
+          const pid = String(p.player_fixed_id ?? p.pid ?? p.name);
+          return manualPlayingXI.has(pid);
+        });
+        console.log(`[generator] Manual Playing XI: ${allPlayers.length} players selected (filtered from ${before})`);
+
+        if (allPlayers.length < 11) {
+          toast.error(`Only ${allPlayers.length} players selected — need at least 11`);
+          setGenerating(false);
+          return;
+        }
+
+        if (directMode) {
+          setProgress(`🎯 Direct Team Generate Mode — exactly 11 players selected, AI will only pick C/VC`);
+        } else {
+          setProgress(`🧠 AI Smart Team Generation Mode — ${allPlayers.length} players selected, AI will pick best 11 + C/VC`);
+        }
+      }
+
       // === APPLY USER SETTINGS: Lock players (force include) ===
       const lockList = parsePlayers(lockedPlayers);
-      // Locked players are guaranteed to be in every team — handled by generator
 
       // Small delay to show status
       await new Promise(r => setTimeout(r, 500));
@@ -503,6 +570,62 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
                 </div>
               ))}
             </div>
+          )}
+        </div>
+
+        {/* === Manual Playing XI Selection (NEW) === */}
+        <div className="bg-emerald-50 dark:bg-emerald-950/20 rounded-lg p-3 border border-emerald-200 dark:border-emerald-900/30">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+              ✅ Manual Playing XI Selection
+            </p>
+            <div className="flex gap-1">
+              <button onClick={selectAllPlayers} className="text-[9px] text-emerald-600 hover:text-emerald-800 font-bold underline">Select All</button>
+              <button onClick={autoSelectOfficialXI} className="text-[9px] text-sky-600 hover:text-sky-800 font-bold underline">Auto Official XI</button>
+              <button onClick={clearPlayingXI} className="text-[9px] text-red-500 hover:text-red-700 font-bold underline">Clear</button>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 mb-2">
+            <span className={cn(
+              "text-[10px] font-bold px-2 py-0.5 rounded-full",
+              directMode ? "bg-amber-500 text-white" : canGenerateWithXI ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
+            )}>
+              {xiCount} selected {directMode ? "· 🎯 Direct Mode" : canGenerateWithXI ? "· 🧠 AI Mode" : "· ❌ Need 11+"}
+            </span>
+          </div>
+          <p className="text-[9px] text-muted-foreground mb-2">
+            Tick players to include in team generation. 11 = Direct Mode (AI picks only C/VC). 12+ = AI Mode (AI picks best 11). Saved automatically.
+          </p>
+          {playerPool.length > 0 ? (
+            <div className="max-h-[30vh] overflow-y-auto grid grid-cols-2 gap-1">
+              {playerPool.map((p, i) => {
+                const pid = String(p.player_fixed_id ?? p.pid ?? p.name ?? `p${i}`);
+                const name = String(p.name || `Player ${i+1}`);
+                const team = String(p.team_name || p.team || "");
+                const isSelected = manualPlayingXI.has(pid);
+                const isPlaying = Number(p.playing) === 1;
+                return (
+                  <label key={i} className={cn(
+                    "flex items-center gap-1 text-[10px] rounded px-1.5 py-1 cursor-pointer border",
+                    isSelected
+                      ? "bg-emerald-100 dark:bg-emerald-950/40 border-emerald-400 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300"
+                      : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-foreground"
+                  )}>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => togglePlayingXIPlayer(pid)}
+                      className="w-3 h-3 rounded accent-emerald-500"
+                    />
+                    <span className="truncate">{name}</span>
+                    {team && <span className="text-[8px] text-muted-foreground">({team.slice(0,3)})</span>}
+                    {isPlaying && <span className="text-[7px] text-emerald-500 font-bold">●</span>}
+                  </label>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-[9px] text-muted-foreground italic">Loading players...</p>
           )}
         </div>
 
