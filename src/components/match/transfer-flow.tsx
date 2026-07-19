@@ -813,19 +813,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                     variant="outline"
                     onClick={() => {
                       if (!license.requireLicense()) return;
-                      // Smart Substitute check — show popup if match has Impact Player possibility
-                      if (shouldShowSmartSubstitutePopup(match, players)) {
-                        setPendingGenerator("sweep");
-                        setShowSubstitutePopup(true);
-                      } else {
-                        // Check if user has saved preference
-                        const pref = getSmartSubstitutePreference();
-                        if (pref) {
-                          // Use saved preference (popup was dismissed with "Don't show again")
-                          console.log("[SmartSubstitute] Using saved preference:", pref);
-                        }
-                        setShowSweepGenerator(true);
-                      }
+                      setShowSweepGenerator(true);
                     }}
                     disabled={players.length < 11}
                     className={cn(
@@ -855,17 +843,7 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                         toast.error("Elite AI requires Elite (₹999) or Lifetime subscription.");
                         return;
                       }
-                      // Smart Substitute check — show popup if match has Impact Player possibility
-                      if (shouldShowSmartSubstitutePopup(match, players)) {
-                        setPendingGenerator("elite");
-                        setShowSubstitutePopup(true);
-                      } else {
-                        const pref = getSmartSubstitutePreference();
-                        if (pref) {
-                          console.log("[SmartSubstitute] Using saved preference:", pref);
-                        }
-                        setShowEliteAI(true);
-                      }
+                      setShowEliteAI(true);
                     }}
                     disabled={players.length < 11}
                     className={cn(
