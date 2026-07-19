@@ -14,11 +14,15 @@ const BACKEND_URL = "https://tgsoftware-api.online";
  *
  * Used by the Admin Contests tab to auto-populate the Team IDs field
  * (so the admin doesn't have to type comma-separated IDs manually).
+ *
+ * My11Circle note: The original teamgeneration.in sends my11circleChallenge,
+ * my11circleUserId, and my11circleMobile alongside the standard fields for
+ * My11Circle accounts (the backend uses them to authenticate the list call).
  */
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { fantasyApp, authToken, matchId } = body;
+    const { fantasyApp, authToken, matchId, my11circleChallenge, my11circleUserId, my11circleMobile } = body;
 
     if (!fantasyApp || !authToken || !matchId) {
       return NextResponse.json({
@@ -30,11 +34,18 @@ export async function POST(request: Request) {
 
     const endpoint = `${BACKEND_URL}/api/fantasy/list-of-teams`;
 
-    const payload = {
+    const payload: Record<string, string> = {
       fantasyApp,
       matchId: String(matchId),
       authToken,
     };
+
+    // My11Circle-specific fields (matching original teamgeneration.in exactly)
+    if (fantasyApp === "my11circle") {
+      if (my11circleChallenge) payload.my11circleChallenge = String(my11circleChallenge);
+      if (my11circleUserId) payload.my11circleUserId = String(my11circleUserId);
+      if (my11circleMobile) payload.my11circleMobile = String(my11circleMobile);
+    }
 
     const userToken = request.headers.get("authorization")?.replace("Bearer ", "");
     const headers: Record<string, string> = { "Content-Type": "application/json" };

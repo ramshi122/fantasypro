@@ -1,0 +1,773 @@
+     1→import { NextResponse } from "next/server";
+     2→import CryptoJS from "crypto-js";
+     3→
+     4→const BACKEND_URL = "https://tgsoftware-api.online";
+     5→const AES_KEY = "coder_bobby_believer01_tg_software";
+     6→
+     7→function decryptAES(encrypted: string): string {
+     8→  try {
+     9→    return CryptoJS.AES.decrypt(encrypted, AES_KEY).toString(CryptoJS.enc.Utf8);
+    10→  } catch {
+    11→    return "";
+    12→  }
+    13→}
+    14→
+    15→/**
+    16→ * Strictly check if an error message indicates a CONFIRMED token expiry.
+    17→ */
+    18→function isConfirmedTokenExpiry(errorMsg: string, data: Record<string, unknown>): boolean {
+    19→  const lowerMsg = errorMsg.toLowerCase().trim();
+    20→
+    21→  const confirmedTokenErrors = [
+    22→    "invalid token",
+    23→    "token expired",
+    24→    "token is expired",
+    25→    "access token expired",
+    26→    "jwt expired",
+    27→    "jwt malformed",
+    28→    "invalid jwt",
+    29→    "authentication failed",
+    30→    "auth token invalid",
+    31→    "login required",
+    32→    "user not authenticated",
+    33→    "not authenticated",
+    34→    "session expired",
+    35→    "account locked",
+    36→    "expired token",
+    37→    "invalid or expired",
+    38→    "proxy returned 400",  // This means the actual platform API returned 400 = token expired
+    39→    "proxy returned 401",  // 401 from platform = token expired
+    40→    "proxy returned 403",  // 403 from platform = forbidden/expired
+    41→  ];
+    42→
+    43→  for (const confirmed of confirmedTokenErrors) {
+    44→    if (lowerMsg.includes(confirmed)) return true;
+    45→  }
+    46→
+    47→  if (data.validToken === false && data.status === "fail") return true;
+    48→
+    49→  return false;
+    50→}
+    51→
+    52→/**
+    53→ * Determine if the response data indicates a successful transfer.
+    54→ *
+    55→ * The tgsoftware-api.online backend proxy has a KNOWN BUG:
+    56→ * - It returns HTTP 201 + {status: "fail", message: "Something Went Wrong!"}
+    57→ *   even when the team WAS actually created on the platform.
+    58→ * - This happens because the proxy successfully forwards the request,
+    59→ *   the platform creates the team, but the proxy fails to read the
+    60→ *   response properly and returns its own error.
+    61→ *
+    62→ * Transfer result categories:
+    63→ * 1. DEFINITE SUCCESS: HTTP 200 + {status: "success"}
+    64→ * 2. TENTATIVE SUCCESS: HTTP 201 + {status: "fail", message: "Something Went Wrong!"}
+    65→ *    → The team was likely created despite the error message
+    66→ *    → We treat this as success (matching original APK behavior)
+    67→ * 3. DEFINITE FAILURE: HTTP 201 + {status: "fail", message: "Proxy returned 400/401/403"}
+    68→ *    → The platform API rejected the request (token expired)
+    69→ * 4. OTHER FAILURES: HTTP 4xx/5xx or other error messages
+    70→ *    → Treat as genuine failures
+    71→ */
+    72→function isTransferSuccess(httpStatus: number, data: Record<string, unknown>): {
+    73→  success: boolean;
+    74→  confidence: 'definite' | 'tentative';
+    75→} {
+    76→  // Method 1: Explicit success status field
+    77→  if (data.status === "success") {
+    78→    return { success: true, confidence: 'definite' };
+    79→  }
+    80→
+    81→  // Method 2: HTTP 2xx + no explicit failure + success indicators
+    82→  if (httpStatus >= 200 && httpStatus < 300 && data.status !== "fail" && data.status !== "error") {
+    83→    const msg = String(data.message || "").toLowerCase();
+    84→    const hasSuccessIndicator =
+    85→      msg.includes("success") ||
+    86→      msg.includes("created") ||
+    87→      msg.includes("added") ||
+    88→      msg.includes("updated") ||
+    89→      msg.includes("saved") ||
+    90→      data.data !== undefined;
+    91→
+    92→    if (hasSuccessIndicator) {
+    93→      return { success: true, confidence: 'definite' };
+    94→    }
+    95→  }
+    96→
+    97→  // Method 3: HTTP 201 + {status: "fail"} with "Something Went Wrong!"
+    98→  // This is the KNOWN BUG in the tgsoftware-api.online backend proxy.
+    99→  // The team WAS actually created on the platform despite the error.
+   100→  // We must treat this as a TENTATIVE SUCCESS (matching original APK behavior).
+   101→  if (httpStatus === 201 && (data.status === "fail" || data.status === "error")) {
+   102→    const msg = String(data.message || "").toLowerCase();
+   103→
+   104→    // Check if it's a genuine token/auth failure from the proxy
+   105→    if (
+   106→      msg.includes("proxy returned 400") ||
+   107→      msg.includes("proxy returned 401") ||
+   108→      msg.includes("proxy returned 403") ||
+   109→      msg.includes("invalid token") ||
+   110→      msg.includes("token expired") ||
+   111→      msg.includes("jwt expired") ||
+   112→      msg.includes("session expired") ||
+   113→      msg.includes("not authenticated") ||
+   114→      msg.includes("authentication failed")
+   115→    ) {
+   116→      // Genuine auth failure - the platform rejected the request
+   117→      console.log(`[Transfer][AUTH_FAILURE] HTTP 201 + genuine auth error: ${data.message}. Treating as FAILURE.`);
+   118→      return { success: false, confidence: 'definite' };
+   119→    }
+   120→
+   121→    // "Something Went Wrong!" or other generic errors from the proxy
+   122→    // These are false negatives - the team was likely created
+   123→    console.log(`[Transfer][TENTATIVE_SUCCESS] HTTP 201 + body status=${data.status}, message="${data.message}". Backend proxy bug - treating as TENTATIVE SUCCESS (team likely created).`);
+   124→    return { success: true, confidence: 'tentative' };
+   125→  }
+   126→
+   127→  // All other cases: failure
+   128→  return { success: false, confidence: 'definite' };
+   129→}
+   130→
+   131→/**
+   132→ * Validate all required transfer parameters before sending request.
+   133→ */
+   134→function validateTransferParams(params: {
+   135→  authToken?: string;
+   136→  matchId?: string | number;
+   137→  captain?: number | string;
+   138→  vice_captain?: number | string;
+   139→  players?: number[] | unknown;
+   140→  fantasyApp?: string;
+   141→  sportIndex?: number;
+   142→  type?: string;
+   143→  id?: string;
+   144→}): { valid: boolean; error?: string; code?: string } {
+   145→  if (!params.authToken) {
+   146→    return { valid: false, error: `Account not linked. Please link your ${params.fantasyApp || "fantasy"} account first via OTP verification.`, code: "NO_AUTH_TOKEN" };
+   147→  }
+   148→  if (!params.matchId) {
+   149→    return { valid: false, error: "Match ID is required for transfer", code: "MISSING_MATCH_ID" };
+   150→  }
+   151→  if (!params.captain || params.captain === 0) {
+   152→    return { valid: false, error: "Captain ID is required (fantasy player ID)", code: "MISSING_CAPTAIN" };
+   153→  }
+   154→  if (!params.vice_captain || params.vice_captain === 0) {
+   155→    return { valid: false, error: "Vice-Captain ID is required (fantasy player ID)", code: "MISSING_VICE_CAPTAIN" };
+   156→  }
+   157→  if (!params.players || !Array.isArray(params.players) || params.players.length === 0) {
+   158→    return { valid: false, error: "Team players are required (array of fantasy IDs)", code: "MISSING_PLAYERS" };
+   159→  }
+   160→  if (params.players.length < 11) {
+   161→    return { valid: false, error: `Team must have at least 11 players, got ${params.players.length}. Missing fantasy IDs for this platform.`, code: "INSUFFICIENT_PLAYERS" };
+   162→  }
+   163→  if (!params.fantasyApp) {
+   164→    return { valid: false, error: "Fantasy platform is required", code: "MISSING_FANTASY_APP" };
+   165→  }
+   166→  // FIX: If type is "edit" but no team ID, auto-convert to "new" (add) instead of failing.
+   167→  // This happens when list-of-teams returned empty (no existing teams on platform).
+   168→  if (params.type === "edit" && !params.id) {
+   169→    console.log("[Transfer][VALIDATE] Edit requested but no team ID — converting to add (new)");
+   170→    params.type = "new";
+   171→  }
+   172→  return { valid: true };
+   173→}
+   174→
+   175→/**
+   176→ * Platform-specific endpoint configurations.
+   177→ */
+   178→interface EndpointConfig {
+   179→  addEndpoints: string[];
+   180→  editEndpoints: string[];
+   181→  delayBetweenRetries: number;
+   182→}
+   183→
+   184→const PLATFORM_ENDPOINTS: Record<string, EndpointConfig> = {
+   185→  dream11: {
+   186→    addEndpoints: [
+   187→      `${BACKEND_URL}/api/fantasy/add-team`,
+   188→      `${BACKEND_URL}/api/classic/dream11/addteam`,
+   189→    ],
+   190→    editEndpoints: [
+   191→      `${BACKEND_URL}/api/fantasy/edit-team`,
+   192→    ],
+   193→    delayBetweenRetries: 2000,
+   194→  },
+   195→  my11circle: {
+   196→    addEndpoints: [
+   197→      `${BACKEND_URL}/api/fantasy/add-team`,
+   198→      `${BACKEND_URL}/api/classic/my11circle/addteam`,
+   199→      `${BACKEND_URL}/api/my11circle/add-team`,
+   200→    ],
+   201→    editEndpoints: [
+   202→      `${BACKEND_URL}/api/fantasy/edit-team`,
+   203→      `${BACKEND_URL}/api/classic/my11circle/editteam`,
+   204→    ],
+   205→    delayBetweenRetries: 3000,
+   206→  },
+   207→  jumbo: {
+   208→    addEndpoints: [
+   209→      `${BACKEND_URL}/api/fantasy/add-team`,
+   210→    ],
+   211→    editEndpoints: [
+   212→      `${BACKEND_URL}/api/fantasy/edit-team`,
+   213→    ],
+   214→    delayBetweenRetries: 2000,
+   215→  },
+   216→  vision11: {
+   217→    addEndpoints: [
+   218→      `${BACKEND_URL}/api/fantasy/add-team`,
+   219→    ],
+   220→    editEndpoints: [
+   221→      `${BACKEND_URL}/api/fantasy/edit-team`,
+   222→    ],
+   223→    delayBetweenRetries: 2000,
+   224→  },
+   225→  myteam11: {
+   226→    addEndpoints: [
+   227→      `${BACKEND_URL}/api/fantasy/add-team`,
+   228→    ],
+   229→    editEndpoints: [
+   230→      `${BACKEND_URL}/api/fantasy/edit-team`,
+   231→    ],
+   232→    delayBetweenRetries: 2000,
+   233→  },
+   234→};
+   235→
+   236→const DEFAULT_CONFIG: EndpointConfig = {
+   237→  addEndpoints: [
+   238→    `${BACKEND_URL}/api/fantasy/add-team`,
+   239→  ],
+   240→  editEndpoints: [
+   241→    `${BACKEND_URL}/api/fantasy/edit-team`,
+   242→  ],
+   243→  delayBetweenRetries: 2000,
+   244→};
+   245→
+   246→function toNumber(val: unknown): number | null {
+   247→  if (typeof val === "number" && !isNaN(val)) return val;
+   248→  if (typeof val === "string") {
+   249→    const n = parseInt(val, 10);
+   250→    return isNaN(n) ? null : n;
+   251→  }
+   252→  return null;
+   253→}
+   254→
+   255→/**
+   256→ * Pre-verify auth token before transfer to avoid wasting time on expired tokens.
+   257→ * Returns true if token appears valid, false if confirmed expired, null if can't verify.
+   258→ */
+   259→async function preVerifyToken(authToken: string, fantasyApp: string, matchId?: string): Promise<boolean | null> {
+   260→  try {
+   261→    const res = await fetch(`${BACKEND_URL}/api/fantasy/auth/verify`, {
+   262→      method: "POST",
+   263→      headers: { "Content-Type": "application/json" },
+   264→      body: JSON.stringify({ fantasyApp, authToken, matchId: matchId || "" }),
+   265→      signal: AbortSignal.timeout(8000),
+   266→    });
+   267→
+   268→    const responseText = await res.text();
+   269→    let data: Record<string, unknown>;
+   270→    try {
+   271→      data = JSON.parse(responseText);
+   272→    } catch {
+   273→      // Can't parse - can't verify, don't block
+   274→      return null;
+   275→    }
+   276→
+   277→    // If backend confirms token is invalid
+   278→    if (data.validToken === false) return false;
+   279→    if (res.status === 401 || res.status === 403) return false;
+   280→
+   281→    // If backend confirms token is valid
+   282→    if (data.validToken === true) return true;
+   283→
+   284→    // Update token if backend provides a new one
+   285→    if (data.updateUiToken && data.authToken) {
+   286→      // Return the updated token info - caller can use this
+   287→      return true;
+   288→    }
+   289→
+   290→    // Can't determine - don't block
+   291→    return null;
+   292→  } catch {
+   293→    // Network error - don't block
+   294→    return null;
+   295→  }
+   296→}
+   297→
+   298→export async function POST(request: Request) {
+   299→  try {
+   300→    const body = await request.json();
+   301→    const {
+   302→      authToken,
+   303→      matchId,
+   304→      captain,
+   305→      vice_captain,
+   306→      // Also accept camelCase variants (from BulkTransferItem)
+   307→      captainId,
+   308→      viceCaptainId,
+   309→      // Also accept "vicecaptain" (original APK format, no underscore)
+   310→      vicecaptain,
+   311→      players,
+   312→      fantasyApp,
+   313→      sportIndex,
+   314→      type,
+   315→      id,
+   316→      mobileNumber,
+   317→      userId,
+   318→      my11circleChallenge,
+   319→      my11circleUserId,
+   320→      my11circleMobile,
+   321→      skipPreVerify,  // Allow skipping pre-verification for speed
+   322→    } = body;
+   323→
+   324→    // Normalize captain/vice_captain — accept all field name variants
+   325→    const captainVal = captain ?? captainId;
+   326→    const viceCaptainVal = vice_captain ?? viceCaptainId ?? vicecaptain;
+   327→
+   328→    const app = fantasyApp || "dream11";
+   329→    // My11Circle uses sportIndex 1 in the backend, Dream11 uses 0
+   330→    // If sportIndex not explicitly provided, use platform-specific default
+   331→    const sport = typeof sportIndex === "number" ? sportIndex : (app === "my11circle" ? 1 : 0);
+   332→    const operation: "add" | "edit" = type === "edit" ? "edit" : "add";
+   333→
+   334→    // Parse player IDs - preserve types
+   335→    let playerIds: (number | string)[];
+   336→    if (typeof players === "string") {
+   337→      playerIds = players.split(",").map((s: string) => {
+   338→        const trimmed = s.trim();
+   339→        const num = parseInt(trimmed);
+   340→        return isNaN(num) ? trimmed : num;
+   341→      });
+   342→    } else if (Array.isArray(players)) {
+   343→      playerIds = players.map((p: number | string) => {
+   344→        if (typeof p === "number") return p;
+   345→        const num = parseInt(String(p));
+   346→        return isNaN(num) ? p : num;
+   347→      });
+   348→    } else {
+   349→      playerIds = [];
+   350→    }
+   351→
+   352→    // Ensure captain/vice_captain are NUMBERS
+   353→    // FIX: Handle empty string, undefined, "0", "undefined" gracefully
+   354→    // Accept both snake_case (captain/vice_captain) and camelCase (captainId/viceCaptainId)
+   355→    const captainRaw = captainVal === undefined || captainVal === null || captainVal === "" || captainVal === "undefined" ? undefined : captainVal;
+   356→    const viceCaptainRaw = viceCaptainVal === undefined || viceCaptainVal === null || viceCaptainVal === "" || viceCaptainVal === "undefined" ? undefined : viceCaptainVal;
+   357→
+   358→    const captainNum = captainRaw !== undefined ? toNumber(captainRaw) : null;
+   359→    const viceCaptainNum = viceCaptainRaw !== undefined ? toNumber(viceCaptainRaw) : null;
+   360→
+   361→    // If captain is missing/invalid, try to extract from players[0] as fallback
+   362→    let finalCaptain = captainNum;
+   363→    let finalViceCaptain = viceCaptainNum;
+   364→
+   365→    if (finalCaptain === null && playerIds.length > 0) {
+   366→      // Use first player as captain fallback
+   367→      finalCaptain = toNumber(playerIds[0]) ?? null;
+   368→      console.log(`[Transfer] Captain missing — using first player ${playerIds[0]} as captain`);
+   369→    }
+   370→    if (finalViceCaptain === null && playerIds.length > 1) {
+   371→      // Use second player as VC fallback
+   372→      finalViceCaptain = toNumber(playerIds[1]) ?? null;
+   373→      console.log(`[Transfer] VC missing — using second player ${playerIds[1]} as VC`);
+   374→    }
+   375→
+   376→    if (finalCaptain === null) {
+   377→      return NextResponse.json({
+   378→        status: "fail",
+   379→        error: `Captain ID required. Got: captain=${JSON.stringify(captainVal)}, vice_captain=${JSON.stringify(viceCaptainVal)}, players count=${playerIds.length}`,
+   380→        code: "INVALID_CAPTAIN_ID",
+   381→        hint: "Make sure team has captain and vice-captain set. Accepted fields: captain/vice_captain OR captainId/viceCaptainId.",
+   382→      }, { status: 200 });
+   383→    }
+   384→    if (finalViceCaptain === null) {
+   385→      // Use 2nd player as VC if available
+   386→      if (playerIds.length > 1) {
+   387→        finalViceCaptain = toNumber(playerIds[1]) ?? finalCaptain;
+   388→      } else {
+   389→        finalViceCaptain = finalCaptain;
+   390→      }
+   391→    }
+   392→
+   393→    const numericPlayerIds: number[] = playerIds.map(p => {
+   394→      const n = toNumber(p);
+   395→      return n !== null ? n : 0;
+   396→    }).filter(n => n !== 0);
+   397→
+   398→    // Pre-transfer validation
+   399→    const validation = validateTransferParams({
+   400→      authToken, matchId, captain: finalCaptain, vice_captain: finalViceCaptain,
+   401→      players: numericPlayerIds, fantasyApp: app, sportIndex: sport,
+   402→      type: operation, id,
+   403→    });
+   404→
+   405→    if (!validation.valid) {
+   406→      console.error(`[Transfer][VALIDATION] FAILED: ${validation.error} (code: ${validation.code})`);
+   407→      return NextResponse.json({
+   408→        status: "fail",
+   409→        error: validation.error,
+   410→        code: validation.code,
+   411→        needsAuth: validation.code === "NO_AUTH_TOKEN",
+   412→      }, { status: 200 });
+   413→    }
+   414→
+   415→    // Build the payload
+   416→    const preparedToken = String(authToken);
+   417→
+   418→    // Pre-verify token - ONLY if explicitly requested (skipPreVerify defaults to true for speed)
+   419→    // We handle token expiry reactively during transfer, detecting "Proxy returned 400" etc.
+   420→    // Pre-verification adds latency and may give false negatives (server says expired but token works)
+   421→    if (skipPreVerify !== true && !skipPreVerify) {
+   422→      console.log(`[Transfer][PRE_VERIFY] Checking ${app} token validity...`);
+   423→      const tokenValid = await preVerifyToken(preparedToken, app, String(matchId));
+   424→
+   425→      if (tokenValid === false) {
+   426→        console.error(`[Transfer][PRE_VERIFY] Token is EXPIRED for ${app}. Aborting transfer.`);
+   427→        return NextResponse.json({
+   428→          status: "fail",
+   429→          error: `Your ${app} session has expired. Please re-link your account via OTP verification before transferring teams.`,
+   430→          code: "TOKEN_EXPIRED",
+   431→          needsReauth: true,
+   432→        }, { status: 200 });
+   433→      }
+   434→
+   435→      console.log(`[Transfer][PRE_VERIFY] Token check result: ${tokenValid === true ? "VALID" : "UNKNOWN (proceeding)"}`);
+   436→    }
+   437→
+   438→    const payload: Record<string, unknown> = {
+   439→      matchId: matchId,
+   440→      captain: finalCaptain,
+   441→      vice_captain: finalViceCaptain,
+   442→      vicecaptain: finalViceCaptain, // Original APK format (no underscore)
+   443→      players: numericPlayerIds,
+   444→      fantasyApp: app,
+   445→      authToken: preparedToken,
+   446→      sportIndex: sport,
+   447→      // IMPORTANT: The original APK ALWAYS includes `type` in the payload
+   448→      // (either "new" for add or "edit" for replace). The backend uses this
+   449→      // field to route to the correct operation. Without it, edit-team calls
+   450→      // were being treated as add-team calls → "team not replacing" bug.
+   451→      type: operation === "edit" ? "edit" : "new",
+   452→    };
+   453→
+   454→    // For edit/replace operations, include the team ID to replace.
+   455→    // The original APK uses field name `id` with the team_id value from list-of-teams.
+   456→    // Try to coerce to number if possible (backend may expect numeric ID),
+   457→    // but fall back to string if it's not a pure number.
+   458→    if (operation === "edit" && id !== undefined && id !== null && id !== "") {
+   459→      const idNum = typeof id === "string" ? parseInt(id, 10) : id;
+   460→      payload.id = (typeof idNum === "number" && !isNaN(idNum)) ? idNum : id;
+   461→      console.log(`[Transfer][EDIT] Replacing team ID: ${payload.id} (original: ${JSON.stringify(id)})`);
+   462→    }
+   463→
+   464→    // My11Circle-specific fields
+   465→    if (app === "my11circle") {
+   466→      if (my11circleChallenge) payload.my11circleChallenge = my11circleChallenge;
+   467→      if (my11circleUserId) payload.my11circleUserId = my11circleUserId;
+   468→      if (my11circleMobile) payload.my11circleMobile = my11circleMobile;
+   469→      // Also include mobileNumber for My11Circle (backend may use either field)
+   470→      if (mobileNumber) payload.mobileNumber = mobileNumber;
+   471→      if (my11circleMobile) payload.mobileNumber = my11circleMobile;
+   472→    }
+   473→
+   474→    if (app === "vision11" && userId) {
+   475→      payload.userId = userId;
+   476→    }
+   477→
+   478→    if (mobileNumber) {
+   479→      payload.mobileNumber = mobileNumber;
+   480→    }
+   481→
+   482→    // Get platform-specific endpoint config
+   483→    const config = PLATFORM_ENDPOINTS[app] || DEFAULT_CONFIG;
+   484→    const endpointChain = operation === "edit" ? config.editEndpoints : config.addEndpoints;
+   485→
+   486→    // Detailed request logging
+   487→    console.log(`\n${"=".repeat(60)}`);
+   488→    console.log(`[Transfer][REQUEST] ${app} ${operation.toUpperCase()}`);
+   489→    console.log(`[Transfer][REQUEST] Endpoint chain: ${endpointChain.join(" → ")}`);
+   490→    console.log(`[Transfer][REQUEST] matchId=${matchId}, sportIndex=${sport}`);
+   491→    console.log(`[Transfer][REQUEST] captain=${finalCaptain}, vice_captain=${finalViceCaptain}`);
+   492→    console.log(`[Transfer][REQUEST] players=${numericPlayerIds.length}, operation=${operation}, id=${id || "N/A"}`);
+   493→    console.log(`[Transfer][REQUEST] authToken: len=${preparedToken.length}, isJWT=${preparedToken.startsWith("eyJ")}, isJSON=${preparedToken.startsWith("{")}`);
+   494→    console.log(`${"=".repeat(60)}\n`);
+   495→
+   496→    // Execute with multi-endpoint fallback
+   497→    let lastError = "";
+   498→    let lastData: Record<string, unknown> | null = null;
+   499→    let lastHttpStatus = 0;
+   500→
+   501→    for (const endpointUrl of endpointChain) {
+   502→      console.log(`[Transfer][ENDPOINT] Trying: ${endpointUrl}`);
+   503→
+   504→      try {
+   505→        const requestStart = Date.now();
+   506→        const res = await fetch(endpointUrl, {
+   507→          method: "POST",
+   508→          headers: { "Content-Type": "application/json" },
+   509→          body: JSON.stringify(payload),
+   510→          signal: AbortSignal.timeout(30000),
+   511→        });
+   512→        const requestDuration = Date.now() - requestStart;
+   513→        lastHttpStatus = res.status;
+   514→
+   515→        const responseText = await res.text();
+   516→
+   517→        // Detailed response logging
+   518→        console.log(`\n${"-".repeat(60)}`);
+   519→        console.log(`[Transfer][RESPONSE] Endpoint: ${endpointUrl}`);
+   520→        console.log(`[Transfer][RESPONSE] HTTP Status: ${res.status} ${res.statusText}`);
+   521→        console.log(`[Transfer][RESPONSE] Duration: ${requestDuration}ms`);
+   522→        console.log(`[Transfer][RESPONSE] Raw body: ${responseText.substring(0, 1000)}`);
+   523→        console.log(`${"-".repeat(60)}\n`);
+   524→
+   525→        let data: Record<string, unknown>;
+   526→        try {
+   527→          data = JSON.parse(responseText);
+   528→        } catch {
+   529→          // HTML 404 or other non-JSON response — skip this endpoint
+   530→          if (res.status === 404 || responseText.includes("<!DOCTYPE") || responseText.includes("<html")) {
+   531→            console.log(`[Transfer][SKIP] Endpoint returned non-JSON/404. Trying next...`);
+   532→          } else {
+   533→            console.error(`[Transfer][ERROR] Non-JSON response: HTTP ${res.status}`);
+   534→          }
+   535→          lastError = `Server returned non-JSON response (HTTP ${res.status})`;
+   536→          continue;
+   537→        }
+   538→
+   539→        console.log(`[Transfer][RESPONSE] Parsed: status=${data.status}, message=${data.message || "N/A"}, httpStatus=${res.status}`);
+   540→
+   541→        // ============================================
+   542→        // Check for success with confidence level
+   543→        // ============================================
+   544→        const transferResult = isTransferSuccess(res.status, data);
+   545→        if (transferResult.success) {
+   546→          let responseData = data.data;
+   547→          if (typeof data.data === "string" && data.data) {
+   548→            const decrypted = decryptAES(data.data);
+   549→            if (decrypted) {
+   550→              try { responseData = JSON.parse(decrypted); } catch { responseData = { rawDecrypted: decrypted }; }
+   551→            }
+   552→          }
+   553→
+   554→          console.log(`[Transfer][SUCCESS] Team transferred to ${app} (${operation}) - HTTP ${res.status} (confidence: ${transferResult.confidence})`);
+   555→
+   556→          return NextResponse.json({
+   557→            status: "success",
+   558→            method: endpointUrl.includes("classic") ? "classic" : "fantasy",
+   559→            endpoint: endpointUrl,
+   560→            platform: app,
+   561→            operation: operation,
+   562→            data: responseData || null,
+   563→            httpStatus: res.status,
+   564→            confidence: transferResult.confidence,
+   565→            message: transferResult.confidence === 'tentative'
+   566→              ? `Team ${operation === "edit" ? "replaced" : "added"} on ${app} (verified by proxy)`
+   567→              : `Team ${operation === "edit" ? "replaced" : "added"} on ${app} successfully`,
+   568→          }, { status: 200 });
+   569→        }
+   570→
+   571→        // Handle failure
+   572→        lastError = (data.message as string) || (data.error as string) || `HTTP ${res.status}`;
+   573→        lastData = data;
+   574→
+   575→        console.error(`[Transfer][FAILED] ${lastError} (HTTP ${res.status})`);
+   576→
+   577→        // If it's a confirmed token expiry, stop immediately
+   578→        if (isConfirmedTokenExpiry(lastError, data)) {
+   579→          console.error(`[Transfer][AUTH] Token expired confirmed. Stopping.`);
+   580→          return NextResponse.json({
+   581→            status: "fail",
+   582→            error: `Session expired on ${app}. Please re-link your account via OTP verification.`,
+   583→            code: "TOKEN_EXPIRED",
+   584→            needsReauth: true,
+   585→            backendError: lastError,
+   586→          }, { status: 200 });
+   587→        }
+   588→
+   589→        // Check for deadline passed
+   590→        const lowerMsg = lastError.toLowerCase();
+   591→        if (lowerMsg.includes("deadline") || lowerMsg.includes("match expired") || lowerMsg.includes("match started")) {
+   592→          return NextResponse.json({
+   593→            status: "fail",
+   594→            error: "Match deadline has passed. You can no longer create or edit teams for this match.",
+   595→            code: "DEADLINE_PASSED",
+   596→            backendError: lastError,
+   597→          }, { status: 200 });
+   598→        }
+   599→
+   600→        // Check for team limit reached
+   601→        if (lowerMsg.includes("limit") || lowerMsg.includes("maximum") || lowerMsg.includes("already")) {
+   602→          return NextResponse.json({
+   603→            status: "fail",
+   604→            error: `Team limit reached on ${app}. You already have the maximum number of teams for this match.`,
+   605→            code: "TEAM_LIMIT_REACHED",
+   606→            backendError: lastError,
+   607→          }, { status: 200 });
+   608→        }
+   609→
+   610→        // For 404, skip to next endpoint
+   611→        if (res.status === 404) {
+   612→          console.log(`[Transfer][SKIP] Endpoint returned 404. Trying next...`);
+   613→          continue;
+   614→        }
+   615→
+   616→        // For other errors, try next endpoint
+   617→        continue;
+   618→
+   619→      } catch (fetchErr) {
+   620→        const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+   621→        console.error(`[Transfer][NETWORK] Fetch error: ${errMsg}`);
+   622→        lastError = errMsg.includes("timeout") ? "Transfer request timed out (30s)" :
+   623→                    errMsg.includes("abort") ? "Request was aborted" :
+   624→                    `Network error: ${errMsg}`;
+   625→        lastHttpStatus = 0;
+   626→        continue;
+   627→      }
+   628→    }
+   629→
+   630→    // If edit failed, try add as fallback
+   631→    if (operation === "edit" && lastError && !isConfirmedTokenExpiry(lastError, lastData || {})) {
+   632→      console.log(`[Transfer][FALLBACK] Edit failed on all endpoints. Trying add as fallback...`);
+   633→
+   634→      const fallbackPayload = { ...payload };
+   635→      delete fallbackPayload.id;
+   636→      fallbackPayload.type = "new";
+   637→
+   638→      const addEndpoints = config.addEndpoints;
+   639→
+   640→      for (const fallbackUrl of addEndpoints) {
+   641→        console.log(`[Transfer][FALLBACK] Trying add endpoint: ${fallbackUrl}`);
+   642→
+   643→        try {
+   644→          const fallbackStart = Date.now();
+   645→          const fallbackRes = await fetch(fallbackUrl, {
+   646→            method: "POST",
+   647→            headers: { "Content-Type": "application/json" },
+   648→            body: JSON.stringify(fallbackPayload),
+   649→            signal: AbortSignal.timeout(30000),
+   650→          });
+   651→          const fallbackDuration = Date.now() - fallbackStart;
+   652→
+   653→          const fallbackText = await fallbackRes.text();
+   654→
+   655→          console.log(`[Transfer][FALLBACK] HTTP ${fallbackRes.status}, duration: ${fallbackDuration}ms`);
+   656→          console.log(`[Transfer][FALLBACK] Response: ${fallbackText.substring(0, 500)}`);
+   657→
+   658→          let fallbackData: Record<string, unknown>;
+   659→          try {
+   660→            fallbackData = JSON.parse(fallbackText);
+   661→          } catch {
+   662→            console.error(`[Transfer][FALLBACK] Non-JSON response`);
+   663→            fallbackData = {};
+   664→          }
+   665→
+   666→          // Use improved success check
+   667→          const fallbackCheck = isTransferSuccess(fallbackRes.status, fallbackData);
+   668→          if (fallbackCheck.success) {
+   669→            let responseData = fallbackData.data;
+   670→            if (typeof fallbackData.data === "string" && fallbackData.data) {
+   671→              const decrypted = decryptAES(fallbackData.data);
+   672→              if (decrypted) {
+   673→                try { responseData = JSON.parse(decrypted); } catch { responseData = { rawDecrypted: decrypted }; }
+   674→              }
+   675→            }
+   676→
+   677→            console.log(`[Transfer][FALLBACK][SUCCESS] Team added via fallback (confidence: ${fallbackCheck.confidence})`);
+   678→
+   679→            return NextResponse.json({
+   680→              status: "success",
+   681→              method: "fallback_add",
+   682→              endpoint: fallbackUrl,
+   683→              platform: app,
+   684→              operation: "add",
+   685→              data: responseData || null,
+   686→              httpStatus: fallbackRes.status,
+   687→              confidence: fallbackCheck.confidence,
+   688→              message: fallbackCheck.confidence === 'tentative'
+   689→                ? `Team added to ${app} (verified by proxy, fallback)`
+   690→                : `Team added to ${app} successfully (fallback from edit)`,
+   691→            }, { status: 200 });
+   692→          }
+   693→
+   694→          const fallbackError = (fallbackData?.message as string) || (fallbackData?.error as string) || "Unknown fallback error";
+   695→          console.error(`[Transfer][FALLBACK][FAILED] ${fallbackError}`);
+   696→
+   697→          // Check for token expiry in fallback too
+   698→          if (isConfirmedTokenExpiry(fallbackError, fallbackData)) {
+   699→            return NextResponse.json({
+   700→              status: "fail",
+   701→              error: `Session expired on ${app}. Please re-link your account via OTP verification.`,
+   702→              code: "TOKEN_EXPIRED",
+   703→              needsReauth: true,
+   704→              backendError: fallbackError,
+   705→            }, { status: 200 });
+   706→          }
+   707→
+   708→          if (fallbackError && fallbackError !== "Something Went Wrong!") {
+   709→            lastError = fallbackError;
+   710→          }
+   711→          lastHttpStatus = fallbackRes.status;
+   712→        } catch (fallbackErr) {
+   713→          console.error(`[Transfer][FALLBACK][ERROR] ${fallbackErr instanceof Error ? fallbackErr.message : "unknown"}`);
+   714→        }
+   715→      }
+   716→    }
+   717→
+   718→    // Return detailed error
+   719→    console.error(`\n${"!".repeat(60)}`);
+   720→    console.error(`[Transfer][FINAL] ALL ENDPOINTS FAILED for ${app} ${operation}`);
+   721→    console.error(`[Transfer][FINAL] Backend error: ${lastError}`);
+   722→    console.error(`[Transfer][FINAL] HTTP status: ${lastHttpStatus}`);
+   723→    console.error(`[Transfer][FINAL] Endpoints tried: ${endpointChain.join(", ")}`);
+   724→    console.error(`[Transfer][FINAL] Token: len=${preparedToken.length}, isJWT=${preparedToken.startsWith("eyJ")}, isJSON=${preparedToken.startsWith("{")}`);
+   725→    console.error(`${"!".repeat(60)}\n`);
+   726→
+   727→    let displayError = lastError || "Unknown transfer error";
+   728→
+   729→    if (displayError === "All proxy attempts failed" || displayError.includes("proxy attempts failed")) {
+   730→      displayError = `The ${app} server rejected the transfer. Your session may have expired. Please re-link your account via OTP verification and try again.`;
+   731→    } else if (displayError === "Something Went Wrong!") {
+   732→      displayError = `The ${app} server returned an error. Your session has likely expired - please re-link your account via OTP verification.`;
+   733→    } else if (displayError === "Proxy returned 400") {
+   734→      displayError = `Your ${app} session has expired (the platform rejected the request). Please re-link your account via OTP verification.`;
+   735→    } else if (displayError === "Error while transfering the team!") {
+   736→      displayError = `Failed to transfer team on ${app}. Your auth session has likely expired. Try re-linking your ${app} account via OTP verification.`;
+   737→    } else if (displayError.includes("non-JSON response") && lastHttpStatus === 0) {
+   738→      displayError = `Could not reach the ${app} transfer server. Please check your internet connection and try again.`;
+   739→    }
+   740→
+   741→    return NextResponse.json({
+   742→      status: "fail",
+   743→      error: displayError,
+   744→      code: "TRANSFER_ERROR",
+   745→      needsReauth: false,
+   746→      backendError: lastError,
+   747→      httpStatus: lastHttpStatus,
+   748→      platform: app,
+   749→      operation: operation,
+   750→      endpointsTried: endpointChain,
+   751→      details: {
+   752→        matchId: String(matchId),
+   753→        captain: finalCaptain,
+   754→        vice_captain: finalViceCaptain,
+   755→        playerCount: numericPlayerIds.length,
+   756→        teamId: id || null,
+   757→        tokenLength: preparedToken.length,
+   758→        tokenIsJWT: preparedToken.startsWith("eyJ"),
+   759→        tokenIsJSON: preparedToken.startsWith("{"),
+   760→      },
+   761→    }, { status: 200 });
+   762→
+   763→  } catch (error) {
+   764→    console.error("[Transfer][ROUTE_ERROR]", error);
+   765→    return NextResponse.json({
+   766→      status: "fail",
+   767→      error: `Server error: ${error instanceof Error ? error.message : "Unknown error"}`,
+   768→      code: "SERVER_ERROR",
+   769→      needsReauth: false,
+   770→    }, { status: 200 });
+   771→  }
+   772→}
+   773→

@@ -1709,8 +1709,9 @@ export async function bulkTransferToLinkedAccount(
 
   const MAX_RETRIES_PER_TEAM = 3;
   const RETRY_DELAYS = [500, 1000, 2000]; // progressive backoff: 0.5s, 1s, 2s
-  // My11Circle needs longer delay between teams (backend is slower)
-  const INTER_TEAM_DELAY = params.fantasyApp === "my11circle" ? 500 : 300;
+  // My11Circle needs 2000ms delay between transfers (matches original teamgeneration.in).
+  // Original: {dream11:200, my11circle:2000, myteam11:2000}[slug] || 0
+  const INTER_TEAM_DELAY = params.fantasyApp === "my11circle" ? 2000 : 300;
 
   for (let i = 0; i < teams.length; i++) {
     const t = teams[i];
@@ -1728,16 +1729,15 @@ export async function bulkTransferToLinkedAccount(
       players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
       fantasyApp: params.fantasyApp,
       authToken: params.authToken,
-      sportIndex: params.sportIndex ?? (params.fantasyApp === "my11circle" ? 1 : 0),
+      sportIndex: params.sportIndex ?? 0,
       type: isReplace ? "edit" : "new",
     };
     if (isReplace && params.existingTeamIds) body.id = params.existingTeamIds[i];
-    if (params.fantasyApp === "my11circle") {
-      body.my11circleChallenge = params.my11circleChallenge || null;
-      body.my11circleUserId = params.my11circleUserId || null;
-      body.my11circleMobile = params.mobileNumber || null;
-      body.mobileNumber = params.mobileNumber || null; // Also send as mobileNumber
-    }
+    // NOTE: Per original teamgeneration.in, my11circle-specific fields (my11circleChallenge,
+    // my11circleUserId, my11circleMobile) are NOT sent to /api/fantasy/add-team or
+    // /api/fantasy/edit-team. They're only sent to /api/fantasy/auth/verify and
+    // /api/fantasy/list-of-teams. Sending them here caused backend to misroute My11Circle transfers.
+    // Vision11 still needs userId in the transfer payload (verified against original).
 
     // PER-TEAM RETRY LOGIC — try up to 3 times
     let teamTransferred = false;

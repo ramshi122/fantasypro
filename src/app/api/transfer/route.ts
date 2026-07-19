@@ -195,14 +195,11 @@ const PLATFORM_ENDPOINTS: Record<string, EndpointConfig> = {
   my11circle: {
     addEndpoints: [
       `${BACKEND_URL}/api/fantasy/add-team`,
-      `${BACKEND_URL}/api/classic/my11circle/addteam`,
-      `${BACKEND_URL}/api/my11circle/add-team`,
     ],
     editEndpoints: [
       `${BACKEND_URL}/api/fantasy/edit-team`,
-      `${BACKEND_URL}/api/classic/my11circle/editteam`,
     ],
-    delayBetweenRetries: 3000,
+    delayBetweenRetries: 2000,
   },
   jumbo: {
     addEndpoints: [
@@ -326,9 +323,10 @@ export async function POST(request: Request) {
     const viceCaptainVal = vice_captain ?? viceCaptainId ?? vicecaptain;
 
     const app = fantasyApp || "dream11";
-    // My11Circle uses sportIndex 1 in the backend, Dream11 uses 0
-    // If sportIndex not explicitly provided, use platform-specific default
-    const sport = typeof sportIndex === "number" ? sportIndex : (app === "my11circle" ? 1 : 0);
+    // sportIndex = SPORT INDEX (0=Cricket, 1=Football, 2=Basketball, 3=Kabaddi)
+    // NOT a platform index. Original teamgeneration.in uses t.sportIndex (global sport selector).
+    // Default to 0 (Cricket) when not explicitly provided by caller.
+    const sport = typeof sportIndex === "number" ? sportIndex : 0;
     const operation: "add" | "edit" = type === "edit" ? "edit" : "add";
 
     // Parse player IDs - preserve types
@@ -461,22 +459,15 @@ export async function POST(request: Request) {
       console.log(`[Transfer][EDIT] Replacing team ID: ${payload.id} (original: ${JSON.stringify(id)})`);
     }
 
-    // My11Circle-specific fields
-    if (app === "my11circle") {
-      if (my11circleChallenge) payload.my11circleChallenge = my11circleChallenge;
-      if (my11circleUserId) payload.my11circleUserId = my11circleUserId;
-      if (my11circleMobile) payload.my11circleMobile = my11circleMobile;
-      // Also include mobileNumber for My11Circle (backend may use either field)
-      if (mobileNumber) payload.mobileNumber = mobileNumber;
-      if (my11circleMobile) payload.mobileNumber = my11circleMobile;
-    }
+    // IMPORTANT: Per original teamgeneration.in bulk-transfer flow, the transfer payload
+    // for /api/fantasy/add-team and /api/fantasy/edit-team is GENERIC across all platforms.
+    // My11Circle-specific fields (my11circleChallenge, my11circleUserId, my11circleMobile)
+    // are ONLY sent to /api/fantasy/auth/verify and /api/fantasy/list-of-teams — NOT to
+    // the transfer endpoint. Sending them here caused the backend to misroute My11Circle
+    // transfers (root cause of "team not getting created on My11Circle" bug).
 
     if (app === "vision11" && userId) {
       payload.userId = userId;
-    }
-
-    if (mobileNumber) {
-      payload.mobileNumber = mobileNumber;
     }
 
     // Get platform-specific endpoint config

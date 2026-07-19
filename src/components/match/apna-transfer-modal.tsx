@@ -245,7 +245,7 @@ export function ApnaTransferModal({
       const sendItems = items.slice(0, teamsToSend);
       const res = await bulkTransferToLinkedAccount(
         sendItems,
-        { matchId: matchNumericId, fantasyApp: selectedApp, authToken: account.token, sportIndex: selectedApp === "my11circle" ? 1 : 0,
+        { matchId: matchNumericId, fantasyApp: selectedApp, authToken: account.token, sportIndex: 0,
           my11circleChallenge: account.my11circleChallenge || undefined, my11circleUserId: account.my11circleUserId || undefined,
           mobileNumber: account.mobile || undefined, replaceMode: isReplace, existingTeamIds: isReplace ? selectedIds.slice(0, teamsToSend) : undefined },
         (done, total) => setProgress({ done, total })
