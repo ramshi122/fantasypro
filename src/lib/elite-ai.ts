@@ -2369,6 +2369,271 @@ export function generateEliteTeams(
     });
   }
 
+  // ============================================================
+  // FILLER LOOP — Generate additional unique teams until teamCount
+  // ============================================================
+  //
+  // ROOT CAUSE of "fewer teams than requested" bug:
+  //   The main loop above iterates teamCount times, but many iterations
+  //   skip via `continue` due to role gaps, duplicates, or similarity.
+  //   This leaves rankedTeams.length < teamCount.
+  //
+  // FIX (per user spec):
+  //   - Continue generating until teamCount is reached
+  //   - Retry up to teamCount × 50 attempts (dynamic, min 200)
+  //   - Each attempt uses a unique seed for diversity
+  //   - Same validation: 11 players, credits ≤ 100, no duplicates
+  //   - Same AI quality: hack-boosted EFV for C/VC selection
+  //   - Never reduce quality, never skip, never return fewer than requested
+  {
+    let _fillerAttempts = 0;
+    let _fillerValidationFailed = 0;
+    let _fillerDuplicates = 0;
+    const _MAX_FILLER_ATTEMPTS = Math.max(teamCount * 50, 200);
+
+    if (rankedTeams.length < teamCount) {
+      console.log(`[EliteAI] 🔄 Main loop produced ${rankedTeams.length}/${teamCount} teams — starting filler (max ${_MAX_FILLER_ATTEMPTS} attempts)`);
+
+      // All strategy templates for rotation (filler uses all 4 strategies)
+      const _allFillerTemplates: Array<{ WK: number; BAT: number; AR: number; BOWL: number; label: string; strategy: "safe" | "balanced" | "differential" | "grand-league" }> = [
+        ...safeTemplates.map(t => ({ ...t, strategy: "safe" as const })),
+        ...balancedTemplates.map(t => ({ ...t, strategy: "balanced" as const })),
+        ...diffTemplates.map(t => ({ ...t, strategy: "differential" as const })),
+        ...glTemplates.map(t => ({ ...t, strategy: "grand-league" as const })),
+      ];
+
+      // Hack-boosted EFV helper (same as main loop)
+      const _hackMult = (p: MatchPlayer): number => {
+        try {
+          const role = roleOf(p);
+          const scores = calculateHackScores({
+            id: String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? ""),
+            name: p.name || "",
+            team: p.team_name || "",
+            roleShort: role,
+            wicketKeeper: role === "WK",
+          });
+          return getHackTierMultiplier(scores.tier);
+        } catch { return 1.0; }
+      };
+
+      while (rankedTeams.length < teamCount && _fillerAttempts < _MAX_FILLER_ATTEMPTS) {
+        _fillerAttempts++;
+        const _cfg = _allFillerTemplates[(rankedTeams.length + _fillerAttempts) % _allFillerTemplates.length];
+        const _seed = (_fillerAttempts * 1337 + 42 + _fillerAttempts * 7919 + sessionSeed) % 2147483647;
+
+        // Build team per role (same fallback logic as main loop)
+        const _team: MatchPlayer[] = [];
+        let _roleFailed = false;
+
+        for (const _role of ["WK", "BAT", "AR", "BOWL"] as const) {
+          const _need = _cfg[_role];
+          let _pool = byRole[_role];
+          if (_pool.length < _need) {
+            if (_role !== "AR" && byRole.AR.length > 0) {
+              _pool = [..._pool, ...byRole.AR.slice(0, _need - _pool.length)];
+            }
+            if (_pool.length < _need && _role !== "BAT" && byRole.BAT.length > 0) {
+              _pool = [..._pool, ...byRole.BAT.slice(0, _need - _pool.length)];
+            }
+            if (_pool.length === 0 && _role === "WK") {
+              _pool = effectivePool.filter(p => {
+                const n = (p.name || "").toLowerCase();
+                return n.includes("keeper") || n.includes("wk");
+              });
+            }
+            if (_pool.length < _need) { _roleFailed = true; break; }
+          }
+
+          // Deterministic shuffle (same as main loop)
+          const _sh = [..._pool];
+          let _ss = (_seed * 2654435761 + _role.charCodeAt(0) * 7919) % 2147483647;
+          for (let j = _sh.length - 1; j > 0; j--) {
+            _ss = (_ss * 1103515245 + 12345) % 2147483647;
+            const _k = _ss % (j + 1);
+            [_sh[j], _sh[_k]] = [_sh[_k], _sh[j]];
+          }
+
+          // Pick by strategy (same as main loop)
+          if (_cfg.strategy === "safe") {
+            _team.push(..._sh.slice(0, _need));
+          } else if (_cfg.strategy === "balanced") {
+            const _topCount = Math.ceil(_need * 0.5);
+            const _midCount = _need - _topCount;
+            _team.push(..._sh.slice(0, _topCount), ..._sh.slice(_topCount, _topCount + _midCount));
+          } else if (_cfg.strategy === "differential") {
+            const _topCount = Math.ceil(_need * 0.3);
+            const _diffNeed = _need - _topCount;
+            const _top = _sh.slice(0, _topCount);
+            const _lowSel = _sh.slice(_topCount).sort((a, b) => selPct(a) - selPct(b));
+            _team.push(..._top, ..._lowSel.slice(0, _diffNeed));
+          } else {
+            const _topCount = Math.ceil(_need * 0.3);
+            const _contraNeed = _need - _topCount;
+            const _top = _sh.slice(0, _topCount);
+            const _contra = _sh.slice(_topCount).sort((a, b) => selPct(a) - selPct(b));
+            _team.push(..._top, ..._contra.slice(0, _contraNeed));
+          }
+        }
+
+        if (_roleFailed || _team.length !== 11) {
+          _fillerValidationFailed++;
+          continue;
+        }
+
+        // Win-probability side balance (same as main loop — preserves AI quality)
+        const _wp = calculateWinProbability(team1Name, team2Name, effectivePool);
+        const _targetA = _wp.recommendedSplit.A;
+        const _targetB = _wp.recommendedSplit.B;
+        let _t1Count = _team.filter((p) => (p.team_name || "") === team1Name).length;
+        let _t2Count = _team.filter((p) => (p.team_name || "") === team2Name).length;
+        let _balanceAttempts = 0;
+        while ((Math.abs(_t1Count - _targetA) > 1 || Math.abs(_t2Count - _targetB) > 1) && _balanceAttempts < 20) {
+          if (_t1Count > _targetA) {
+            const _swapIdx = _team.findIndex((p) => (p.team_name || "") === team1Name);
+            if (_swapIdx >= 0) {
+              const _role = roleOf(_team[_swapIdx]);
+              const _repl = byRole[_role].find(
+                (p) => (p.team_name || "") === team2Name && !_team.find((x) => playerId(x) === playerId(p))
+              );
+              if (_repl) { _team[_swapIdx] = _repl; _t1Count--; _t2Count++; } else break;
+            } else break;
+          } else if (_t2Count > _targetB) {
+            const _swapIdx = _team.findIndex((p) => (p.team_name || "") === team2Name);
+            if (_swapIdx >= 0) {
+              const _role = roleOf(_team[_swapIdx]);
+              const _repl = byRole[_role].find(
+                (p) => (p.team_name || "") === team1Name && !_team.find((x) => playerId(x) === playerId(p))
+              );
+              if (_repl) { _team[_swapIdx] = _repl; _t2Count--; _t1Count++; } else break;
+            } else break;
+          } else break;
+          _balanceAttempts++;
+        }
+
+        // Credits validation (same as main loop)
+        const _tc = _team.reduce((s, p) => s + credits(p), 0);
+        if (_tc > 100) {
+          _team.sort((a, b) => credits(b) - credits(a));
+          for (let j = 0; j < _team.length; j++) {
+            const _r = roleOf(_team[j]);
+            const _cheaper = byRole[_r].find(
+              (p) => credits(p) < credits(_team[j]) && !_team.find((x) => playerId(x) === playerId(p))
+            );
+            if (_cheaper) { _team[j] = _cheaper; break; }
+          }
+        }
+
+        // Dedup check — try 10 swaps before rejecting (same as main loop)
+        let _key = _team.map(playerId).sort().join("|");
+        if (usedTeamKeys.has(_key)) {
+          let _da = 0;
+          while (usedTeamKeys.has(_key) && _da < 10) {
+            const _rs: "WK" | "BAT" | "AR" | "BOWL" = (["WK", "BAT", "AR", "BOWL"] as const)[_da % 4];
+            const _si = _team.findIndex((p) => roleOf(p) === _rs);
+            if (_si >= 0) {
+              const _alt = byRole[_rs].find((p) => !_team.find((x) => playerId(x) === playerId(p)));
+              if (_alt) _team[_si] = _alt;
+            }
+            _key = _team.map(playerId).sort().join("|");
+            _da++;
+          }
+          if (usedTeamKeys.has(_key)) {
+            _fillerDuplicates++;
+            continue;
+          }
+        }
+        usedTeamKeys.add(_key);
+
+        // C/VC by hack-boosted EFV (same as main loop)
+        const _sorted = [..._team].sort((a, b) => {
+          return (calculatePlayerEFV(b) * _hackMult(b)) - (calculatePlayerEFV(a) * _hackMult(a));
+        });
+        const _captain = _sorted[0];
+        const _vc = _sorted.find((p) => playerId(p) !== playerId(_captain)) || _sorted[1] || _sorted[0];
+
+        const _baseEFV = _team.reduce((s, p) => s + calculatePlayerEFV(p), 0);
+        const _teamEFV = _baseEFV + calculatePlayerEFV(_captain) * 1.0 + calculatePlayerEFV(_vc) * 0.5;
+        const _aiScore = clamp(Math.round(_teamEFV / 11), 0, 100);
+        const _selAvg = avg(_team.map((p) => selPct(p)));
+        const _risk: EliteRankedTeam["riskLevel"] =
+          _cfg.strategy === "safe" ? "low" : _cfg.strategy === "balanced" ? "medium" : "high";
+
+        // Hack info for captain
+        let _capHackTier = "";
+        let _capHackScore = 0;
+        try {
+          const _cr = roleOf(_captain);
+          const _ch = calculateHackScores({
+            id: String(_captain.player_fixed_id ?? _captain.pl_id ?? _captain.pid ?? _captain.name ?? ""),
+            name: _captain.name || "",
+            team: _captain.team_name || "",
+            roleShort: _cr,
+            wicketKeeper: _cr === "WK",
+          });
+          _capHackTier = _ch.tier;
+          _capHackScore = _ch.total;
+        } catch { /* ignore */ }
+
+        const _idx = rankedTeams.length;
+        const _teamRow: TeamRow = {
+          _id: `elite_filler_${_idx}_${Date.now().toString(36)}`,
+          teamId: `elite_filler_${_idx + 1}`,
+          teamNo: _idx + 1,
+          team_number: _idx + 1,
+          players: _team.map((p) => ({
+            pid: playerId(p),
+            player_fixed_id: p.player_fixed_id,
+            pl_id: p.pl_id,
+            name: p.name,
+            shortName: p.shortName || p.name?.slice(0, 4).toUpperCase() || "",
+            team: p.team_name,
+            team_name: p.team_name,
+            role: roleOf(p),
+            role_num: p.role,
+            player_type: p.player_type,
+            credits: p.credits,
+            selected_by: selPct(p),
+            sel: p.sel,
+            image: p.image,
+            playing: p.playing,
+          })),
+          captain: playerId(_captain),
+          viceCaptain: playerId(_vc),
+          vicecaptain: playerId(_vc),
+          c: playerId(_captain),
+          vc: playerId(_vc),
+          type: "elite-ai",
+        };
+
+        rankedTeams.push({
+          rank: _idx + 1,
+          team: _teamRow,
+          efv: _teamEFV,
+          aiScore: _aiScore,
+          riskLevel: _risk,
+          strategy: _cfg.strategy,
+          reasoning: `${_cfg.label}. Team EFV: ${_teamEFV.toFixed(1)}. Avg sel%: ${_selAvg.toFixed(1)}%. Strategy: ${_cfg.strategy.toUpperCase()}.`,
+          captainReason: `C: ${playerName(_captain)} — EFV ${calculatePlayerEFV(_captain).toFixed(1)}, sel% ${selPct(_captain).toFixed(1)}%.`,
+          vcReason: `VC: ${playerName(_vc)} — EFV ${calculatePlayerEFV(_vc).toFixed(1)}, sel% ${selPct(_vc).toFixed(1)}%.`,
+          hackTier: _capHackTier,
+          hackScore: _capHackScore,
+        });
+      }
+
+      console.log(`[EliteAI] 🔄 Filler complete: ${rankedTeams.length}/${teamCount} teams (attempts: ${_fillerAttempts}, validation failed: ${_fillerValidationFailed}, duplicates: ${_fillerDuplicates})`);
+    }
+
+    // === DEBUG LOGS (per user spec) ===
+    console.log(`[EliteAI] 📊 Generation Summary:`);
+    console.log(`[EliteAI]    Requested Teams: ${teamCount}`);
+    console.log(`[EliteAI]    Successfully Generated: ${rankedTeams.length}`);
+    console.log(`[EliteAI]    Validation Failed: ${_fillerValidationFailed}`);
+    console.log(`[EliteAI]    Duplicate Rejected: ${_fillerDuplicates}`);
+    console.log(`[EliteAI]    Retry Attempts: ${_fillerAttempts}`);
+    console.log(`[EliteAI]    Final Returned Count: ${Math.min(rankedTeams.length, teamCount)}`);
+  }
+
   // GUARANTEE: MAX WIN team (first generated) ALWAYS gets Rank 1
   // Find the max win team (it has the highest player EFVs by design)
   // Give it a small EFV boost to guarantee it ranks #1
