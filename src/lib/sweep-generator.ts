@@ -1456,6 +1456,30 @@ export async function generateSweep(
     finalTeams.push(t);
   }
 
+  // ============================================================
+  // SEQUENTIAL TEAM NUMBER REASSIGNMENT (per user spec)
+  // ============================================================
+  //
+  // CRITICAL FIX: "NO SKIPPED TEAM NUMBERS"
+  //
+  // Before: teamNo was assigned as `i + 1` in the main loop, but `i`
+  // increments even on `continue` (skip). So if teams at index 2, 5, 13
+  // were skipped, the remaining teams kept their original (gapped) numbers
+  // → Team #1, #2, #5, #13, #19... instead of #1, #2, #3, #4, #5...
+  //
+  // After: Reassign teamNo sequentially: 1, 2, 3, 4, 5, ... N
+  // No gaps, no skips, no missing numbers. Always sequential.
+  //
+  // Also reassign teamId, _id to match the new sequential numbers.
+  finalTeams.forEach((t, idx) => {
+    t.teamNo = idx + 1;
+    t.team_number = idx + 1;
+    t.teamId = `sweep_${idx + 1}`;
+    t._id = `sweep_${idx + 1}_${Date.now().toString(36)}`;
+  });
+
+  console.log(`[generator] 📊 Sequential Team Numbers: #1 to #${finalTeams.length} (no gaps, no skips)`);
+
   // Compute stats
   const captainSet = new Set(finalTeams.map((t) => String(t.captain)));
   const vcSet = new Set(finalTeams.map((t) => String(t.viceCaptain)));
