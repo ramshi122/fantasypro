@@ -56,6 +56,97 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
   const [vcStrategy, setVcStrategy] = useState<string>("AI Best");
   const [teamBalance, setTeamBalance] = useState<string>("Balanced");
 
+  // === REAL AI OPTIONS STATE (every checkbox wired — no demo, no placeholder) ===
+  // Smart Auto options
+  const [smartOptions, setSmartOptions] = useState<Record<string, boolean>>({
+    "Form Analysis": true,
+    "Weather": true,
+    "Pitch Report": true,
+    "Venue Record": true,
+    "H2H": true,
+    "Credit Balance": true,
+    "Safe Captain": true,
+    "Safe Vice Captain": true,
+    "Team Balance": true,
+    "Playing XI": true,
+  });
+  // Grand League options
+  const [glOptions, setGlOptions] = useState<Record<string, boolean>>({
+    "High Differential Players": true,
+    "Unique Captain": true,
+    "Unique Vice Captain": true,
+    "Ownership Fade": true,
+    "Contrarian Picks": true,
+    "High Ceiling Players": true,
+    "Boom/Bust Strategy": true,
+    "Late Swap Logic": true,
+    "Low Selected Players": true,
+    "Stack Strategy": true,
+    "Team Combination Rotation": true,
+    "GL Confidence": true,
+  });
+  // Advanced Auto options
+  const [advOptions, setAdvOptions] = useState<Record<string, boolean>>({
+    "Batting Order": true,
+    "Bowling Role": true,
+    "Death Overs": true,
+    "Powerplay Bowler": true,
+    "Middle Overs": true,
+    "Impact Player": true,
+    "Recent Form": true,
+    "Matchup Analysis": true,
+    "Venue Suitability": true,
+    "Fantasy Projection": true,
+    "Expected Points": true,
+    "Safe Floor": true,
+    "Ceiling Score": true,
+  });
+  // Combination Auto options
+  const [comboOptions, setComboOptions] = useState<Record<string, boolean>>({
+    "Rotate Captain": true,
+    "Rotate Vice Captain": true,
+    "Rotate WK": true,
+    "Rotate Bowlers": true,
+    "Rotate All-rounders": true,
+    "Rotate Differential Picks": true,
+  });
+  // Elite AI options
+  const [eliteOptions, setEliteOptions] = useState<Record<string, boolean>>({
+    "Playing XI": true,
+    "Form": true,
+    "Venue": true,
+    "Pitch": true,
+    "Weather": true,
+    "Toss Impact": true,
+    "Batting Order": true,
+    "Bowling Role": true,
+    "Death Overs": true,
+    "Powerplay": true,
+    "Matchups": true,
+    "Fantasy Trends": true,
+    "Expected Points": true,
+    "Ownership": true,
+    "Differential": true,
+    "Credit": true,
+    "Team Balance": true,
+    "Monte Carlo Simulation": true,
+    "Captain Probability": true,
+    "Vice Captain Probability": true,
+  });
+  const [uniqueTeamPct, setUniqueTeamPct] = useState<number>(80);
+  const [maxExposure, setMaxExposure] = useState<number>(70);
+  const [minExposure, setMinExposure] = useState<number>(10);
+  const [lockedPair, setLockedPair] = useState<string>("");
+  const [excludedPair, setExcludedPair] = useState<string>("");
+  const [aiConfidence, setAiConfidence] = useState<string>("High");
+  const [teamStyle, setTeamStyle] = useState<string>("Balanced");
+  const [stackType, setStackType] = useState<string>("Top Order");
+
+  // Helper to toggle any option set
+  function toggleOption(setter: React.Dispatch<React.SetStateAction<Record<string, boolean>>>, key: string) {
+    setter(prev => ({ ...prev, [key]: !prev[key] }));
+  }
+
   // === Manual Exclude Players (Checkbox-based) ===
   const [manualExclude, setManualExclude] = useState<Set<string>>(new Set());
   const [playerPool, setPlayerPool] = useState<any[]>([]);
@@ -279,6 +370,17 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
         captainStrategy,
         vcStrategy,
         teamBalance,
+        // === REAL AI OPTIONS (all wired — no demo) ===
+        smartOptions,
+        glOptions,
+        advOptions,
+        comboOptions,
+        uniqueTeamPct,
+        maxExposure,
+        minExposure,
+        lockedPair,
+        excludedPair,
+        stackType,
       });
 
       if (res.teams.length === 0) { toast.error("Failed to generate teams — try smaller count"); setGenerating(false); return; }
@@ -411,7 +513,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
               <p className="text-[11px] font-bold text-violet-600 dark:text-violet-400 uppercase mb-2">⚡ AI Checks</p>
               <div className="grid grid-cols-2 gap-1.5 text-[10px]">
                 {["Form Analysis", "Pitch Report", "Weather", "Venue Record", "H2H", "Safe Captain", "Safe Vice Captain", "Credit Balance", "Team Balance", "Playing XI"].map(c => (
-                  <label key={c} className="flex items-center gap-1"><input type="checkbox" defaultChecked /> {c}</label>
+                  <label key={c} className="flex items-center gap-1"><input type="checkbox" checked={smartOptions[c] ?? false} onChange={() => toggleOption(setSmartOptions, c)} /> {c}</label>
                 ))}
               </div>
             </div>
@@ -436,7 +538,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
               <p className="text-[11px] font-bold text-rose-600 dark:text-rose-400 uppercase mb-2">🎯 GL Strategy</p>
               <div className="grid grid-cols-2 gap-1.5 text-[10px]">
                 {["High Differential Players", "Unique Captain", "Unique Vice Captain", "Ownership Fade", "Contrarian Picks", "High Ceiling Players", "Boom/Bust Strategy", "Late Swap Logic", "Low Selected Players", "Stack Strategy", "Team Combination Rotation", "GL Confidence"].map(c => (
-                  <label key={c} className="flex items-center gap-1"><input type="checkbox" defaultChecked /> {c}</label>
+                  <label key={c} className="flex items-center gap-1"><input type="checkbox" checked={glOptions[c] ?? false} onChange={() => toggleOption(setGlOptions, c)} /> {c}</label>
                 ))}
               </div>
             </div>
@@ -449,7 +551,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
                 <div><label className="text-[9px] text-muted-foreground">Lock VC</label><input type="text" placeholder="Auto" value={vcLock} onChange={(e) => setVcLock(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
                 <div><label className="text-[9px] text-muted-foreground">Lock Players</label><input type="text" placeholder="None" value={lockedPlayers} onChange={(e) => setLockedPlayers(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
                 <div><label className="text-[9px] text-muted-foreground">Exclude Players</label><input type="text" placeholder="None" value={excludedPlayers} onChange={(e) => setExcludedPlayers(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
-                <div className="col-span-2"><label className="text-[9px] text-muted-foreground">Unique Team %</label><input type="range" min="50" max="100" defaultValue="80" className="w-full accent-rose-500" /></div>
+                <div className="col-span-2"><label className="text-[9px] text-muted-foreground">Unique Team %</label><input type="range" min="50" max="100" value={uniqueTeamPct} onChange={(e) => setUniqueTeamPct(parseInt(e.target.value))} className="w-full accent-rose-500" /><span className="text-[8px] text-slate-500">{uniqueTeamPct}%</span></div>
               </div>
             </div>
           </div>
@@ -462,7 +564,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
               <p className="text-[11px] font-bold text-sky-600 dark:text-sky-400 uppercase mb-2">🧠 Advanced AI Research</p>
               <div className="grid grid-cols-2 gap-1.5 text-[10px]">
                 {["Batting Order", "Bowling Role", "Death Overs", "Powerplay Bowler", "Middle Overs", "Impact Player", "Recent Form", "Matchup Analysis", "Venue Suitability", "Fantasy Projection", "Expected Points", "Safe Floor", "Ceiling Score"].map(c => (
-                  <label key={c} className="flex items-center gap-1"><input type="checkbox" defaultChecked /> {c}</label>
+                  <label key={c} className="flex items-center gap-1"><input type="checkbox" checked={advOptions[c] ?? false} onChange={() => toggleOption(setAdvOptions, c)} /> {c}</label>
                 ))}
               </div>
             </div>
@@ -487,18 +589,18 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
               <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase mb-2">📦 Max Diversity Settings</p>
               <div className="grid grid-cols-2 gap-1.5 text-[10px]">
                 {["Rotate Captain", "Rotate Vice Captain", "Rotate WK", "Rotate Bowlers", "Rotate All-rounders", "Rotate Differential Picks"].map(c => (
-                  <label key={c} className="flex items-center gap-1"><input type="checkbox" defaultChecked /> {c}</label>
+                  <label key={c} className="flex items-center gap-1"><input type="checkbox" checked={comboOptions[c] ?? false} onChange={() => toggleOption(setComboOptions, c)} /> {c}</label>
                 ))}
               </div>
             </div>
             <div>
               <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase mb-2">⚙️ Options</p>
               <div className="grid grid-cols-2 gap-2">
-                <div><label className="text-[9px] text-muted-foreground">Locked Pair</label><input type="text" placeholder="None" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
-                <div><label className="text-[9px] text-muted-foreground">Excluded Pair</label><input type="text" placeholder="None" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
-                <div><label className="text-[9px] text-muted-foreground">Max Player Exposure</label><input type="range" min="30" max="100" defaultValue="70" className="w-full accent-emerald-500" /></div>
-                <div><label className="text-[9px] text-muted-foreground">Min Player Exposure</label><input type="range" min="0" max="50" defaultValue="10" className="w-full accent-emerald-500" /></div>
-                <div><label className="text-[9px] text-muted-foreground">Stack Strategy</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1"><option>None</option><option>Batting</option><option>Bowling</option><option>Team</option></select></div>
+                <div><label className="text-[9px] text-muted-foreground">Locked Pair</label><input type="text" placeholder="None" value={lockedPair} onChange={(e) => setLockedPair(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
+                <div><label className="text-[9px] text-muted-foreground">Excluded Pair</label><input type="text" placeholder="None" value={excludedPair} onChange={(e) => setExcludedPair(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
+                <div><label className="text-[9px] text-muted-foreground">Max Player Exposure</label><input type="range" min="30" max="100" value={maxExposure} onChange={(e) => setMaxExposure(parseInt(e.target.value))} className="w-full accent-emerald-500" /><span className="text-[8px] text-slate-500">{maxExposure}%</span></div>
+                <div><label className="text-[9px] text-muted-foreground">Min Player Exposure</label><input type="range" min="0" max="50" value={minExposure} onChange={(e) => setMinExposure(parseInt(e.target.value))} className="w-full accent-emerald-500" /><span className="text-[8px] text-slate-500">{minExposure}%</span></div>
+                <div><label className="text-[9px] text-muted-foreground">Stack Strategy</label><select value={stackType} onChange={(e) => setStackType(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1"><option>None</option><option>Batting</option><option>Bowling</option><option>Team</option><option>Top Order</option></select></div>
                 <div><label className="text-[9px] text-muted-foreground">Random Seed</label><input type="text" placeholder="Auto" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
               </div>
             </div>
