@@ -694,8 +694,7 @@ function isPlayerValidForGeneration(p: MatchPlayer, lineupAnnounced: boolean): b
   }
 
   // Check playing field for explicit "not playing" values
-  // playing === -1, "false", "no", "0" with lineup announced → reject
-  // playing === 0 with lineup NOT announced → keep (may just be "not confirmed yet")
+  // playing === -1, "false", "no" → always reject (player is definitely not playing)
   if (playing === -1 || p.playing === "false" || p.playing === "no") {
     console.log(`[PlayerValidation] ❌ Rejecting "${p.name}" — playing=${p.playing} (explicit not playing)`);
     return false;
@@ -709,8 +708,13 @@ function isPlayerValidForGeneration(p: MatchPlayer, lineupAnnounced: boolean): b
     }
   }
 
-  // === PRE-LINEUP: playing === 0 is SUSPICIOUS but may be "not confirmed yet" ===
-  // Only reject if player has OTHER indicators of being unavailable
+  // === PRE-LINEUP: playing === 0 with lineup_out === 1 === REJECT ===
+  // CRITICAL FIX: Per user spec "Offline player added after lineup"
+  // If the match data says lineup is announced (lineup_out === 1) but the
+  // player has playing === 0, they are BENCHED — reject them.
+  // Previously, pre-lineup mode allowed playing === 0 players (assuming
+  // "not confirmed yet"), which caused benched players to be added after
+  // lineup announcement when the lineupAnnounced flag wasn't properly set.
   if (!lineupAnnounced && playing === 0) {
     // Check if player has additional "not available" fields
     const playerAny = p as any;
@@ -806,10 +810,47 @@ export async function generateSweep(
 
   // 1. Clean and rank players by EFV
   // Detect lineup: if ANY player has playing === 1, lineup is announced
-  const lineupDetectedPreClean = players.some((p) => Number(p.playing) === 1);
-  const cleanStart = Date.now();
-  const cleaned = cleanPlayerPool(players, lineupDetectedPreClean);
-  perfLog.cleanPoolMs = Date.now() - cleanStart;
+  // CRITICAL FIX: Per user spec "Offline player added after lineup"
+  // Also check (players as any)[0].lineup_out === 1 — backend match data field
+  // that explicitly says "lineup is announced" even if playing field is not set on all players.
+  const lineupDetectedPreClean =
+    players.some((p) => Number(p.playing) === 1) ||
+    (players as any).some((p: any) => Number(p.lineup_out) === 1) ||
+    (players as any).some((p: any) => p.lineup_announced === true || p.lineup_out === true);
+
+  // If lineup is detected, FORCE-filter playing === 0 players (they are benched)
+  // Per user spec: "Offline player added after lineup" — these should never be in teams
+  let cleaned: MatchPlayer[];
+  let ranked: ReturnType<typeof rankPlayers>;
+  let lookups: ReturnType<typeof buildLookups>;
+  let byRole: ReturnType<typeof buildLookups>["byRole"];
+
+  if (lineupDetectedPreClean) {
+    const beforeLineupFilter = players.length;
+    const lineupFiltered = players.filter((p) => {
+      const playing = Number(p.playing);
+      // Keep playing === 1, undefined, null (unknown — might be in XI but not marked)
+      // Reject playing === 0, -1, "false", "no" (definitely benched)
+      if (playing === 0 || playing === -1 || p.playing === "false" || p.playing === "no") {
+        console.log(`[LineupFilter] ❌ Removing benched player "${p.name}" — playing=${p.playing}`);
+        return false;
+      }
+      return true;
+    });
+    const removedByLineup = beforeLineupFilter - lineupFiltered.length;
+    if (removedByLineup > 0) {
+      console.log(`[LineupFilter] 🟢 Lineup announced — removed ${removedByLineup} benched players (${lineupFiltered.length} remaining)`);
+    }
+    // Use the lineup-filtered pool for the rest of generation
+    const cleanStart = Date.now();
+    cleaned = cleanPlayerPool(lineupFiltered, lineupDetectedPreClean);
+    perfLog.cleanPoolMs = Date.now() - cleanStart;
+  } else {
+    // Pre-lineup mode — use original logic
+    const cleanStart = Date.now();
+    cleaned = cleanPlayerPool(players, false);
+    perfLog.cleanPoolMs = Date.now() - cleanStart;
+  }
 
   if (cleaned.length < 11) {
     return {
@@ -824,15 +865,15 @@ export async function generateSweep(
   }
 
   const rankStart = Date.now();
-  const ranked = rankPlayers(cleaned);
+  ranked = rankPlayers(cleaned);
   perfLog.rankPlayersMs = Date.now() - rankStart;
 
   // PERFORMANCE: Build all lookup structures ONCE — reused across all teams
   // Previously: filter() called per team for role grouping, EFV map rebuilt per C/VC pick
   // Now: O(1) lookups via Maps
   const lookupStart = Date.now();
-  const lookups = buildLookups(ranked);
-  const byRole = lookups.byRole;
+  lookups = buildLookups(ranked);
+  byRole = lookups.byRole;
   perfLog.buildLookupsMs = Date.now() - lookupStart;
 
   console.log("[generator] Player pool:", {
