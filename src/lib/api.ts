@@ -986,64 +986,68 @@ export function saveFantasyToken(
   token: string,
   extras?: {
     mobile?: string;
+    userId?: string;
     my11circleChallenge?: string;
     my11circleUserId?: string;
+    refreshToken?: string;
+    cookies?: string;
     maxAllowedTeam?: number | null;
     subscriptionTier?: string | null;
   }
 ) {
   if (typeof window === "undefined") return;
 
-  // 1. Save to new multi-account system
+  // CRITICAL FIX: Save to multi-account array — NEVER overwrite existing accounts.
+  // Per user spec: "One account must never overwrite another account."
+  // Per user spec: "Save every account separately with a unique Account ID."
+  //
+  // Logic:
+  //   1. If an account with the SAME mobile number already exists → UPDATE that account's token
+  //      (re-login scenario — same phone number, new OTP, new token)
+  //   2. If NO existing account has this mobile → ADD as a NEW account (unique ID)
+  //   3. If max accounts reached → log warning (don't overwrite existing)
   try {
     const { addFantasyAccount, updateFantasyAccount, listAccountsForApp } = require("./multi-accounts");
     const existing = listAccountsForApp(app);
-    // If this mobile is already linked, update that account instead of adding a new one
+
+    // Check if this mobile is already linked → update that account (re-login)
     const existingForMobile = extras?.mobile
       ? existing.find(a => a.mobile === extras.mobile)
       : null;
+
     if (existingForMobile) {
+      // Re-login: update existing account's token + status
       updateFantasyAccount(existingForMobile.id, {
         token,
         mobile: extras?.mobile,
+        userId: extras?.userId,
         my11circleChallenge: extras?.my11circleChallenge,
         my11circleUserId: extras?.my11circleUserId,
+        refreshToken: extras?.refreshToken,
+        cookies: extras?.cookies,
         maxAllowedTeam: extras?.maxAllowedTeam,
         subscriptionTier: extras?.subscriptionTier,
+        status: "active", // re-login marks account as active again
+        lastRefreshed: Date.now(),
       });
-      console.log(`[saveFantasyToken] Updated existing ${app} account (${existingForMobile.id})`);
+      console.log(`[saveFantasyToken] ✅ Updated existing ${app} account (${existingForMobile.id}) — mobile: ${extras?.mobile}`);
     } else {
+      // New account — add to array (unique ID auto-generated)
       const newAccount = addFantasyAccount(app, token, extras);
       if (newAccount) {
-        console.log(`[saveFantasyToken] Added new ${app} account (${newAccount.id})`);
+        console.log(`[saveFantasyToken] ✅ Added NEW ${app} account (${newAccount.id}) — mobile: ${newAccount.mobile || "unknown"}`);
       } else {
-        console.warn(`[saveFantasyToken] Max accounts reached for ${app}, updating default instead`);
-        // Fallback: update default account's token
-        if (existing.length > 0) {
-          const def = existing.find(a => a.isDefault) || existing[0];
-          updateFantasyAccount(def.id, { token, ...extras });
-        }
+        // Max accounts reached — do NOT overwrite, just log warning
+        console.warn(`[saveFantasyToken] ⚠️ Max accounts reached for ${app} — account NOT saved (would overwrite). Remove an account first.`);
       }
     }
   } catch (err) {
-    console.error("[saveFantasyToken] Multi-account save failed, falling back to old format:", err);
+    console.error("[saveFantasyToken] Multi-account save failed:", err);
   }
 
-  // 2. Also write to old format for backward compat (other parts of codebase still read this)
-  const allOld = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
-  const existingOld = allOld[app] && typeof allOld[app] === "object" ? allOld[app] : {};
-  allOld[app] = {
-    ...existingOld,
-    token,
-    mobile: extras?.mobile || existingOld.mobile || null,
-    my11circleChallenge: extras?.my11circleChallenge || existingOld.my11circleChallenge || null,
-    my11circleUserId: extras?.my11circleUserId || existingOld.my11circleUserId || null,
-    maxAllowedTeam: extras?.maxAllowedTeam ?? existingOld.maxAllowedTeam ?? null,
-    subscriptionTier: extras?.subscriptionTier || existingOld.subscriptionTier || null,
-    linkedAt: Date.now(),
-  };
-  localStorage.setItem(LOCAL_FANTASY_TOKENS_KEY, JSON.stringify(allOld));
-  console.log(`[saveFantasyToken] Saved ${app} token to localStorage`);
+  // NOTE: We NO LONGER write to the old `apna-cricket-fantasy-tokens` single-account storage.
+  // That was the root cause of "only 1 account showing" — every login overwrote the previous.
+  // All reads now go through getLinkedAccount() → getDefaultAccount() → multi-account array.
 }
 
 export function getFantasyToken(app: FantasyApp): string | null {
@@ -1061,10 +1065,18 @@ export function getFantasyToken(app: FantasyApp): string | null {
 
 export interface LinkedFantasyAccount {
   app: FantasyApp;
+  /** Unique account ID from multi-accounts storage (for multi-select) */
+  accountId?: string;
   token: string;
   mobile?: string | null;
+  /** Backend user ID for this platform account */
+  userId?: string | null;
   my11circleChallenge?: string | null;
   my11circleUserId?: string | null;
+  /** Refresh token (if backend supports it) */
+  refreshToken?: string | null;
+  /** Cookies/session data (if backend uses cookie-based auth) */
+  cookies?: string | null;
   /** Dream11 only: max teams per match based on subscription tier (null = use default 40) */
   maxAllowedTeam?: number | null;
   /** Dream11 only: subscription tier label (e.g. "Pro", "Max") */
@@ -1074,23 +1086,27 @@ export interface LinkedFantasyAccount {
 
 export function getLinkedAccount(app: FantasyApp): LinkedFantasyAccount | null {
   if (typeof window === "undefined") return null;
+  // CRITICAL FIX: Read from the MULTI-ACCOUNT array, not the old single-account storage.
+  // The old code read from `apna-cricket-fantasy-tokens` which only stored ONE account
+  // per platform — every new login OVERWROTE the previous one.
+  // Now we read from `apna-cricket-fantasy-accounts` which stores an ARRAY of accounts.
   try {
-    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
-    const entry = all[app];
-    if (!entry) return null;
-    if (typeof entry === "string") {
-      return { app, token: entry };
-    }
+    const { getDefaultAccount } = require("./multi-accounts");
+    const account = getDefaultAccount(app);
+    if (!account) return null;
     return {
       app,
-      token: entry.token,
-      mobile: entry.mobile,
-      my11circleChallenge: entry.my11circleChallenge,
-      my11circleUserId: entry.my11circleUserId,
-      maxAllowedTeam: entry.maxAllowedTeam ?? null,
-      subscriptionTier: entry.subscriptionTier ?? null,
-      linkedAt: entry.linkedAt,
-    };
+      // Attach the account ID so callers can reference it for multi-select
+      accountId: account.id,
+      token: account.token,
+      mobile: account.mobile,
+      userId: account.userId,
+      my11circleChallenge: account.my11circleChallenge,
+      my11circleUserId: account.my11circleUserId,
+      maxAllowedTeam: account.maxAllowedTeam ?? null,
+      subscriptionTier: account.subscriptionTier ?? null,
+      linkedAt: account.linkedAt,
+    } as LinkedFantasyAccount & { accountId: string; userId?: string | null };
   } catch {
     return null;
   }

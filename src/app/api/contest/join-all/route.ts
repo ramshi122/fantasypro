@@ -295,18 +295,48 @@ export async function POST(request: Request) {
       totalSuccess += accountSuccess;
       totalFailed += accountFailed;
 
+      // Determine per-account status (per user spec)
+      // "Display per-account status: Joined Successfully, Already Joined, Contest Full,
+      //  Insufficient Balance, Login Expired, Network Error"
+      let accountStatus: string;
+      if (accountError?.includes("Session expired")) {
+        accountStatus = "login_expired";
+      } else if (accountError?.includes("Network") || accountError?.includes("timeout")) {
+        accountStatus = "network_error";
+      } else if (accountSuccess > 0 && accountFailed === 0) {
+        accountStatus = "joined_successfully";
+      } else if (accountSuccess > 0 && accountFailed > 0) {
+        accountStatus = "partial_success";
+      } else if (accountFailed > 0) {
+        // Check error messages for specific backend responses
+        const errorMessages = accountJoinResults.map(r => r.error || "").join(" ").toLowerCase();
+        if (errorMessages.includes("already joined") || errorMessages.includes("already_joined")) {
+          accountStatus = "already_joined";
+        } else if (errorMessages.includes("contest full") || errorMessages.includes("contest_full")) {
+          accountStatus = "contest_full";
+        } else if (errorMessages.includes("insufficient") || errorMessages.includes("balance")) {
+          accountStatus = "insufficient_balance";
+        } else {
+          accountStatus = "failed";
+        }
+      } else {
+        accountStatus = "no_teams";
+      }
+
       accountResults.push({
         accountIndex: a,
         mobile: account.mobile || `Account ${a + 1}`,
+        accountId: (account as any).accountId || `acct_${a + 1}`,
         successCount: accountSuccess,
         failedCount: accountFailed,
         joinResults: accountJoinResults,
         error: accountError,
+        accountStatus, // per-account status code
       });
 
       console.log(
         `[Contest][JoinAll] Account ${a + 1} done — ` +
-        `success=${accountSuccess} failed=${accountFailed}` +
+        `status=${accountStatus} success=${accountSuccess} failed=${accountFailed}` +
         (accountError ? ` error=${accountError}` : "")
       );
 

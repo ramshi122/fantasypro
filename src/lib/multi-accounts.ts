@@ -46,6 +46,17 @@ export function getAccountLimit(app: FantasyApp): number {
   return ACCOUNT_LIMITS[app] ?? 5;
 }
 
+/**
+ * Account status — per user spec:
+ *   "Show account status (Active, Expired, Logged Out, Invalid)"
+ *
+ * - active: token is valid and verified
+ * - expired: token expired (backend rejected during verify)
+ * - logged_out: user manually logged out (token cleared)
+ * - invalid: token is malformed or account deleted from backend
+ */
+export type AccountStatus = "active" | "expired" | "logged_out" | "invalid";
+
 export interface FantasyAccount {
   /** Unique ID: `${app}_${timestamp}_${random}` — used to reference this account */
   id: string;
@@ -54,16 +65,27 @@ export interface FantasyAccount {
   label: string;
   token: string;
   mobile?: string | null;
+  /** Backend user ID for this platform account */
+  userId?: string | null;
+  /** My11Circle-specific auth fields (sent to /api/fantasy/auth/verify) */
   my11circleChallenge?: string | null;
   my11circleUserId?: string | null;
+  /** Refresh token (if backend supports it) */
+  refreshToken?: string | null;
+  /** Cookies/session data (if backend uses cookie-based auth) */
+  cookies?: string | null;
   /** Dream11 only: max teams per match based on subscription tier */
   maxAllowedTeam?: number | null;
   /** Dream11 only: subscription tier label */
   subscriptionTier?: string | null;
-  /** Timestamp when account was linked */
+  /** Timestamp when account was linked (login time) */
   linkedAt: number;
   /** Timestamp when token was last refreshed */
   lastRefreshed: number;
+  /** Timestamp when this account was last used for transfer/join */
+  lastUsed?: number;
+  /** Account status — tracked per user spec */
+  status: AccountStatus;
   /** Whether this is the default account for this platform */
   isDefault: boolean;
 }
@@ -183,8 +205,11 @@ export function addFantasyAccount(
   token: string,
   extras?: {
     mobile?: string;
+    userId?: string;
     my11circleChallenge?: string;
     my11circleUserId?: string;
+    refreshToken?: string;
+    cookies?: string;
     maxAllowedTeam?: number | null;
     subscriptionTier?: string | null;
     label?: string;
@@ -206,18 +231,23 @@ export function addFantasyAccount(
     label: extras?.label || getDefaultLabel(app, accountNum),
     token,
     mobile: extras?.mobile || null,
+    userId: extras?.userId || null,
     my11circleChallenge: extras?.my11circleChallenge || null,
     my11circleUserId: extras?.my11circleUserId || null,
+    refreshToken: extras?.refreshToken || null,
+    cookies: extras?.cookies || null,
     maxAllowedTeam: extras?.maxAllowedTeam ?? null,
     subscriptionTier: extras?.subscriptionTier || null,
     linkedAt: Date.now(),
     lastRefreshed: Date.now(),
+    lastUsed: undefined,
+    status: "active", // new accounts start as active
     isDefault: accounts.length === 0, // first account becomes default
   };
 
   all[app] = [...accounts, newAccount];
   writeAllAccounts(all);
-  console.log(`[multi-accounts] Added ${app} account #${accountNum} (${newAccount.id})`);
+  console.log(`[multi-accounts] Added ${app} account #${accountNum} (${newAccount.id}) — mobile: ${newAccount.mobile || "unknown"}`);
   return newAccount;
 }
 
@@ -352,4 +382,138 @@ export function refreshAccountToken(id: string, newToken: string): boolean {
 /** Export accounts (without tokens) for backup */
 export function exportAccounts(): Array<Omit<FantasyAccount, "token">> {
   return listAllFantasyAccounts().map(({ token, ...rest }) => rest);
+}
+
+// ============================================================
+// STATUS MANAGEMENT — per user spec:
+//   "Show account status (Active, Expired, Logged Out, Invalid)"
+//   "Automatic session recovery after app restart"
+// ============================================================
+
+/** Mark an account's status (active/expired/logged_out/invalid) */
+export function setAccountStatus(id: string, status: AccountStatus): boolean {
+  return updateFantasyAccount(id, { status, lastRefreshed: Date.now() });
+}
+
+/** Mark an account as expired (called when backend rejects token) */
+export function markAccountExpired(id: string): boolean {
+  return setAccountStatus(id, "expired");
+}
+
+/** Mark an account as logged out (called when user manually logs out) */
+export function markAccountLoggedOut(id: string): boolean {
+  return setAccountStatus(id, "logged_out");
+}
+
+/** Mark an account as active (called after successful verify) */
+export function markAccountActive(id: string): boolean {
+  return setAccountStatus(id, "active");
+}
+
+/** Mark an account as invalid (called when token is malformed) */
+export function markAccountInvalid(id: string): boolean {
+  return setAccountStatus(id, "invalid");
+}
+
+/** Update lastUsed timestamp (called when account is used for transfer/join) */
+export function markAccountUsed(id: string): boolean {
+  return updateFantasyAccount(id, { lastUsed: Date.now() });
+}
+
+/** Get account status with color/label for UI display */
+export function getAccountStatusDisplay(status: AccountStatus): {
+  label: string;
+  color: string;
+  emoji: string;
+} {
+  switch (status) {
+    case "active": return { label: "Active", color: "text-emerald-600 dark:text-emerald-400", emoji: "🟢" };
+    case "expired": return { label: "Expired", color: "text-amber-600 dark:text-amber-400", emoji: "🟡" };
+    case "logged_out": return { label: "Logged Out", color: "text-slate-500 dark:text-slate-400", emoji: "⚪" };
+    case "invalid": return { label: "Invalid", color: "text-red-600 dark:text-red-400", emoji: "🔴" };
+    default: return { label: "Unknown", color: "text-slate-500", emoji: "❓" };
+  }
+}
+
+/**
+ * Remove a single account by ID (per user spec: "Allow Remove Account").
+ * If removing the default account, the next account becomes default.
+ */
+export function removeFantasyAccountById(id: string): boolean {
+  if (typeof window === "undefined") return false;
+  const all = readAllAccounts();
+  for (const [app, accounts] of Object.entries(all)) {
+    const idx = accounts.findIndex(a => a.id === id);
+    if (idx >= 0) {
+      const wasDefault = accounts[idx].isDefault;
+      const remaining = accounts.filter(a => a.id !== id);
+      // If we removed the default, make the first remaining account default
+      if (wasDefault && remaining.length > 0) {
+        remaining[0] = { ...remaining[0], isDefault: true };
+      }
+      all[app] = remaining;
+      writeAllAccounts(all);
+      console.log(`[multi-accounts] Removed account ${id} from ${app}`);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Re-login for one account only (per user spec: "Allow Re-login for one account only").
+ * Clears the token + marks as logged_out, so user can re-link via OTP.
+ * Does NOT affect other accounts.
+ */
+export function logoutSingleAccount(id: string): boolean {
+  return updateFantasyAccount(id, {
+    token: "",
+    status: "logged_out",
+    lastRefreshed: Date.now(),
+  });
+}
+
+/**
+ * Get accounts by IDs (for Select All / multi-select transfer).
+ * Returns accounts in the order they were stored.
+ */
+export function getAccountsByIds(app: FantasyApp, ids: string[]): FantasyAccount[] {
+  const accounts = listAccountsForApp(app);
+  return accounts.filter(a => ids.includes(a.id));
+}
+
+/**
+ * Get all active (non-expired, non-logged-out) accounts for a platform.
+ * Per user spec: "Restore all accounts after refresh or app restart"
+ */
+export function getUsableAccountsForApp(app: FantasyApp): FantasyAccount[] {
+  return listAccountsForApp(app).filter(a =>
+    a.token && a.token.length > 0 && a.status !== "logged_out" && a.status !== "invalid"
+  );
+}
+
+/**
+ * Migrate old accounts (that don't have `status` field) to new format.
+ * Called on app load to ensure all accounts have the status field.
+ */
+export function migrateAccountStatuses(): number {
+  if (typeof window === "undefined") return 0;
+  const all = readAllAccounts();
+  let migrated = 0;
+  for (const [app, accounts] of Object.entries(all)) {
+    for (let i = 0; i < accounts.length; i++) {
+      if (!accounts[i].status) {
+        all[app][i].status = accounts[i].token ? "active" : "logged_out";
+        if (!accounts[i].lastRefreshed) {
+          all[app][i].lastRefreshed = accounts[i].linkedAt || Date.now();
+        }
+        migrated++;
+      }
+    }
+  }
+  if (migrated > 0) {
+    writeAllAccounts(all);
+    console.log(`[multi-accounts] Migrated ${migrated} accounts to new status format`);
+  }
+  return migrated;
 }
