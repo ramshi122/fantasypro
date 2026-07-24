@@ -1052,12 +1052,17 @@ export function saveFantasyToken(
 
 export function getFantasyToken(app: FantasyApp): string | null {
   if (typeof window === "undefined") return null;
+  // CRITICAL FIX: Read from multi-account array, not old single-account storage.
+  // Per user spec: "Detect and load all saved accounts correctly on page load."
+  // The old code read from `apna-cricket-fantasy-tokens` which only stored ONE
+  // account per platform — so if user linked 3 accounts, getFantasyToken only
+  // returned the LAST one, and listFantasyApps() only detected apps that had
+  // an entry in the OLD storage.
   try {
-    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
-    const entry = all[app];
-    if (!entry) return null;
-    // Backward compat: entry may be a plain string from older versions
-    return typeof entry === "string" ? entry : entry.token;
+    const { getDefaultAccount } = require("./multi-accounts");
+    const account = getDefaultAccount(app);
+    if (!account || !account.token) return null;
+    return account.token;
   } catch {
     return null;
   }
@@ -1114,9 +1119,19 @@ export function getLinkedAccount(app: FantasyApp): LinkedFantasyAccount | null {
 
 export function listFantasyApps(): FantasyApp[] {
   if (typeof window === "undefined") return [];
+  // CRITICAL FIX: Read from multi-account array, not old single-account storage.
+  // Per user spec: "Display every account with its own selection button/card."
+  // Returns list of platforms that have at least 1 linked account.
   try {
-    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
-    return Object.keys(all) as FantasyApp[];
+    const { listAccountsForApp } = require("./multi-accounts");
+    const apps: FantasyApp[] = [];
+    for (const a of ["dream11", "my11circle", "jumbo", "myteam11", "vision11"] as FantasyApp[]) {
+      const accounts = listAccountsForApp(a);
+      if (accounts.length > 0 && accounts.some(acc => acc.token && acc.token.length > 0)) {
+        apps.push(a);
+      }
+    }
+    return apps;
   } catch {
     return [];
   }

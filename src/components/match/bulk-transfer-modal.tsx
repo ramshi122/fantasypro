@@ -32,7 +32,7 @@ import {
   type MatchPlayer,
   type TeamRow,
 } from "@/lib/api";
-import { getActiveAccountsForApp } from "@/lib/multi-accounts";
+import { getActiveAccountsForApp, listAccountsForApp, getAccountLimit, type FantasyAccount } from "@/lib/multi-accounts";
 import { cn } from "@/lib/utils";
 
 interface BulkTransferModalProps {
@@ -72,15 +72,20 @@ export function BulkTransferModal({
   const [result, setResult] = useState<BulkTransferResult | null>(null);
   const [linkedApps, setLinkedApps] = useState<FantasyApp[]>([]);
   const [existingTeamIds, setExistingTeamIds] = useState<string[]>([]);
-  // === MULTI-ACCOUNT SELECTOR ===
-  // Per user spec: "transfer time not showing account all only showing same as only 1"
-  // Previously: getLinkedAccount() returned only the DEFAULT account.
-  // Now: show ALL linked accounts in a dropdown, user picks which one to transfer to.
-  const [selectedAccountId, setSelectedAccountId] = useState<string>(""); // "" = default account
-  const availableAccounts = selectedApp ? getActiveAccountsForApp(selectedApp) : [];
-  const selectedAccount = selectedAccountId
-    ? availableAccounts.find(a => a.id === selectedAccountId) || null
-    : getLinkedAccount(selectedApp); // fallback to default
+  // === MULTI-ACCOUNT MULTI-SELECT ===
+  // Per user spec: "Allow selecting one, multiple, or all accounts."
+  // Per user spec: "Show the Multi Transfer section whenever more than one account exists."
+  // Per user spec: "Transfer should run for every selected account, not only the last added account."
+  //
+  // selectedAccountIds: array of account IDs user has selected for transfer.
+  // - Empty array = no accounts selected (transfer disabled)
+  // - 1 ID = single transfer
+  // - 2+ IDs = Multi Transfer (all selected accounts get teams transferred independently)
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
+  const availableAccounts: FantasyAccount[] = selectedApp ? listAccountsForApp(selectedApp) : [];
+  const selectedAccounts = availableAccounts.filter(a => selectedAccountIds.includes(a.id));
+  // Backward compat: selectedAccount = first selected account (for single-transfer code path)
+  const selectedAccount = selectedAccounts[0] || null;
   const [matchNumericId, setMatchNumericId] = useState<string>("");
   const [matchDbId, setMatchDbId] = useState<string>("");
   const [supportedApps, setSupportedApps] = useState<string[]>([]);
@@ -190,19 +195,26 @@ export function BulkTransferModal({
       toast.error("No valid teams to transfer (need 11 players each)");
       return;
     }
+
+    // === MULTI-ACCOUNT TRANSFER ===
+    // Per user spec: "Transfer should run for every selected account, not only the last added account."
+    // Per user spec: "One account failure must not stop other accounts."
+    // Per user spec: "After transfer, show separate progress and results for each selected account."
+    if (mode === "linked" && selectedAccounts.length === 0) {
+      toast.error("Select at least 1 account to transfer to");
+      return;
+    }
+
     setPhase("transferring");
-    setProgress({ done: 0, total: items.length });
+    setProgress({ done: 0, total: items.length * Math.max(selectedAccounts.length, 1) });
 
     try {
-      let res: BulkTransferResult;
+      // DIRECT mode — single transfer (no multi-account)
       if (mode === "direct") {
-        // Direct link generation for Dream11
-        res = await bulkDirectTransfer(items, matchNumericId, matchDbId, (done, total) =>
+        const res = await bulkDirectTransfer(items, matchNumericId, matchDbId, (done, total) =>
           setProgress({ done, total })
         );
 
-        // If replace mode, modify the links to use Dream11's edit-team URL
-        // Dream11 edit URL: https://dream11.com/team/edit?matchId=XXX&teamNo=N&players=...&captain=...&vicecaptain=...
         if (replaceExisting) {
           res.transferLinks = res.transferLinks.map((l, i) => ({
             ...l,
@@ -211,80 +223,169 @@ export function BulkTransferModal({
               : l.link,
           }));
         }
-      } else {
-        // Linked account transfer — use selectedAccount (from dropdown, not just default)
-        const account = selectedAccount;
-        if (!account) {
-          toast.error(`${APP_LABELS[selectedApp]?.label} account not linked`);
-          onOpenOtpLogin();
-          setPhase("select");
-          return;
+
+        setResult(res);
+        setPhase("done");
+
+        if (res.successCount > 0 && res.failCount === 0) {
+          markTeamsTransferred();
+          toast.success(`Transferred ${res.successCount}/${res.totalAttempted} teams to ${APP_LABELS[selectedApp]?.label || selectedApp}`);
+        } else if (res.successCount > 0) {
+          toast.success(`${res.successCount} transferred, ${res.failCount} failed`);
+        } else {
+          toast.error("Dream11 transfer failed — this match may not support Dream11. Try My11Circle instead.");
         }
-
-        // SKIP pre-verify — it gives false "session expired" errors
-        // The /api/transfer proxy will detect token expiry REACTIVELY during transfer
-        // and return needsReauth. This matches original APK behavior.
-        setProgress({ done: 0, total: items.length });
-
-        // Step 1 (replace mode): Fetch existing teams via /api/contest/my-teams proxy
-        // IMPORTANT: For My11Circle, we MUST pass my11circleChallenge, my11circleUserId,
-        // and mobileNumber — without these the backend rejects list-of-teams for
-        // My11Circle and returns empty, which causes all teams to use type="new"
-        // instead of "edit" (REPLACE doesn't work).
-        let existingIds: string[] | undefined;
-        if (replaceExisting) {
-          try {
-            const existing = await listFantasyTeams({
-              fantasyApp: selectedApp,
-              authToken: account.token,
-              matchId: matchNumericId,
-              my11circleChallenge: account.my11circleChallenge || undefined,
-              my11circleUserId: account.my11circleUserId || undefined,
-              my11circleMobile: account.mobile || undefined,
-            });
-            existingIds = existing
-              .map((t) => String(t.team_id ?? t.teamId ?? ""))
-              .filter(Boolean);
-          } catch {
-            // ignore — will create new
-          }
-        }
-
-        res = await bulkTransferToLinkedAccount(
-          items,
-          {
-            matchId: matchNumericId,
-            fantasyApp: selectedApp,
-            authToken: account.token,
-            sportIndex: 0,
-            my11circleChallenge: account.my11circleChallenge || undefined,
-            my11circleUserId: account.my11circleUserId || undefined,
-            mobileNumber: account.mobile || undefined,
-            replaceMode: replaceExisting,
-            existingTeamIds: existingIds,
-            skipVerify: true, // SKIP pre-verify — matches original APK
-          },
-          (done, total) => setProgress({ done, total })
-        );
+        return;
       }
 
-      setResult(res);
-      setPhase("done");
+      // === LINKED MODE — MULTI-ACCOUNT TRANSFER ===
+      // Per user spec: "Transfer should run for every selected account"
+      // Per user spec: "One account failure must not stop other accounts"
+      // Per user spec: "Show separate success/failure logs for every account"
+      const allResults: Array<{ accountLabel: string; mobile: string; result: BulkTransferResult; error?: string }> = [];
+      let totalSuccess = 0;
+      let totalFail = 0;
+      const totalAccounts = selectedAccounts.length;
+      let accountsProcessed = 0;
 
-      if (res.successCount > 0 && res.failCount === 0) {
-        // All succeeded — mark teams as transferred locally
-        markTeamsTransferred();
-        toast.success(`Transferred ${res.successCount}/${res.totalAttempted} teams to ${APP_LABELS[selectedApp]?.label || selectedApp}`);
-      } else if (res.successCount > 0) {
-        // Partial success
-        toast.success(`${res.successCount} transferred, ${res.failCount} failed`);
-      } else {
-        // All failed — show honest error
-        if (mode === "direct") {
-          toast.error("Dream11 transfer failed — this match may not support Dream11. Try My11Circle instead.");
-        } else {
-          toast.error("Transfer failed — relink your account via OTP");
+      for (let ai = 0; ai < selectedAccounts.length; ai++) {
+        const account = selectedAccounts[ai];
+        const accountLabel = account.label || `Account ${ai + 1}`;
+        const mobile = account.mobile || "unknown";
+
+        console.log(`\n${"=".repeat(60)}`);
+        console.log(`[MultiTransfer] 🔄 Account ${ai + 1}/${totalAccounts}: ${accountLabel} (${mobile})`);
+        console.log(`${"=".repeat(60)}`);
+
+        setProgress({
+          done: ai * items.length,
+          total: totalAccounts * items.length,
+        });
+
+        try {
+          // Step 1 (replace mode): Fetch existing teams for THIS account
+          let existingIds: string[] | undefined;
+          if (replaceExisting) {
+            try {
+              const existing = await listFantasyTeams({
+                fantasyApp: selectedApp,
+                authToken: account.token,
+                matchId: matchNumericId,
+                my11circleChallenge: account.my11circleChallenge || undefined,
+                my11circleUserId: account.my11circleUserId || undefined,
+                my11circleMobile: account.mobile || undefined,
+              });
+              existingIds = existing
+                .map((t) => String(t.team_id ?? t.teamId ?? ""))
+                .filter(Boolean);
+              console.log(`[MultiTransfer] Account ${ai + 1} (${mobile}): found ${existingIds.length} existing teams`);
+            } catch (err) {
+              console.warn(`[MultiTransfer] Account ${ai + 1} (${mobile}): listFantasyTeams failed, will create new`);
+            }
+          }
+
+          // Step 2: Transfer teams to THIS account
+          const res = await bulkTransferToLinkedAccount(
+            items,
+            {
+              matchId: matchNumericId,
+              fantasyApp: selectedApp,
+              authToken: account.token,
+              sportIndex: 0,
+              my11circleChallenge: account.my11circleChallenge || undefined,
+              my11circleUserId: account.my11circleUserId || undefined,
+              mobileNumber: account.mobile || undefined,
+              replaceMode: replaceExisting,
+              existingTeamIds: existingIds,
+              skipVerify: true,
+            },
+            (done, total) => {
+              // Per-account progress — update global progress
+              setProgress({
+                done: ai * items.length + done,
+                total: totalAccounts * items.length,
+              });
+            }
+          );
+
+          allResults.push({ accountLabel, mobile, result: res });
+          totalSuccess += res.successCount;
+          totalFail += res.failCount;
+          accountsProcessed++;
+
+          if (res.successCount > 0 && res.failCount === 0) {
+            console.log(`[MultiTransfer] ✅ Account ${ai + 1} (${mobile}): ALL ${res.successCount} teams transferred`);
+          } else if (res.successCount > 0) {
+            console.log(`[MultiTransfer] ⚠️ Account ${ai + 1} (${mobile}): ${res.successCount} transferred, ${res.failCount} failed`);
+          } else {
+            console.error(`[MultiTransfer] ❌ Account ${ai + 1} (${mobile}): ALL teams failed`);
+          }
+
+          // Per user spec: "One account failure must not stop other accounts"
+          // → continue to next account even if this one failed
+        } catch (err: any) {
+          console.error(`[MultiTransfer] ❌ Account ${ai + 1} (${mobile}) EXCEPTION:`, err?.message);
+          allResults.push({
+            accountLabel,
+            mobile,
+            result: {
+              totalAttempted: items.length,
+              successCount: 0,
+              failCount: items.length,
+              results: items.map((it) => ({ teamNo: it.teamNo, success: false, message: err?.message || "Account transfer failed" })),
+              transferLinks: [],
+            },
+            error: err?.message || "Transfer failed",
+          });
+          totalFail += items.length;
+          accountsProcessed++;
+          // Continue to next account — don't stop
         }
+
+        // Delay between accounts (avoid rate-limit)
+        if (ai < selectedAccounts.length - 1) {
+          console.log(`[MultiTransfer] ⏳ Waiting 1.5s before next account (rate-limit protection)...`);
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      }
+
+      // === BUILD AGGREGATED RESULT ===
+      // Per user spec: "After transfer, show separate progress and results for each selected account."
+      const aggregatedResult: BulkTransferResult = {
+        totalAttempted: items.length * totalAccounts,
+        successCount: totalSuccess,
+        failCount: totalFail,
+        results: allResults.flatMap(ar =>
+          ar.result.results.map(r => ({
+            ...r,
+            message: `[${ar.accountLabel} ${ar.mobile}] ${r.message || ""}`,
+          }))
+        ),
+        transferLinks: allResults.flatMap(ar => ar.result.transferLinks),
+      };
+
+      // Attach per-account results for UI display
+      (aggregatedResult as any).perAccountResults = allResults;
+
+      setResult(aggregatedResult);
+      setPhase("done");
+      setProgress({ done: totalAccounts * items.length, total: totalAccounts * items.length });
+
+      // Final toast summary
+      console.log(`\n${"=".repeat(60)}`);
+      console.log(`[MultiTransfer] 🏁 FINAL: ${totalSuccess} success, ${totalFail} fail across ${accountsProcessed} accounts`);
+      allResults.forEach((ar, i) => {
+        console.log(`  Account ${i + 1} (${ar.mobile}): ${ar.result.successCount}/${ar.result.totalAttempted} teams${ar.error ? ` — ERROR: ${ar.error}` : ""}`);
+      });
+      console.log(`${"=".repeat(60)}\n`);
+
+      if (totalSuccess > 0 && totalFail === 0) {
+        markTeamsTransferred();
+        toast.success(`✅ Multi Transfer complete: ${totalSuccess} teams across ${accountsProcessed} accounts`);
+      } else if (totalSuccess > 0) {
+        toast.success(`⚡ Multi Transfer: ${totalSuccess} teams transferred, ${totalFail} failed across ${accountsProcessed} accounts`);
+      } else {
+        toast.error(`❌ Multi Transfer failed for all ${accountsProcessed} accounts — check logs`);
       }
     } catch (err: any) {
       setResult({
@@ -455,7 +556,9 @@ export function BulkTransferModal({
                           key={app}
                           onClick={() => {
                             setSelectedApp(app);
-                            setSelectedAccountId(""); // reset to default account when switching platform
+                            // Reset account selection when switching platform
+                            // (account IDs are platform-specific)
+                            setSelectedAccountIds([]);
                           }}
                           className={cn(
                             "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
@@ -469,33 +572,96 @@ export function BulkTransferModal({
                       ))}
                     </div>
 
-                    {/* === MULTI-ACCOUNT SELECTOR ===
-                         Per user spec: "transfer time not showing account all only showing same as only 1"
-                         Previously: only showed the default account.
-                         Now: shows ALL linked accounts in a dropdown so user can pick which one to transfer to.
+                    {/* === MULTI-ACCOUNT MULTI-SELECT ===
+                         Per user spec: "Display every account with its own selection button/card."
+                         Per user spec: "Allow selecting one, multiple, or all accounts."
+                         Per user spec: "Show the Multi Transfer section whenever more than one account exists."
                     */}
-                    {availableAccounts.length > 1 && (
-                      <div className="mt-2">
-                        <label className="text-[10px] text-muted-foreground mb-1 block">
-                          Account ({availableAccounts.length} linked):
-                        </label>
-                        <select
-                          value={selectedAccountId}
-                          onChange={(e) => setSelectedAccountId(e.target.value)}
-                          className="w-full h-9 text-xs rounded-lg border border-violet-200 dark:border-violet-900/30 bg-white dark:bg-card px-2 text-foreground"
-                        >
-                          {availableAccounts.map((acc, i) => (
-                            <option key={acc.id} value={acc.id}>
-                              {acc.label || `Account ${i + 1}`} {acc.mobile ? `(${acc.mobile})` : ""} {acc.isDefault ? "· Default" : ""}
-                            </option>
-                          ))}
-                        </select>
+                    {availableAccounts.length > 0 && (
+                      <div className="mt-3 p-3 rounded-xl border border-violet-200 dark:border-violet-900/30 bg-violet-50/30 dark:bg-violet-950/20">
+                        {/* Header: account count + Select All / Deselect All */}
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-[11px] font-bold text-foreground">
+                            Select Accounts ({availableAccounts.length} linked):
+                          </label>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setSelectedAccountIds(availableAccounts.map(a => a.id))}
+                              className="text-[10px] font-bold text-violet-600 dark:text-violet-400 hover:underline"
+                            >
+                              Select All
+                            </button>
+                            <button
+                              onClick={() => setSelectedAccountIds([])}
+                              className="text-[10px] font-bold text-slate-500 hover:underline"
+                            >
+                              Deselect All
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Account checkboxes — each account has its own card */}
+                        <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                          {availableAccounts.map((acc, i) => {
+                            const isSelected = selectedAccountIds.includes(acc.id);
+                            return (
+                              <label
+                                key={acc.id}
+                                className={cn(
+                                  "flex items-center gap-2.5 p-2 rounded-lg border cursor-pointer transition-all",
+                                  isSelected
+                                    ? "border-violet-500 bg-violet-100 dark:bg-violet-900/40"
+                                    : "border-slate-200 dark:border-slate-700 bg-white dark:bg-card hover:border-violet-300"
+                                )}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedAccountIds(prev => [...prev, acc.id]);
+                                    } else {
+                                      setSelectedAccountIds(prev => prev.filter(id => id !== acc.id));
+                                    }
+                                  }}
+                                  className="w-4 h-4 accent-violet-600"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-bold text-foreground truncate">
+                                    {acc.label || `Account ${i + 1}`}
+                                  </p>
+                                  <p className="text-[10px] text-muted-foreground">
+                                    {acc.mobile ? `📱 ${acc.mobile}` : "No mobile"}
+                                    {acc.isDefault ? " · ⭐ Default" : ""}
+                                    {" · "}
+                                    {acc.status === "active" ? "🟢 Active" :
+                                     acc.status === "expired" ? "🟡 Expired" :
+                                     acc.status === "logged_out" ? "⚪ Logged Out" :
+                                     "🔴 Invalid"}
+                                  </p>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+
+                        {/* Multi Transfer indicator — shows when >1 account selected */}
+                        {selectedAccountIds.length > 1 && (
+                          <div className="mt-2 p-2 rounded-lg bg-emerald-100 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800">
+                            <p className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+                              ⚡ Multi Transfer: {selectedAccountIds.length} accounts selected
+                            </p>
+                            <p className="text-[10px] text-emerald-600 dark:text-emerald-500 mt-0.5">
+                              Teams will be transferred to EACH account independently with per-account progress.
+                            </p>
+                          </div>
+                        )}
+                        {availableAccounts.length === 1 && (
+                          <p className="text-[10px] text-muted-foreground mt-1.5">
+                            1 account linked · <button onClick={onOpenOtpLogin} className="text-violet-600 dark:text-violet-400 underline">Link more</button>
+                          </p>
+                        )}
                       </div>
-                    )}
-                    {availableAccounts.length === 1 && (
-                      <p className="text-[10px] text-muted-foreground mt-1.5">
-                        1 account linked: {availableAccounts[0]?.mobile || availableAccounts[0]?.label || "Default"} · <button onClick={onOpenOtpLogin} className="text-violet-600 dark:text-violet-400 underline">Link more</button>
-                      </p>
                     )}
                   </div>
                 )}
@@ -634,6 +800,37 @@ export function BulkTransferModal({
                           ? "Dream11 direct transfer not available for this match"
                           : "Your linked account session is invalid or expired"}
                   </p>
+
+                  {/* === PER-ACCOUNT RESULTS (Multi Transfer) ===
+                      Per user spec: "After transfer, show separate progress and results for each selected account."
+                  */}
+                  {(result as any).perAccountResults && (
+                    <div className="mt-3 p-3 rounded-xl bg-violet-50/50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-900/30">
+                      <p className="text-[11px] font-bold text-violet-700 dark:text-violet-400 mb-2">
+                        📊 Per-Account Results ({(result as any).perAccountResults.length} accounts):
+                      </p>
+                      <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                        {(result as any).perAccountResults.map((ar: any, i: number) => (
+                          <div key={i} className="flex items-center justify-between text-[11px] p-1.5 rounded bg-white/50 dark:bg-card/50">
+                            <span className="font-semibold text-foreground truncate">
+                              {i + 1}. {ar.accountLabel} ({ar.mobile})
+                            </span>
+                            <span className={cn(
+                              "font-bold flex-shrink-0 ml-2",
+                              ar.result.successCount > 0 && ar.result.failCount === 0
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : ar.result.successCount > 0
+                                  ? "text-amber-600 dark:text-amber-400"
+                                  : "text-red-600 dark:text-red-400"
+                            )}>
+                              {ar.result.successCount}/{ar.result.totalAttempted} teams
+                              {ar.error ? ` ❌` : ar.result.successCount > 0 && ar.result.failCount === 0 ? " ✅" : " ⚠️"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Transfer links (direct mode) */}
