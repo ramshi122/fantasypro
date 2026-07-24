@@ -882,14 +882,36 @@ export const useAdmin = create<AdminState>()((set, get) => ({
             let expiresAt: number | null = k.expiresAt;
             let changed = false;
 
-            if (status === "expired") { status = "active"; fixedCount++; changed = true; }
-            if (status === "suspended") { status = "active"; fixedCount++; changed = true; }
-            if (expiresAt !== null && expiresAt !== undefined && expiresAt < now) {
-              if (k.type === "trial") expiresAt = now + 1 * day;
-              else if (k.type === "weekly") expiresAt = now + 7 * day;
-              else if (k.type === "monthly") expiresAt = now + 30 * day;
-              else if (k.type === "lifetime") expiresAt = null;
-              else expiresAt = now + 30 * day;
+            // CRITICAL FIX: Per user spec "key are timely not expiring"
+            // Do NOT auto-re-activate EXPIRED TRIAL keys. Trial keys expire
+            // after 1 day and should STAY expired. Only re-activate if admin
+            // explicitly extends expiry via the Extend button.
+            //
+            // Previous code auto-extended expired trial keys (now + 1 day) which
+            // meant trial keys NEVER actually expired — they kept getting re-activated.
+            //
+            // Now: Only fix keys where expiresAt is missing (compute from type),
+            // but do NOT re-activate expired/suspended status.
+            if (status === "expired") {
+              // Don't re-activate expired keys — leave them expired
+              // (admin can manually extend via the Extend button if needed)
+            }
+            if (status === "suspended") {
+              // Don't re-activate suspended keys — admin suspended them intentionally
+            }
+            // Fix missing expiresAt (compute from type + createdAt)
+            if (expiresAt === null && k.type !== "lifetime") {
+              const createdAt = k.createdAt || now;
+              if (k.type === "trial") expiresAt = createdAt + 1 * day;
+              else if (k.type === "weekly") expiresAt = createdAt + 7 * day;
+              else if (k.type === "monthly") expiresAt = createdAt + 30 * day;
+              else expiresAt = createdAt + 30 * day;
+              fixedCount++;
+              changed = true;
+            }
+            // If expiresAt is in the past, mark as expired (don't extend)
+            if (expiresAt !== null && expiresAt !== undefined && expiresAt < now && status !== "expired") {
+              status = "expired";
               fixedCount++;
               changed = true;
             }

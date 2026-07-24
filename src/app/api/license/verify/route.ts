@@ -230,12 +230,36 @@ export async function POST(request: Request) {
     }
 
     // ===== Step 4: Check expiry =====
-    if (license.expiresAt && license.expiresAt < Date.now()) {
+    // CRITICAL FIX: Per user spec "key are timely not expiring"
+    // The old check used `if (license.expiresAt && ...)` which SKIPPED the
+    // expiry check when expiresAt was null/undefined/0. This meant trial keys
+    // without expiresAt set in Firestore NEVER expired.
+    //
+    // FIX: For trial keys (type === "trial"), expiresAt is MANDATORY.
+    // If it's missing, compute it from createdAt + 1 day (trial duration).
+    // For lifetime keys, expiresAt is null (never expires — correct).
+    let effectiveExpiry = license.expiresAt;
+    if (license.type === "trial") {
+      // Trial keys MUST expire after 1 day from creation
+      if (!effectiveExpiry || effectiveExpiry === 0) {
+        const oneDayMs = 24 * 60 * 60 * 1000; // 86400000 ms
+        const createdAt = license.createdAt || Date.now();
+        effectiveExpiry = createdAt + oneDayMs;
+        console.log(`[License Verify] Trial key missing expiresAt — computed: ${new Date(effectiveExpiry).toISOString()} (createdAt + 1 day)`);
+        // Update Firestore with the computed expiresAt so future checks are correct
+        await updateKeyInFirestore(license.key, {
+          expiresAt: effectiveExpiry,
+        });
+      }
+    }
+
+    if (effectiveExpiry && effectiveExpiry < Date.now()) {
       // Auto-expire in Firestore (license_keys/{keyStr})
       await updateKeyInFirestore(license.key, {
         status: "expired",
         expiredAt: Date.now(),
       });
+      console.log(`[License Verify] Key EXPIRED — expiresAt: ${new Date(effectiveExpiry).toISOString()}, now: ${new Date().toISOString()}`);
       return NextResponse.json(
         { valid: false, message: "License expired", code: "LICENSE_EXPIRED" },
         { status: 403 }
