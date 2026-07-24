@@ -82,6 +82,15 @@ export function BulkTransferModal({
   // - 1 ID = single transfer
   // - 2+ IDs = Multi Transfer (all selected accounts get teams transferred independently)
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
+  // === REFRESH TRIGGER ===
+  // listAccountsForApp() reads from localStorage synchronously — React doesn't
+  // re-render when localStorage changes. We use a refresh trigger state to force
+  // re-computation of availableAccounts whenever:
+  //   1. Modal opens
+  //   2. selectedApp changes
+  //   3. User links a new account (onOpenOtpLogin callback returns)
+  //   4. Every 500ms while modal is open (catches external changes)
+  const [accountsRefreshTick, setAccountsRefreshTick] = useState(0);
   const availableAccounts: FantasyAccount[] = selectedApp ? listAccountsForApp(selectedApp) : [];
   const selectedAccounts = availableAccounts.filter(a => selectedAccountIds.includes(a.id));
   // Backward compat: selectedAccount = first selected account (for single-transfer code path)
@@ -164,6 +173,39 @@ export function BulkTransferModal({
       setResult(null);
     }
   }, [open]);
+
+  // === REFRESH ACCOUNTS PERIODICALLY WHILE MODAL IS OPEN ===
+  // Per user spec: "Detect and load all saved accounts correctly on page load."
+  // listAccountsForApp() reads from localStorage synchronously — React doesn't
+  // re-render when localStorage changes. So we poll every 500ms to catch:
+  //   1. New accounts linked while modal is open (OTP login returns)
+  //   2. Accounts removed/updated externally
+  //   3. Initial load race condition (localStorage not ready on first render)
+  useEffect(() => {
+    if (!open) return;
+    // Immediate refresh on open
+    setAccountsRefreshTick(t => t + 1);
+    // Poll every 500ms while modal is open
+    const interval = setInterval(() => {
+      setAccountsRefreshTick(t => t + 1);
+    }, 500);
+    return () => clearInterval(interval);
+  }, [open]);
+
+  // Also refresh when selectedApp changes (different platform = different accounts)
+  useEffect(() => {
+    setAccountsRefreshTick(t => t + 1);
+    // Reset selected account IDs when platform changes (account IDs are platform-specific)
+    setSelectedAccountIds([]);
+  }, [selectedApp]);
+
+  // Log available accounts for debugging
+  useEffect(() => {
+    if (open && availableAccounts.length > 0) {
+      console.log(`[BulkTransfer] 📱 ${selectedApp}: ${availableAccounts.length} accounts available:`,
+        availableAccounts.map(a => `${a.label}(${a.mobile || "no mobile"})`));
+    }
+  }, [open, selectedApp, accountsRefreshTick]);
 
   if (!open) return null;
 
@@ -577,7 +619,7 @@ export function BulkTransferModal({
                          Per user spec: "Allow selecting one, multiple, or all accounts."
                          Per user spec: "Show the Multi Transfer section whenever more than one account exists."
                     */}
-                    {availableAccounts.length > 0 && (
+                    {availableAccounts.length > 0 ? (
                       <div className="mt-3 p-3 rounded-xl border border-violet-200 dark:border-violet-900/30 bg-violet-50/30 dark:bg-violet-950/20">
                         {/* Header: account count + Select All / Deselect All */}
                         <div className="flex items-center justify-between mb-2">
@@ -661,6 +703,25 @@ export function BulkTransferModal({
                             1 account linked · <button onClick={onOpenOtpLogin} className="text-violet-600 dark:text-violet-400 underline">Link more</button>
                           </p>
                         )}
+                      </div>
+                    ) : (
+                      // === NO ACCOUNTS FOUND — show link button ===
+                      <div className="mt-3 p-3 rounded-xl border border-amber-200 dark:border-amber-900/30 bg-amber-50/30 dark:bg-amber-950/20">
+                        <p className="text-[11px] font-bold text-amber-700 dark:text-amber-400 mb-1">
+                          ⚠️ No {APP_LABELS[selectedApp]?.label || selectedApp} accounts linked
+                        </p>
+                        <p className="text-[10px] text-muted-foreground mb-2">
+                          Link your {APP_LABELS[selectedApp]?.label || selectedApp} account via OTP to enable transfer.
+                        </p>
+                        <button
+                          onClick={() => {
+                            toast.info(`Link your ${APP_LABELS[selectedApp]?.label || selectedApp} account via OTP`);
+                            onOpenOtpLogin();
+                          }}
+                          className="text-[11px] font-bold text-violet-600 dark:text-violet-400 underline hover:text-violet-700"
+                        >
+                          🔗 Link Account via OTP →
+                        </button>
                       </div>
                     )}
                   </div>

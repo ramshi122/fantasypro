@@ -1139,37 +1139,48 @@ export function listFantasyApps(): FantasyApp[] {
 
 export function listLinkedAccounts(): LinkedFantasyAccount[] {
   if (typeof window === "undefined") return [];
+  // CRITICAL FIX: Read from multi-account array, not old single-account storage.
+  // Per user spec: "Detect and load all saved accounts correctly on page load."
+  // Returns ALL linked accounts across ALL platforms (with valid tokens only).
   try {
-    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
-    return Object.keys(all).map((app) => {
-      const entry = all[app];
-      if (typeof entry === "string") {
-        return { app: app as FantasyApp, token: entry };
-      }
-      return {
-        app: app as FantasyApp,
-        token: entry.token,
-        mobile: entry.mobile,
-        my11circleChallenge: entry.my11circleChallenge,
-        my11circleUserId: entry.my11circleUserId,
-        linkedAt: entry.linkedAt,
-      };
-    });
+    const { listAllFantasyAccounts } = require("./multi-accounts");
+    const accounts = listAllFantasyAccounts();
+    return accounts
+      .filter(a => a.token && a.token.length > 0)
+      .map(account => ({
+        app: account.app,
+        accountId: account.id,
+        token: account.token,
+        mobile: account.mobile,
+        userId: account.userId,
+        my11circleChallenge: account.my11circleChallenge,
+        my11circleUserId: account.my11circleUserId,
+        refreshToken: account.refreshToken,
+        cookies: account.cookies,
+        maxAllowedTeam: account.maxAllowedTeam ?? null,
+        subscriptionTier: account.subscriptionTier ?? null,
+        linkedAt: account.linkedAt,
+      }));
   } catch {
     return [];
   }
 }
 
 /**
- * Unlink a fantasy account — removes the token + extras from localStorage.
- * After this, the user will be asked to login again on next transfer.
+ * Unlink a fantasy account — removes the default account for a platform.
+ * Per user spec: "Allow Remove Account" — for full multi-account removal,
+ * use removeFantasyAccountById() from multi-accounts module.
+ * This function removes the DEFAULT account only (backward compat).
  */
 export function unlinkFantasyApp(app: FantasyApp) {
   if (typeof window === "undefined") return;
   try {
-    const all = JSON.parse(localStorage.getItem(LOCAL_FANTASY_TOKENS_KEY) || "{}");
-    delete all[app];
-    localStorage.setItem(LOCAL_FANTASY_TOKENS_KEY, JSON.stringify(all));
+    const { getDefaultAccount, removeFantasyAccountById } = require("./multi-accounts");
+    const account = getDefaultAccount(app);
+    if (account) {
+      removeFantasyAccountById(account.id);
+      console.log(`[unlinkFantasyApp] Removed default ${app} account (${account.id})`);
+    }
   } catch {
     // ignore
   }
