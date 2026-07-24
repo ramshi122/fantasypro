@@ -554,6 +554,17 @@ function LicensesTab() {
     expired: "bg-amber-500",
     suspended: "bg-red-500",
   };
+  // Device limits per key type (matches getMaxDevicesForType in admin-store.ts)
+  const keyTypeDeviceLimits: Record<KeyType, string> = {
+    trial: "1 day · 50 devices",
+    match_basic: "6h · 1 device",
+    match_full: "24h · 1 device",
+    weekly: "7d · 1 device",
+    monthly: "30d · 1 device",
+    half_yearly: "180d · 1 device",
+    elite: "90d · 3 devices",
+    lifetime: "∞ · 3 devices",
+  };
 
   return (
     <div className="space-y-4">
@@ -566,7 +577,7 @@ function LicensesTab() {
             className="bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2 h-8"
           >
             {keyTypes.map((t) => (
-              <option key={t} value={t}>{t}</option>
+              <option key={t} value={t}>{t} ({keyTypeDeviceLimits[t]})</option>
             ))}
           </select>
           <select
@@ -832,7 +843,7 @@ function LicensesTab() {
                   </div>
                   <p className="text-[10px] text-slate-500 mt-1">
                     {k.userName ? `User: ${k.userName} · ` : ""}
-                    Devices: {k.deviceIds.length} · Verifications: {k.verifications}
+                    Devices: {k.deviceIds.length}/{k.maxDevices ?? 1} · Verifications: {k.verifications}
                     {k.expiresAt && ` · Expires: ${new Date(k.expiresAt).toLocaleDateString()}`}
                   </p>
                 </div>
@@ -3237,10 +3248,10 @@ function SubscriptionsTab() {
           <div className="grid grid-cols-2 gap-2">
             <select value={planType} onChange={(e) => setPlanType(e.target.value as KeyType)}
               className="bg-slate-900 border border-slate-700 text-white text-xs rounded-lg px-2 h-9">
-              <option value="trial">Trial (1 day)</option><option value="match_basic">1 Match (₹49)</option>
-              <option value="match_full">24 Hour (₹99)</option><option value="weekly">Weekly (₹149)</option>
-              <option value="monthly">Pro (₹299, 30d)</option><option value="elite">Elite (₹999, 90d)</option>
-              <option value="lifetime">Lifetime</option>
+              <option value="trial">Trial (1 day, 50 devices)</option><option value="match_basic">1 Match (₹49, 1 device)</option>
+              <option value="match_full">24 Hour (₹99, 1 device)</option><option value="weekly">Weekly (₹149, 1 device)</option>
+              <option value="monthly">Pro (₹299, 30d, 1 device)</option><option value="elite">Elite (₹999, 90d, 3 devices)</option>
+              <option value="lifetime">Lifetime (3 devices)</option>
             </select>
             <Button size="sm" className="bg-violet-600 hover:bg-violet-700 text-white h-9 text-xs" onClick={handleAddPlan} disabled={loading}>
               {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Check className="w-3 h-3 mr-1" />} Activate Plan</Button>

@@ -50,6 +50,8 @@ export interface LicenseKey {
   createdAt: number;
   expiresAt: number | null; // null = lifetime
   deviceIds: string[];
+  /** Maximum devices allowed for this key. Default: 1. Trial keys: 50. */
+  maxDevices?: number;
   userName?: string;
   lastVerified?: number;
   verifications: number;
@@ -267,6 +269,29 @@ export function getExpiryForType(type: KeyType): number | null {
     case "half_yearly": return now + 180 * day;  // 180 days (Semi-Annual ₹499)
     case "elite": return now + 90 * day;         // 90 days (Elite ₹999)
     case "lifetime": return null;                // forever
+  }
+}
+
+/**
+ * Get the maximum number of devices allowed for a key type.
+ * Per user spec: "free 1 day only 50 device 1 key only"
+ *   - Trial keys: 50 devices
+ *   - All paid keys: 1 device (default — single-user purchase)
+ *
+ * This is the DEFAULT when generating a key. Admin can override per-key
+ * by setting maxDevices explicitly on the LicenseKey object.
+ */
+export function getMaxDevicesForType(type: KeyType): number {
+  switch (type) {
+    case "trial": return 50;       // Free 1-day trial: 50 devices per key
+    case "match_basic": return 1; // Paid: 1 device
+    case "match_full": return 1;
+    case "weekly": return 1;
+    case "monthly": return 1;
+    case "half_yearly": return 1;
+    case "elite": return 3;        // Elite: 3 devices (premium tier)
+    case "lifetime": return 3;
+    default: return 1;
   }
 }
 
@@ -601,6 +626,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           createdAt: Date.now(),
           expiresAt: getExpiryForType(type),
           deviceIds: [],
+          maxDevices: getMaxDevicesForType(type), // 50 for trial, 1 for paid, 3 for elite
           verifications: 0,
         };
         // 1. Update in-memory state + localStorage IMMEDIATELY
@@ -631,6 +657,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
           createdAt: Date.now(),
           expiresAt: getExpiryForType(type),
           deviceIds: [],
+          maxDevices: getMaxDevicesForType(type), // 50 for trial, 1 for paid, 3 for elite
           verifications: 0,
         };
         // 1. Update in-memory state + localStorage IMMEDIATELY
@@ -659,6 +686,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
       generateBulkKeys: (count, type) => {
         const prefix = get().settings.licensePrefix;
         const newKeys: LicenseKey[] = [];
+        const maxDev = getMaxDevicesForType(type);
         for (let i = 0; i < count; i++) {
           const key = generateLicenseKey(prefix);
           newKeys.push({
@@ -668,6 +696,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
             createdAt: Date.now(),
             expiresAt: getExpiryForType(type),
             deviceIds: [],
+            maxDevices: maxDev,
             verifications: 0,
           });
         }
@@ -692,6 +721,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
       generateBulkKeysAsync: async (count, type) => {
         const prefix = get().settings.licensePrefix;
         const newKeys: LicenseKey[] = [];
+        const maxDev = getMaxDevicesForType(type);
         for (let i = 0; i < count; i++) {
           const key = generateLicenseKey(prefix);
           newKeys.push({
@@ -701,6 +731,7 @@ export const useAdmin = create<AdminState>()((set, get) => ({
             createdAt: Date.now(),
             expiresAt: getExpiryForType(type),
             deviceIds: [],
+            maxDevices: maxDev,
             verifications: 0,
           });
         }

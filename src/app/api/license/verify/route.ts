@@ -242,12 +242,33 @@ export async function POST(request: Request) {
       );
     }
 
-    // ===== Step 5: Check device binding (1 key = 1 device) =====
-    if (license.deviceIds.length >= 1 && !license.deviceIds.includes(deviceId)) {
-      return NextResponse.json(
-        { valid: false, message: "Key already bound to another device", code: "DEVICE_MISMATCH" },
-        { status: 403 }
-      );
+    // ===== Step 5: Check device binding (per-key maxDevices limit) =====
+    // Per user spec: "free 1 day only 50 device 1 key only"
+    //   - Trial keys: maxDevices = 50 (50 devices can share 1 trial key)
+    //   - Paid keys: maxDevices = 1 (single-user purchase)
+    //   - Elite/Lifetime: maxDevices = 3 (premium tier)
+    // Keys generated BEFORE this update have no maxDevices field → default to 1 (backward compat)
+    const maxDevices = license.maxDevices ?? 1;
+    if (!license.deviceIds.includes(deviceId)) {
+      if (license.deviceIds.length >= maxDevices) {
+        return NextResponse.json(
+          {
+            valid: false,
+            message: `Device limit reached (${license.deviceIds.length}/${maxDevices}). This key is bound to ${maxDevices} device${maxDevices > 1 ? "s" : ""}.`,
+            code: "DEVICE_LIMIT_REACHED",
+            maxDevices,
+            boundDevices: license.deviceIds.length,
+          },
+          { status: 403 }
+        );
+      }
+      // Bind this new device to the key
+      license.deviceIds.push(deviceId);
+      // Update Firestore with the new device list
+      await updateKeyInFirestore(licenseKey.toUpperCase(), {
+        deviceIds: license.deviceIds,
+      });
+      console.log(`[License Verify] Device ${deviceId} bound to key ${licenseKey} (${license.deviceIds.length}/${maxDevices})`);
     }
 
     // ===== Step 6: Get tier features =====
