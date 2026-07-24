@@ -14,6 +14,7 @@ import {
   Users,
   X,
   Zap,
+  Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -21,12 +22,15 @@ import {
   fetchFreeContests,
   getLinkedAccount,
   joinFreeContest,
+  joinAllAccountsContest,
   listFantasyTeams,
   type FantasyApp,
   type FreeContest,
   type MatchInfo,
   type TeamRow,
 } from "@/lib/api";
+import { getActiveAccountsForApp, getAccountLimit } from "@/lib/multi-accounts";
+import { useLicense } from "@/lib/use-license";
 import { cn } from "@/lib/utils";
 
 const APP_LABELS: Record<FantasyApp, { label: string; emoji: string; color: string }> = {
@@ -253,6 +257,132 @@ export function FreeContestsModal({
       }
     } catch (err: any) {
       toast.error(err?.message || "Join failed");
+      setPhase("ready");
+    } finally {
+      setJoiningContest(null);
+    }
+  }
+
+  // ============================================================
+  // MULTI-ACCOUNT JOIN — joins contest with ALL linked accounts
+  // ============================================================
+  // Per user spec: "1 time all account transfer and join contest all account
+  // different team dream11 3 / my11 2"
+  //
+  // Account limits (enforced in multi-accounts.ts):
+  //   - Dream11: max 3 accounts
+  //   - My11Circle: max 2 accounts
+  //
+  // Each account gets DIFFERENT teams (no overlap). Teams split round-robin.
+  //
+  // Subscription gating:
+  //   - Trial/match_basic: single account only (multi-account locked)
+  //   - Pro (monthly)/Elite/Lifetime: multi-account unlocked
+  const license = useLicense();
+  const canUseMultiAccount = license.isPro || license.isElite; // Pro + Elite only
+
+  async function handleJoinAllAccounts(contest: FreeContest) {
+    // Subscription check — multi-account is Pro/Elite only
+    if (!canUseMultiAccount) {
+      toast.error("🔒 Multi-account join is a Pro/Elite feature. Upgrade to join with multiple accounts.");
+      return;
+    }
+
+    // Get ALL active accounts for the selected platform
+    const allAccounts = getActiveAccountsForApp(selectedApp);
+    if (allAccounts.length === 0) {
+      toast.error(`No ${APP_LABELS[selectedApp]?.label || selectedApp} accounts linked`);
+      return;
+    }
+
+    if (allAccounts.length === 1) {
+      toast.info("Only 1 account linked — use single join instead");
+      return;
+    }
+
+    // Check account limit
+    const limit = getAccountLimit(selectedApp);
+    if (allAccounts.length > limit) {
+      toast.error(`Max ${limit} accounts allowed for ${APP_LABELS[selectedApp]?.label}. You have ${allAccounts.length}.`);
+      return;
+    }
+
+    const allAvailable = contest.notJoinedTeamIds || [];
+    const slots = contest.availableSlots || 0;
+    const numToJoin = Math.min(slots, allAvailable.length);
+
+    if (numToJoin === 0) {
+      toast.error("No teams available to join");
+      return;
+    }
+
+    // Shuffle teams first (for random distribution across accounts)
+    const shuffled = [...allAvailable];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const teamIds = shuffled.slice(0, numToJoin);
+
+    // Build accounts array for the API
+    const accountsPayload = allAccounts.map((acc) => ({
+      authToken: acc.token,
+      mobile: acc.mobile || undefined,
+      my11circleChallenge: acc.my11circleChallenge || undefined,
+      my11circleUserId: acc.my11circleUserId || undefined,
+    }));
+
+    console.log(
+      `[Contest][JoinAll] ${selectedApp} — ${allAccounts.length} accounts, ` +
+      `${teamIds.length} teams, contest=${contest.contestId}`
+    );
+
+    setJoiningContest(contest.contestId);
+    setPhase("joining");
+    try {
+      const res = await joinAllAccountsContest({
+        fantasyApp: selectedApp,
+        accounts: accountsPayload,
+        matchId,
+        contestId: contest.contestId,
+        teamIds,
+      });
+
+      if (res.status === "success" || res.summary.successCount > 0) {
+        // Build per-account summary
+        const accountSummary = res.accountResults
+          .map((ar, i) => `Acct${i + 1}(${ar.mobile}): ${ar.successCount}/${ar.successCount + ar.failedCount}`)
+          .join(" | ");
+
+        toast.success(
+          `✅ Joined ${res.summary.successCount}/${teamIds.length} teams across ${allAccounts.length} accounts\n${accountSummary}`
+        );
+
+        // Update local state
+        setContests((prev) =>
+          prev.map((c) => {
+            if (c.contestId !== contest.contestId) return c;
+            return {
+              ...c,
+              joinedTeamIds: [...(c.joinedTeamIds || []), ...teamIds],
+              joinedCount: (c.joinedTeamIds?.length || 0) + teamIds.length,
+              availableSlots: Math.max((c.maxAllowedTeams || 0) - ((c.joinedTeamIds?.length || 0) + teamIds.length), 0),
+              notJoinedTeamIds: (c.notJoinedTeamIds || []).filter((id) => !teamIds.includes(id)),
+              canJoinMore: false, // multi-account join is one-shot
+            };
+          })
+        );
+        setPhase("done");
+      } else if (res.accountResults.some(ar => ar.error?.includes("Session expired"))) {
+        toast.error("One or more accounts have expired sessions — re-link via OTP");
+        setTimeout(() => onOpenOtpLogin(), 800);
+        setPhase("ready");
+      } else {
+        toast.error(res.message || "Failed to join contest with multiple accounts");
+        setPhase("ready");
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Multi-account join failed");
       setPhase("ready");
     } finally {
       setJoiningContest(null);
@@ -505,24 +635,53 @@ export function FreeContestsModal({
 
                           {/* Join button */}
                           {canJoin ? (
-                            <Button
-                              size="sm"
-                              className="w-full h-9 brand-gradient text-white text-xs font-bold"
-                              onClick={() => handleJoinContest(c)}
-                              disabled={isJoining}
-                            >
-                              {isJoining ? (
-                                <>
-                                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                                  Joining {slots} team(s)...
-                                </>
-                              ) : (
-                                <>
-                                  <Send className="w-3.5 h-3.5 mr-1.5" />
-                                  Join with {slots} team(s)
-                                </>
+                            <div className="space-y-2">
+                              <Button
+                                size="sm"
+                                className="w-full h-9 brand-gradient text-white text-xs font-bold"
+                                onClick={() => handleJoinContest(c)}
+                                disabled={isJoining}
+                              >
+                                {isJoining ? (
+                                  <>
+                                    <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                                    Joining {slots} team(s)...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Send className="w-3.5 h-3.5 mr-1.5" />
+                                    Join with {slots} team(s)
+                                  </>
+                                )}
+                              </Button>
+
+                              {/* Multi-Account Join — Pro/Elite only */}
+                              {getActiveAccountsForApp(selectedApp).length > 1 && (
+                                <Button
+                                  size="sm"
+                                  className={cn(
+                                    "w-full h-9 text-xs font-bold border-2",
+                                    canUseMultiAccount
+                                      ? "bg-gradient-to-r from-emerald-500 to-teal-600 text-white border-transparent hover:from-emerald-600 hover:to-teal-700"
+                                      : "bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-700 cursor-not-allowed"
+                                  )}
+                                  onClick={() => canUseMultiAccount ? handleJoinAllAccounts(c) : toast.error("🔒 Multi-account join is a Pro/Elite feature")}
+                                  disabled={isJoining}
+                                >
+                                  {canUseMultiAccount ? (
+                                    <>
+                                      <Users className="w-3.5 h-3.5 mr-1.5" />
+                                      Join All Accounts ({getActiveAccountsForApp(selectedApp).length} acct)
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Lock className="w-3.5 h-3.5 mr-1.5" />
+                                      Multi-Account (Pro/Elite)
+                                    </>
+                                  )}
+                                </Button>
                               )}
-                            </Button>
+                            </div>
                           ) : joined > 0 ? (
                             <div className="text-center text-xs font-semibold text-emerald-600 dark:text-emerald-400 py-1.5">
                               <CheckCircle2 className="w-4 h-4 inline mr-1" />

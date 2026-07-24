@@ -1491,6 +1491,109 @@ export async function joinFreeContest(params: {
   }
 }
 
+/**
+ * Multi-Account Contest Join — joins a contest with MULTIPLE accounts simultaneously.
+ *
+ * Per user spec: "1 time all account transfer and join contest all account
+ * different team dream11 3 / my11 2"
+ *
+ * Each account gets DIFFERENT teams (no overlap). Teams are split round-robin
+ * across accounts so each account joins a unique subset of teams.
+ *
+ * Account limits (enforced server-side):
+ *   - Dream11: max 3 accounts
+ *   - My11Circle: max 2 accounts
+ *
+ * Subscription gating: This is a Pro/Elite-only feature. The frontend should
+ * check license tier before calling this function.
+ */
+export interface MultiAccountJoinResult {
+  status: "success" | "partial" | "fail";
+  message: string;
+  contestId: string;
+  summary: {
+    successCount: number;
+    failedCount: number;
+    totalCount: number;
+    accountsProcessed: number;
+    teamsPerAccount: number[];
+  };
+  accountResults: Array<{
+    accountIndex: number;
+    mobile: string;
+    successCount: number;
+    failedCount: number;
+    joinResults: Array<{ teamId: number; success: boolean; error?: string }>;
+    error?: string;
+  }>;
+  needsReauth?: boolean;
+}
+
+export async function joinAllAccountsContest(params: {
+  fantasyApp: FantasyApp;
+  accounts: Array<{
+    authToken: string;
+    mobile?: string;
+    my11circleChallenge?: string;
+    my11circleUserId?: string;
+  }>;
+  matchId: string;
+  contestId: string;
+  teamIds: number[];
+}): Promise<MultiAccountJoinResult> {
+  if (!params.accounts || params.accounts.length === 0) {
+    return {
+      status: "fail",
+      message: "No accounts provided",
+      contestId: params.contestId,
+      summary: {
+        successCount: 0,
+        failedCount: params.teamIds.length,
+        totalCount: params.teamIds.length,
+        accountsProcessed: 0,
+        teamsPerAccount: [],
+      },
+      accountResults: [],
+    };
+  }
+
+  try {
+    const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (userToken) headers.Authorization = `Bearer ${userToken}`;
+
+    const proxyRes = await fetch(`/api/contest/join-all`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        fantasyApp: params.fantasyApp,
+        accounts: params.accounts,
+        matchId: String(params.matchId),
+        contestId: String(params.contestId),
+        teamIds: params.teamIds,
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(120000), // 2 min timeout for multi-account
+    });
+    const res = await proxyRes.json() as MultiAccountJoinResult;
+    return res;
+  } catch (err: any) {
+    return {
+      status: "fail",
+      message: err?.message || "Network error",
+      contestId: params.contestId,
+      summary: {
+        successCount: 0,
+        failedCount: params.teamIds.length,
+        totalCount: params.teamIds.length,
+        accountsProcessed: 0,
+        teamsPerAccount: [],
+      },
+      accountResults: [],
+    };
+  }
+}
+
 /* ---------- Mobile OTP Login (fantasy platform linking) ---------- */
 
 export interface SendOtpResult {

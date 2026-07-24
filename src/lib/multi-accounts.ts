@@ -2,9 +2,10 @@
  * Multi-Account Fantasy Platform Support
  * ======================================
  *
- * Supports up to 5 accounts per fantasy platform:
- *   - Dream11: 5 accounts
- *   - My11Circle: 5 accounts
+ * Per user spec: "Dream11 3 / My11Circle 2"
+ * Account limits per platform (max accounts user can link):
+ *   - Dream11: 3 accounts
+ *   - My11Circle: 2 accounts
  *   - Jumbo: 5 accounts
  *   - MyTeam11: 5 accounts
  *   - Vision11: 5 accounts
@@ -14,7 +15,7 @@
  *     "dream11": [
  *       { id, label, token, mobile, ..., isDefault: true },
  *       { id, label, token, mobile, ..., isDefault: false },
- *       ...up to 5 accounts
+ *       ...up to MAX accounts
  *     ],
  *     "my11circle": [ ... ]
  *   }
@@ -27,6 +28,23 @@
 import type { FantasyApp } from "./api";
 
 export const MAX_ACCOUNTS_PER_APP = 5;
+
+/**
+ * Per-platform account limits (per user spec: Dream11 3, My11Circle 2).
+ * Used by addFantasyAccount() and canAddAccountForApp() to enforce limits.
+ */
+export const ACCOUNT_LIMITS: Record<FantasyApp, number> = {
+  dream11: 3,      // Max 3 Dream11 accounts per user
+  my11circle: 2,    // Max 2 My11Circle accounts per user
+  jumbo: 5,
+  myteam11: 5,
+  vision11: 5,
+};
+
+/** Get the account limit for a specific platform. */
+export function getAccountLimit(app: FantasyApp): number {
+  return ACCOUNT_LIMITS[app] ?? 5;
+}
 
 export interface FantasyAccount {
   /** Unique ID: `${app}_${timestamp}_${random}` — used to reference this account */
@@ -176,8 +194,8 @@ export function addFantasyAccount(
   const all = readAllAccounts();
   const accounts = all[app] || [];
 
-  if (accounts.length >= MAX_ACCOUNTS_PER_APP) {
-    console.warn(`[multi-accounts] Max ${MAX_ACCOUNTS_PER_APP} accounts reached for ${app}`);
+  if (accounts.length >= getAccountLimit(app)) {
+    console.warn(`[multi-accounts] Max ${getAccountLimit(app)} accounts reached for ${app}`);
     return null;
   }
 
@@ -313,9 +331,9 @@ export function countAccountsForApp(app: FantasyApp): number {
   return listAccountsForApp(app).length;
 }
 
-/** Check if user can add more accounts for a platform */
+/** Check if user can add more accounts for a platform (per-platform limit) */
 export function canAddMoreAccounts(app: FantasyApp): boolean {
-  return countAccountsForApp(app) < MAX_ACCOUNTS_PER_APP;
+  return countAccountsForApp(app) < getAccountLimit(app);
 }
 
 /**
