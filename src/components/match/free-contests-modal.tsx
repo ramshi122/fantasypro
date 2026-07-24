@@ -67,6 +67,12 @@ export function FreeContestsModal({
   const [joinMode, setJoinMode] = useState<"spread-repeat" | "spread-no-repeat" | "same-teams" | "random">("random");
   const [showJoinMode, setShowJoinMode] = useState(false);
 
+  // CRITICAL: useLicense MUST be called before any conditional return.
+  // Previously it was after `if (!open) return null;` which violated
+  // React's Rules of Hooks and caused "Join contest button click error".
+  const license = useLicense();
+  const canUseMultiAccount = license.isPro || license.isElite;
+
   const matchId = (match.matchId ?? match.id ?? "") as string;
   const validTeams = teams.filter((t) => (t.players?.length || 0) === 11);
 
@@ -275,11 +281,9 @@ export function FreeContestsModal({
   //
   // Each account gets DIFFERENT teams (no overlap). Teams split round-robin.
   //
-  // Subscription gating:
+  // Subscription gating (license/canUseMultiAccount declared at top of component):
   //   - Trial/match_basic: single account only (multi-account locked)
   //   - Pro (monthly)/Elite/Lifetime: multi-account unlocked
-  const license = useLicense();
-  const canUseMultiAccount = license.isPro || license.isElite; // Pro + Elite only
 
   async function handleJoinAllAccounts(contest: FreeContest) {
     // Subscription check — multi-account is Pro/Elite only

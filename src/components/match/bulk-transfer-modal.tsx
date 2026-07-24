@@ -32,6 +32,7 @@ import {
   type MatchPlayer,
   type TeamRow,
 } from "@/lib/api";
+import { getActiveAccountsForApp } from "@/lib/multi-accounts";
 import { cn } from "@/lib/utils";
 
 interface BulkTransferModalProps {
@@ -71,6 +72,15 @@ export function BulkTransferModal({
   const [result, setResult] = useState<BulkTransferResult | null>(null);
   const [linkedApps, setLinkedApps] = useState<FantasyApp[]>([]);
   const [existingTeamIds, setExistingTeamIds] = useState<string[]>([]);
+  // === MULTI-ACCOUNT SELECTOR ===
+  // Per user spec: "transfer time not showing account all only showing same as only 1"
+  // Previously: getLinkedAccount() returned only the DEFAULT account.
+  // Now: show ALL linked accounts in a dropdown, user picks which one to transfer to.
+  const [selectedAccountId, setSelectedAccountId] = useState<string>(""); // "" = default account
+  const availableAccounts = selectedApp ? getActiveAccountsForApp(selectedApp) : [];
+  const selectedAccount = selectedAccountId
+    ? availableAccounts.find(a => a.id === selectedAccountId) || null
+    : getLinkedAccount(selectedApp); // fallback to default
   const [matchNumericId, setMatchNumericId] = useState<string>("");
   const [matchDbId, setMatchDbId] = useState<string>("");
   const [supportedApps, setSupportedApps] = useState<string[]>([]);
@@ -202,8 +212,8 @@ export function BulkTransferModal({
           }));
         }
       } else {
-        // Linked account transfer
-        const account = getLinkedAccount(selectedApp);
+        // Linked account transfer — use selectedAccount (from dropdown, not just default)
+        const account = selectedAccount;
         if (!account) {
           toast.error(`${APP_LABELS[selectedApp]?.label} account not linked`);
           onOpenOtpLogin();
@@ -443,7 +453,10 @@ export function BulkTransferModal({
                       {linkedApps.map((app) => (
                         <button
                           key={app}
-                          onClick={() => setSelectedApp(app)}
+                          onClick={() => {
+                            setSelectedApp(app);
+                            setSelectedAccountId(""); // reset to default account when switching platform
+                          }}
                           className={cn(
                             "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
                             selectedApp === app
@@ -455,6 +468,35 @@ export function BulkTransferModal({
                         </button>
                       ))}
                     </div>
+
+                    {/* === MULTI-ACCOUNT SELECTOR ===
+                         Per user spec: "transfer time not showing account all only showing same as only 1"
+                         Previously: only showed the default account.
+                         Now: shows ALL linked accounts in a dropdown so user can pick which one to transfer to.
+                    */}
+                    {availableAccounts.length > 1 && (
+                      <div className="mt-2">
+                        <label className="text-[10px] text-muted-foreground mb-1 block">
+                          Account ({availableAccounts.length} linked):
+                        </label>
+                        <select
+                          value={selectedAccountId}
+                          onChange={(e) => setSelectedAccountId(e.target.value)}
+                          className="w-full h-9 text-xs rounded-lg border border-violet-200 dark:border-violet-900/30 bg-white dark:bg-card px-2 text-foreground"
+                        >
+                          {availableAccounts.map((acc, i) => (
+                            <option key={acc.id} value={acc.id}>
+                              {acc.label || `Account ${i + 1}`} {acc.mobile ? `(${acc.mobile})` : ""} {acc.isDefault ? "· Default" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {availableAccounts.length === 1 && (
+                      <p className="text-[10px] text-muted-foreground mt-1.5">
+                        1 account linked: {availableAccounts[0]?.mobile || availableAccounts[0]?.label || "Default"} · <button onClick={onOpenOtpLogin} className="text-violet-600 dark:text-violet-400 underline">Link more</button>
+                      </p>
+                    )}
                   </div>
                 )}
                 {/* Replace existing teams toggle — visible for BOTH direct and linked modes */}
