@@ -2742,11 +2742,72 @@ export function generateEliteTeams(
 
     if (fallbackTeams.length > 0) {
       console.log(`[EliteAI] Fallback generated ${fallbackTeams.length} teams`);
+      // Apply quality engine to fallback teams too
+      _applyQualityEngine(fallbackTeams, "fallback");
       return fallbackTeams;
     }
   }
 
+  // ============================================================
+  // ELITE AI TEAM QUALITY ENGINE — Additional Validation Layer
+  // ============================================================
+  // Per user spec: "Same formula ella generat section add cheyyanam"
+  // Same quality engine as sweep-generator.ts — validates each team
+  // against 10 quality criteria and assigns Quality Score (0-100).
+  _applyQualityEngine(finalTeams, "elite");
+
   return finalTeams;
+}
+
+/**
+ * Apply the Elite AI Team Quality Engine to generated teams.
+ * Scores each team (0-100), attaches qualityScore/qualityTier/qualityChecks,
+ * and logs the quality distribution.
+ *
+ * Per user spec: "all generat section proper different with formula team"
+ * — this ensures EVERY generation mode (Smart Auto, GL, Advanced, Combination,
+ * Elite AI) uses the SAME quality formula for consistency.
+ */
+function _applyQualityEngine(teams: EliteRankedTeam[], label: string): void {
+  let _qualityElite = 0;
+  let _qualityPremium = 0;
+  let _qualityHigh = 0;
+  let _qualityStandard = 0;
+  let _qualityBelow = 0;
+
+  for (const t of teams) {
+    const players = (t.team.players || []) as unknown as MatchPlayer[];
+    const capId = String(t.team.captain || "");
+    const vcId = String(t.team.viceCaptain || t.team.vicecaptain || "");
+    const strategy = t.strategy;
+
+    try {
+      const { calculateTeamQualityScore } = require("./team-quality-engine");
+      const qualityResult = calculateTeamQualityScore(players, capId, vcId, strategy);
+
+      // Attach quality score to team for UI display
+      (t as any).qualityScore = qualityResult.score;
+      (t.team as any).qualityScore = qualityResult.score;
+      (t.team as any).qualityTier = qualityResult.tier;
+      (t.team as any).qualityChecks = qualityResult.checks;
+
+      if (qualityResult.score >= 95) _qualityElite++;
+      else if (qualityResult.score >= 90) _qualityPremium++;
+      else if (qualityResult.score >= 85) _qualityHigh++;
+      else if (qualityResult.score >= 80) _qualityStandard++;
+      else _qualityBelow++;
+    } catch (err) {
+      console.warn(`[EliteAI][QualityEngine] Failed to score team ${t.rank}:`, err);
+    }
+  }
+
+  console.log(`\n[EliteAI][QualityEngine] 📊 ${label} Team Quality Distribution:`);
+  console.log(`  Elite (95+):     ${_qualityElite}`);
+  console.log(`  Premium (90-94):  ${_qualityPremium}`);
+  console.log(`  High (85-89):     ${_qualityHigh}`);
+  console.log(`  Standard (80-84):  ${_qualityStandard}`);
+  console.log(`  Below 80:          ${_qualityBelow}`);
+  console.log(`  Total:             ${teams.length}`);
 }
 
 /* ============== Monte Carlo Simulation ============== */

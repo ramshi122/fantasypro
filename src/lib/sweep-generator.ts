@@ -740,7 +740,29 @@ export function cleanPlayerPool(players: MatchPlayer[], lineupAnnounced: boolean
   if (removed > 0) {
     console.log(`[cleanPlayerPool] Removed ${removed} invalid players (offline/injured/dropped/unavailable) — ${cleaned.length} remaining`);
   }
-  return cleaned;
+
+  // === LOW-QUALITY PLAYER FILTER ===
+  // Per user spec: "no any low player"
+  // Remove players with very low credits (likely substitutes/bench warmers)
+  // and players with 0 selection percentage (nobody picks them = low quality).
+  // This ensures only quality players enter the generation pool.
+  const MIN_CREDITS = 5.0; // players below 5 credits are too cheap (likely bench)
+  const beforeQualityFilter = cleaned.length;
+  const qualityFiltered = cleaned.filter((p) => {
+    const credits = Number(p.credits || 0);
+    const sel = Number(p.selected_by ?? p.sel ?? 0);
+    // Keep players with credits >= 5 OR sel% > 0 (at least someone selected them)
+    if (credits < MIN_CREDITS && sel === 0) {
+      console.log(`[QualityFilter] ❌ Removing low-quality player "${p.name}" — credits=${credits}, sel%=${sel}`);
+      return false;
+    }
+    return true;
+  });
+  const removedByQuality = beforeQualityFilter - qualityFiltered.length;
+  if (removedByQuality > 0) {
+    console.log(`[QualityFilter] 🚫 Removed ${removedByQuality} low-quality players (credits < ${MIN_CREDITS} AND sel% = 0) — ${qualityFiltered.length} remaining`);
+  }
+  return qualityFiltered;
 }
 
 export interface GenerationSettings {
