@@ -407,14 +407,20 @@ export function getSupportedFantasyApps(match: MatchInfo | any): string[] {
   if (match.dream11Url || match.dream11_url) apps.add("dream11");
   if (match.my11circleUrl || match.my11circle_url) apps.add("my11circle");
 
-  // 4) ALWAYS include all 5 supported platforms — backend auth/verify works
-  //    for all of them, and bulk-transfer-modal handles player ID mapping
-  //    gracefully even if match doesn't have explicit support.
-  apps.add("dream11");
-  apps.add("my11circle");
-  apps.add("jumbo");
-  apps.add("myteam11");
-  apps.add("vision11");
+  // NOTE: We NO LONGER force-add all 5 platforms. Per user spec:
+  // "Match card edu flatform support anu ennu kanikunnilla idu proppr ayittu kanikanam"
+  // (Match card doesn't show which platforms are supported — show it properly)
+  //
+  // Previously, all 5 platforms were always added, so every match showed
+  // "Supports: D11 M11 JBO MT11 V11" even if the match only supports Dream11.
+  // Now we ONLY show platforms that are ACTUALLY in fantasy_list/fantasy_version.
+  // If NO platform is detected, default to dream11 + my11circle (most common).
+
+  // 4) If NO platform detected from any source, default to dream11 + my11circle
+  if (apps.size === 0) {
+    apps.add("dream11");
+    apps.add("my11circle");
+  }
 
   return Array.from(apps);
 }

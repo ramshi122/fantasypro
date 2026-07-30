@@ -123,11 +123,11 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
         </div>
       </div>
 
-      {/* Fantasy app support badges */}
+      {/* Fantasy app support badges — shows ONLY platforms this match actually supports */}
       {supportedApps.length > 0 && (
         <div className="px-4 pb-2 flex items-center gap-1 flex-wrap">
           <span className="premium-micro-label text-muted-foreground mr-0.5">
-            Supports:
+            🏏 Available on:
           </span>
           {supportedApps.map((app) => {
             const meta = FANTASY_APPS[app] || { label: app.toUpperCase().slice(0, 4), emoji: "🎮", bg: "bg-slate-500", text: "text-white" };
@@ -135,7 +135,7 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
               <span
                 key={app}
                 className={cn(
-                  "inline-flex items-center gap-0.5 text-[8px] font-bold px-1.5 py-0.5 rounded-md border border-white/15 premium-inner-highlight",
+                  "inline-flex items-center gap-0.5 text-[9px] font-bold px-2 py-0.5 rounded-md border border-white/15 premium-inner-highlight shadow-sm",
                   meta.bg,
                   meta.text
                 )}
