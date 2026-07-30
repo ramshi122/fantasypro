@@ -1326,6 +1326,67 @@ export async function generateSweep(
     console.log(`  Best score: ${_scoredTeams[0]?.score}, Worst score: ${_scoredTeams[_scoredTeams.length - 1]?.score}`);
   }
 
+  // ============================================================
+  // ELITE AI TEAM QUALITY ENGINE — Additional Validation Layer
+  // ============================================================
+  // Per user spec: "ഈ Team Quality Engine നിലവിലുള്ള AI Generator-ന്റെ മുകളിൽ
+  // ഒരു അധിക Validation Layer ആയി മാത്രം ചേർക്കുക."
+  //
+  // This runs AFTER the existing AI generator produces teams. It validates each
+  // team against 10 quality criteria and assigns a Quality Score (0-100).
+  // Teams scoring < 80 are flagged but NOT rejected (to preserve exact count).
+  // The quality score is attached to each team for UI display.
+  //
+  // Quality tiers:
+  //   95-100 → Elite Quality
+  //   90-94  → Premium Quality
+  //   85-89  → High Quality
+  //   80-84  → Standard Quality
+  //   < 80   → Below Standard (still returned, but flagged)
+  {
+    let _qualityElite = 0;
+    let _qualityPremium = 0;
+    let _qualityHigh = 0;
+    let _qualityStandard = 0;
+    let _qualityBelow = 0;
+
+    for (const t of teams) {
+      const players = (t.players || []) as unknown as MatchPlayer[];
+      const capId = String(t.captain || "");
+      const vcId = String(t.viceCaptain || t.vicecaptain || "");
+      const strategy = String(t.type || "").replace("sweep-", "");
+
+      try {
+        // Dynamic import would be async — use require for sync access
+        const { calculateTeamQualityScore } = require("./team-quality-engine");
+        const qualityResult = calculateTeamQualityScore(players, capId, vcId, strategy);
+
+        // Attach quality score to team for UI display
+        (t as any).qualityScore = qualityResult.score;
+        (t as any).qualityTier = qualityResult.tier;
+        (t as any).qualityChecks = qualityResult.checks;
+
+        // Count by tier
+        if (qualityResult.score >= 95) _qualityElite++;
+        else if (qualityResult.score >= 90) _qualityPremium++;
+        else if (qualityResult.score >= 85) _qualityHigh++;
+        else if (qualityResult.score >= 80) _qualityStandard++;
+        else _qualityBelow++;
+      } catch (err) {
+        // Quality engine failed — don't block generation, just skip scoring
+        console.warn(`[QualityEngine] Failed to score team ${t.teamNo}:`, err);
+      }
+    }
+
+    console.log(`\n[QualityEngine] 📊 Team Quality Distribution:`);
+    console.log(`  Elite (95+):    ${_qualityElite}`);
+    console.log(`  Premium (90-94): ${_qualityPremium}`);
+    console.log(`  High (85-89):    ${_qualityHigh}`);
+    console.log(`  Standard (80-84): ${_qualityStandard}`);
+    console.log(`  Below 80:        ${_qualityBelow}`);
+    console.log(`  Total:           ${teams.length}`);
+  }
+
   // === FILLER LOOP — regenerate until exact count is reached ===
   // Per user spec: "Continue generating. Regenerate replacements automatically.
   // Retry until the requested count is reached."
