@@ -228,28 +228,12 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
     (async () => {
       const detail = await getMatchDetail(matchId).catch(() => null);
       if (detail) {
-        let all = [...((detail as any).left_team_players || []), ...((detail as any).right_team_players || [])].filter(Boolean);
-
-        // DECRYPT players — backend returns AES-encrypted strings.
-        // Without decryption, playerPool contains encrypted strings,
-        // and Smart 7 Core shows "Unknown player" + exclude checkboxes don't work.
-        if (all.length > 0 && typeof all[0] === "string") {
-          try {
-            const { decrypt } = await import("@/lib/crypto");
-            all = all.map((p: any) => {
-              if (typeof p === "string") {
-                const dec = decrypt<any>(p);
-                return dec || p;
-              }
-              return p;
-            }).filter((p: any) => p && typeof p === "object" && p.name);
-            console.log(`[mode-settings] Decrypted ${all.length} players for playerPool`);
-          } catch (err) {
-            console.warn("[mode-settings] Player decryption failed:", err);
-          }
-        }
-
-        setPlayerPool(all);
+        const all = [...((detail as any).left_team_players || []), ...((detail as any).right_team_players || [])].filter(Boolean);
+        // getMatchDetail now uses /api/match-detail proxy which deep-decrypts everything.
+        // Players should already be decrypted objects — just filter out any remaining strings.
+        const cleanPlayers = all.filter((p: any) => p && typeof p === "object" && p.name);
+        console.log(`[mode-settings] Loaded ${cleanPlayers.length} players for playerPool`);
+        setPlayerPool(cleanPlayers);
       }
     })();
   }, [matchId]);
@@ -397,27 +381,11 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
 
       let allPlayers = [...((detail as any).left_team_players || []), ...((detail as any).right_team_players || [])].filter(Boolean);
 
-      // === DECRYPT PLAYERS ===
-      // Backend returns players as AES-encrypted strings — must decrypt before use.
-      // Without this, allPlayers contains encrypted strings, not player objects,
-      // and generateSweep() can't parse them → 0 teams generated.
-      if (allPlayers.length > 0 && typeof allPlayers[0] === "string") {
-        try {
-          const { decrypt } = await import("@/lib/crypto");
-          allPlayers = allPlayers.map((p: any) => {
-            if (typeof p === "string") {
-              const dec = decrypt<any>(p);
-              return dec || p;
-            }
-            return p;
-          }).filter((p: any) => p && typeof p === "object" && p.name);
-          console.log(`[generator] Decrypted ${allPlayers.length} players`);
-        } catch (err) {
-          console.warn("[generator] Player decryption failed, using raw:", err);
-        }
-      }
+      // getMatchDetail now uses /api/match-detail proxy which deep-decrypts everything.
+      // Just filter out any remaining non-object entries (shouldn't be any, but safety check).
+      allPlayers = allPlayers.filter((p: any) => p && typeof p === "object" && p.name);
 
-      if (allPlayers.length < 11) { toast.error(`Only ${allPlayers.length} players available after decryption`); setGenerating(false); return; }
+      if (allPlayers.length < 11) { toast.error(`Only ${allPlayers.length} players available`); setGenerating(false); return; }
 
       // === AFTER LINEUP: Filter to ONLY confirmed playing XI ===
       // Detect lineup: lineup_status===1 OR at least 11 players have playing===1

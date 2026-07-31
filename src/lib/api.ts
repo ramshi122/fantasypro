@@ -456,10 +456,28 @@ export async function getMatches(sport: Sport): Promise<MatchInfo[]> {
 }
 
 export async function getMatchDetail(matchId: string | number): Promise<MatchInfo | null> {
-  const resp = await rawFetch(`/api/fantasy/match/${matchId}`, { method: "GET" });
-  if (resp.status && resp.status !== "success") return null;
-  const data = unpackData<MatchInfo>(resp);
-  return data ? normalizeMatch(data) : null;
+  // CRITICAL FIX: Use our /api/match-detail proxy instead of rawFetch to backend.
+  // The proxy properly deep-decrypts ALL nested fields including left_team_players
+  // and right_team_players array items. rawFetch only decrypts top-level response
+  // and uses deepDecrypt which only catches strings starting with "U2FsdGVk".
+  // This was causing "Unknown player" — players were still encrypted strings.
+  try {
+    const res = await fetch(`/api/match-detail?matchId=${matchId}`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const body = await res.json();
+    if (body.status !== "success" || !body.data) return null;
+    return normalizeMatch(body.data);
+  } catch {
+    // Fallback to rawFetch if proxy fails
+    const resp = await rawFetch(`/api/fantasy/match/${matchId}`, { method: "GET" });
+    if (resp.status && resp.status !== "success") return null;
+    const data = unpackData<MatchInfo>(resp);
+    return data ? normalizeMatch(data) : null;
+  }
 }
 
 export async function getPromotions(): Promise<PromotionItem[]> {
