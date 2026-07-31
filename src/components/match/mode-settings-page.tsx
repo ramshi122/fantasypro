@@ -264,6 +264,103 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
     return input.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
   }
 
+  // ============================================================
+  // SMART 7 CORE — Shared handler for ALL generation sections
+  // ============================================================
+  // Per user spec: "Idu ella section add cheyy proper oro section edu reediyil
+  // anu formula a reediyil ella section work avanam before linup and aftr linup ok"
+  //
+  // This function works for Smart Auto, Grand League, Advanced Auto, Combination Auto.
+  // Works BEFORE lineup (uses full squad) and AFTER lineup (uses confirmed Playing XI).
+  async function handleSmart7Core() {
+    const { selectSmart7CorePlayers, getCorePlayerIds } = await import("@/lib/smart-7-core");
+
+    const allPlayers = playerPool;
+    if (allPlayers.length === 0) {
+      toast.error("No player data available — load match first");
+      return;
+    }
+
+    const playingCount = allPlayers.filter((p: any) => Number(p.playing) === 1).length;
+    const isAfterLineup = playingCount >= 11;
+
+    toast.info(
+      isAfterLineup
+        ? "🟢 After Lineup: AI selecting 7 Core Players from confirmed Playing XI..."
+        : "🟡 Before Lineup: AI selecting 7 Core Players from full squad..."
+    );
+
+    const corePlayers = selectSmart7CorePlayers(allPlayers);
+    if (corePlayers.length === 0) {
+      toast.error("Could not select 7 Core Players — not enough player data");
+      return;
+    }
+
+    const coreNames = corePlayers.map(cp => cp.player.name);
+    setLockedPlayers(coreNames.join(", "));
+
+    toast.success(
+      `${isAfterLineup ? "🟢 After" : "🟡 Before"} Lineup: AI selected ${corePlayers.length} Core Players:\n` +
+      corePlayers.map(cp => `#${cp.rank} ${cp.player.name} (${cp.confidenceScore}/100)`).join("\n")
+    );
+
+    console.log(`\n[Smart7Core] 🧠 AI Selected ${corePlayers.length} Core Players (${isAfterLineup ? "After" : "Before"} Lineup):`);
+    corePlayers.forEach(cp => {
+      console.log(`  #${cp.rank} ${cp.player.name} — Confidence: ${cp.confidenceScore}/100`);
+      cp.reasons.forEach(r => console.log(`     ${r}`));
+    });
+  }
+
+  // Smart 7 Core info box (shared JSX — rendered when lockedPlayers has 5+ entries)
+  function Smart7CoreInfoBox() {
+    if (!lockedPlayers || lockedPlayers.split(",").filter(Boolean).length < 5) return null;
+    return (
+      <div className="mt-2 p-2 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700">
+        <p className="text-[9px] font-bold text-emerald-700 dark:text-emerald-400 mb-1">
+          ✅ {lockedPlayers.split(",").filter(Boolean).length} Core Players Locked:
+        </p>
+        <p className="text-[9px] text-emerald-600 dark:text-emerald-500 leading-relaxed">
+          {lockedPlayers}
+        </p>
+        <p className="text-[8px] text-muted-foreground mt-1">
+          All generated teams will include these players. AI optimizes remaining 4 + C/VC.
+        </p>
+      </div>
+    );
+  }
+
+  // Smart 7 Core button (shared JSX — same formula, same look in every section)
+  function Smart7CoreButton() {
+    return (
+      <button
+        onClick={handleSmart7Core}
+        className="w-full h-10 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-[11px] font-bold hover:from-emerald-600 hover:to-teal-700 transition-all active:scale-95 shadow-md"
+      >
+        🧠 Select Smart 7 Core (AI)
+      </button>
+    );
+  }
+
+  // Smart 7 Core section wrapper (shared — used in all 4 generation modes)
+  function Smart7CoreSection() {
+    return (
+      <div className="p-3 rounded-xl border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <p className="text-[11px] font-black text-emerald-700 dark:text-emerald-400 uppercase">
+              🧠 Smart 7 Core (AI)
+            </p>
+            <p className="text-[9px] text-muted-foreground mt-0.5">
+              AI selects best 7 Core Players. Works before &amp; after lineup. All teams include these 7.
+            </p>
+          </div>
+        </div>
+        <Smart7CoreButton />
+        <Smart7CoreInfoBox />
+      </div>
+    );
+  }
+
   async function handleGenerate() {
     setGenerating(true);
     setProgress("Fetching latest playing XI...");
@@ -529,85 +626,8 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
               </div>
             </div>
 
-            {/* === AFTER LINEUP – SMART 7 CORE === */}
-            {/* Per user spec: "After Lineup – Smart 7 Core button add cheyyanam" */}
-            <div className="p-3 rounded-xl border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20">
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <p className="text-[11px] font-black text-emerald-700 dark:text-emerald-400 uppercase">
-                    🧠 After Lineup – Smart 7 Core
-                  </p>
-                  <p className="text-[9px] text-muted-foreground mt-0.5">
-                    AI selects best 7 Core Players from Playing XI. All teams include these 7.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={async () => {
-                  // Import Smart 7 Core engine
-                  const { selectSmart7CorePlayers, getCorePlayerIds } = await import("@/lib/smart-7-core");
-
-                  // Get all players from playerPool
-                  const allPlayers = playerPool;
-                  if (allPlayers.length === 0) {
-                    toast.error("No player data available — load match first");
-                    return;
-                  }
-
-                  // Check if lineup is announced
-                  const playingCount = allPlayers.filter((p: any) => Number(p.playing) === 1).length;
-                  if (playingCount < 11) {
-                    toast.error(`Lineup not confirmed yet — only ${playingCount} players marked as playing (need 11+)`);
-                    return;
-                  }
-
-                  toast.info("🧠 AI analyzing Playing XI for 7 Core Players...");
-
-                  // Select 7 core players
-                  const corePlayers = selectSmart7CorePlayers(allPlayers);
-                  if (corePlayers.length === 0) {
-                    toast.error("Could not select 7 Core Players — check if lineup is confirmed");
-                    return;
-                  }
-
-                  // Get player names for the lock field
-                  const coreNames = corePlayers.map(cp => cp.player.name);
-                  const coreIds = getCorePlayerIds(corePlayers);
-
-                  // Set locked players (these 7 will be in ALL generated teams)
-                  setLockedPlayers(coreNames.join(", "));
-
-                  // Show success message with details
-                  toast.success(
-                    `✅ AI selected ${corePlayers.length} Core Players:\n` +
-                    corePlayers.map(cp => `#${cp.rank} ${cp.player.name} (${cp.confidenceScore}/100)`).join("\n")
-                  );
-
-                  // Log details
-                  console.log("\n[Smart7Core] 🧠 AI Selected 7 Core Players:");
-                  corePlayers.forEach(cp => {
-                    console.log(`  #${cp.rank} ${cp.player.name} — Confidence: ${cp.confidenceScore}/100`);
-                    cp.reasons.forEach(r => console.log(`     ${r}`));
-                  });
-                }}
-                className="w-full h-10 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-[11px] font-bold hover:from-emerald-600 hover:to-teal-700 transition-all active:scale-95 shadow-md"
-              >
-                🧠 Select Smart 7 Core (AI)
-              </button>
-              {lockedPlayers && lockedPlayers.split(",").length >= 5 && (
-                <div className="mt-2 p-2 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700">
-                  <p className="text-[9px] font-bold text-emerald-700 dark:text-emerald-400 mb-1">
-                    ✅ {lockedPlayers.split(",").filter(Boolean).length} Core Players Locked:
-                  </p>
-                  <p className="text-[9px] text-emerald-600 dark:text-emerald-500 leading-relaxed">
-                    {lockedPlayers}
-                  </p>
-                  <p className="text-[8px] text-muted-foreground mt-1">
-                    All generated teams will include these players. AI optimizes remaining 4 + C/VC.
-                  </p>
-                </div>
-              )}
-            </div>
+            {/* === SMART 7 CORE (shared component — same formula in all sections) === */}
+            <Smart7CoreSection />
           </div>
         )}
 
@@ -634,6 +654,9 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
                 <div className="col-span-2"><label className="text-[9px] text-muted-foreground">Unique Team %</label><input type="range" min="50" max="100" value={uniqueTeamPct} onChange={(e) => setUniqueTeamPct(parseInt(e.target.value))} className="w-full accent-rose-500" /><span className="text-[8px] text-slate-500">{uniqueTeamPct}%</span></div>
               </div>
             </div>
+
+            {/* === SMART 7 CORE (same formula — works in GL too) === */}
+            <Smart7CoreSection />
           </div>
         )}
 
@@ -659,6 +682,9 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
                 <div><label className="text-[9px] text-muted-foreground">Team Balance</label><select className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" value={teamBalance} onChange={(e) => setTeamBalance(e.target.value)}><option>Balanced</option><option>Bat Heavy</option><option>Bowl Heavy</option></select></div>
               </div>
             </div>
+
+            {/* === SMART 7 CORE (same formula — works in Advanced too) === */}
+            <Smart7CoreSection />
           </div>
         )}
 
@@ -684,6 +710,9 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
                 <div><label className="text-[9px] text-muted-foreground">Random Seed</label><input type="text" placeholder="Auto" className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
               </div>
             </div>
+
+            {/* === SMART 7 CORE (same formula — works in Combination too) === */}
+            <Smart7CoreSection />
           </div>
         )}
 

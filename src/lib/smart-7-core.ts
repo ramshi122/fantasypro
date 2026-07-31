@@ -163,23 +163,49 @@ export function calculatePlayerConfidenceScore(p: MatchPlayer): {
  *   - Empty array if lineup not announced or pool too small
  */
 export function selectSmart7CorePlayers(players: MatchPlayer[]): CorePlayerResult[] {
-  // Step 1: Filter to confirmed playing XI only
+  // Step 1: Filter to confirmed playing XI — OR all players if lineup not yet announced
+  // Per user spec: "before linup and aftr linup ok"
+  // - After lineup: only playing === 1
+  // - Before lineup: all players (lineup pending — pick best from full squad)
   const playingXI = players.filter(p => Number(p.playing) === 1);
-  if (playingXI.length < 11) {
-    console.warn("[Smart7Core] Lineup not confirmed — only " + playingXI.length + " players with playing===1");
+  const lineupConfirmed = playingXI.length >= 11;
+
+  let candidatePool: MatchPlayer[];
+  if (lineupConfirmed) {
+    candidatePool = playingXI;
+    console.log(`[Smart7Core] 🟢 Lineup confirmed — ${playingXI.length} players in Playing XI`);
+  } else {
+    // Before lineup: use ALL players (backend may mark all as playing=0)
+    candidatePool = players.filter(p => p.name && Number(p.credits) > 0);
+    console.log(`[Smart7Core] 🟡 Lineup pending — using all ${candidatePool.length} players (pre-lineup mode)`);
+  }
+
+  if (candidatePool.length < 11) {
+    console.warn(`[Smart7Core] ⚠️ Pool too small: ${candidatePool.length} players (need 11+)`);
     return [];
   }
-  console.log(`[Smart7Core] 📊 Lineup confirmed — ${playingXI.length} players in Playing XI`);
 
   // Step 2: Score every player
-  const scored = playingXI.map(p => {
+  const scored = candidatePool.map(p => {
     const { score, reasons } = calculatePlayerConfidenceScore(p);
+    // In pre-lineup mode, don't reject for playing !== 1 — adjust score instead
+    if (!lineupConfirmed && Number(p.playing) !== 1) {
+      // Pre-lineup: give partial credit (playing status unknown)
+      return {
+        player: p,
+        confidenceScore: Math.max(score, 30), // minimum 30 in pre-lineup
+        reasons: [...reasons, "🟡 Pre-lineup — playing status unconfirmed"],
+      };
+    }
     return { player: p, confidenceScore: score, reasons };
   });
 
-  // Step 3: Filter out low-confidence players (score <= 50)
-  const highConfidence = scored.filter(s => s.confidenceScore > 50);
-  console.log(`[Smart7Core] 🎯 ${highConfidence.length} players passed confidence threshold (>50)`);
+  // Step 3: Filter out low-confidence players
+  // After lineup: threshold 50 (strict)
+  // Before lineup: threshold 30 (lenient — we don't have confirmed data)
+  const threshold = lineupConfirmed ? 50 : 30;
+  const highConfidence = scored.filter(s => s.confidenceScore > threshold);
+  console.log(`[Smart7Core] 🎯 ${highConfidence.length} players passed confidence threshold (>${threshold})`);
 
   if (highConfidence.length < 7) {
     console.warn(`[Smart7Core] ⚠️ Only ${highConfidence.length} high-confidence players (need 7) — using best available`);
