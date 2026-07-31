@@ -376,7 +376,28 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
       setLineupAnnounced(announced);
 
       let allPlayers = [...((detail as any).left_team_players || []), ...((detail as any).right_team_players || [])].filter(Boolean);
-      if (allPlayers.length < 11) { toast.error(`Only ${allPlayers.length} players available`); setGenerating(false); return; }
+
+      // === DECRYPT PLAYERS ===
+      // Backend returns players as AES-encrypted strings — must decrypt before use.
+      // Without this, allPlayers contains encrypted strings, not player objects,
+      // and generateSweep() can't parse them → 0 teams generated.
+      if (allPlayers.length > 0 && typeof allPlayers[0] === "string") {
+        try {
+          const { decrypt } = await import("@/lib/crypto");
+          allPlayers = allPlayers.map((p: any) => {
+            if (typeof p === "string") {
+              const dec = decrypt<any>(p);
+              return dec || p;
+            }
+            return p;
+          }).filter((p: any) => p && typeof p === "object" && p.name);
+          console.log(`[generator] Decrypted ${allPlayers.length} players`);
+        } catch (err) {
+          console.warn("[generator] Player decryption failed, using raw:", err);
+        }
+      }
+
+      if (allPlayers.length < 11) { toast.error(`Only ${allPlayers.length} players available after decryption`); setGenerating(false); return; }
 
       // === AFTER LINEUP: Filter to ONLY confirmed playing XI ===
       // Detect lineup: lineup_status===1 OR at least 11 players have playing===1
@@ -939,6 +960,27 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
           <Button className={cn("w-full h-12 bg-gradient-to-r text-white font-bold", info.color)} onClick={handleGenerate} disabled={generating}>
             {generating ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Icon className="w-5 h-5 mr-2" />}
             {generating ? "Generating..." : `Generate ${teamCount} Teams · ${info.label}`}
+          </Button>
+
+          {/* Quick Generate 40 + Auto Transfer — per user spec: "click buttun make direct 40/team aftr transfer" */}
+          <Button
+            className="w-full h-10 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-sm"
+            onClick={async () => {
+              // Auto-select 40 teams
+              setTeamCount(40 as SweepCount);
+              // Generate
+              await handleGenerate();
+              // After generation, auto-trigger transfer (handleGenerate calls onGenerated which saves teams)
+              // Then open transfer modal after a short delay
+              setTimeout(() => {
+                if (generatedTeams.length > 0 || true) {
+                  handleTransfer();
+                }
+              }, 1500);
+            }}
+            disabled={generating}
+          >
+            <Zap className="w-4 h-4 mr-1" /> Quick 40 + Transfer
           </Button>
 
           {generatedTeams.length > 0 && (

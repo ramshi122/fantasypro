@@ -743,15 +743,16 @@ export function cleanPlayerPool(players: MatchPlayer[], lineupAnnounced: boolean
 
   // === LOW-QUALITY PLAYER FILTER ===
   // Per user spec: "no any low player"
-  // Remove players with very low credits (likely substitutes/bench warmers)
-  // and players with 0 selection percentage (nobody picks them = low quality).
-  // This ensures only quality players enter the generation pool.
-  const MIN_CREDITS = 5.0; // players below 5 credits are too cheap (likely bench)
+  // Remove players with VERY low credits AND zero selection (likely bench/substitutes).
+  // Only remove if BOTH conditions met — a player with high credits but 0 sel% might
+  // be a new player (not low quality), and a player with low credits but some sel%
+  // might be a differential pick (not low quality).
+  const MIN_CREDITS = 3.0; // players below 3 credits are too cheap
   const beforeQualityFilter = cleaned.length;
   const qualityFiltered = cleaned.filter((p) => {
     const credits = Number(p.credits || 0);
     const sel = Number(p.selected_by ?? p.sel ?? 0);
-    // Keep players with credits >= 5 OR sel% > 0 (at least someone selected them)
+    // Only remove if BOTH: very low credits AND zero selection (definitely bench quality)
     if (credits < MIN_CREDITS && sel === 0) {
       console.log(`[QualityFilter] ❌ Removing low-quality player "${p.name}" — credits=${credits}, sel%=${sel}`);
       return false;
