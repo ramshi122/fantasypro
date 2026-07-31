@@ -223,12 +223,32 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
     toast.info("All excludes cleared");
   }
 
-  // Fetch player pool on mount for exclude checkboxes
+  // Fetch player pool on mount for exclude checkboxes + Smart 7 Core
   useEffect(() => {
     (async () => {
       const detail = await getMatchDetail(matchId).catch(() => null);
       if (detail) {
-        const all = [...((detail as any).left_team_players || []), ...((detail as any).right_team_players || [])].filter(Boolean);
+        let all = [...((detail as any).left_team_players || []), ...((detail as any).right_team_players || [])].filter(Boolean);
+
+        // DECRYPT players — backend returns AES-encrypted strings.
+        // Without decryption, playerPool contains encrypted strings,
+        // and Smart 7 Core shows "Unknown player" + exclude checkboxes don't work.
+        if (all.length > 0 && typeof all[0] === "string") {
+          try {
+            const { decrypt } = await import("@/lib/crypto");
+            all = all.map((p: any) => {
+              if (typeof p === "string") {
+                const dec = decrypt<any>(p);
+                return dec || p;
+              }
+              return p;
+            }).filter((p: any) => p && typeof p === "object" && p.name);
+            console.log(`[mode-settings] Decrypted ${all.length} players for playerPool`);
+          } catch (err) {
+            console.warn("[mode-settings] Player decryption failed:", err);
+          }
+        }
+
         setPlayerPool(all);
       }
     })();
