@@ -467,16 +467,63 @@ export async function getMatchDetail(matchId: string | number): Promise<MatchInf
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
     });
-    if (!res.ok) return null;
-    const body = await res.json();
-    if (body.status !== "success" || !body.data) return null;
-    return normalizeMatch(body.data);
-  } catch {
-    // Fallback to rawFetch if proxy fails
+    if (!res.ok) {
+      console.warn(`[getMatchDetail] Proxy returned HTTP ${res.status}, falling back to rawFetch`);
+    } else {
+      const body = await res.json();
+      if (body.status === "success" && body.data) {
+        // Verify players are decrypted (not encrypted strings)
+        const ltp = (body.data as any).left_team_players || [];
+        if (ltp.length > 0 && typeof ltp[0] === "string") {
+          console.warn(`[getMatchDetail] Proxy returned encrypted players — attempting manual decryption`);
+          const { decrypt } = await import("./crypto");
+          const decryptArray = (arr: any[]) => arr.map((p: any) => {
+            if (typeof p === "string") {
+              const dec = decrypt<any>(p);
+              return dec || p;
+            }
+            return p;
+          }).filter((p: any) => p && typeof p === "object");
+          (body.data as any).left_team_players = decryptArray(ltp);
+          (body.data as any).right_team_players = decryptArray((body.data as any).right_team_players || []);
+          console.log(`[getMatchDetail] Manual decryption: ${((body.data as any).left_team_players || []).length} left + ${((body.data as any).right_team_players || []).length} right players`);
+        }
+        return normalizeMatch(body.data);
+      }
+      console.warn(`[getMatchDetail] Proxy returned status=${body.status}, falling back to rawFetch`);
+    }
+  } catch (err) {
+    console.warn(`[getMatchDetail] Proxy fetch error:`, err, "— falling back to rawFetch");
+  }
+
+  // Fallback: rawFetch to backend + manual decrypt ALL player strings
+  try {
     const resp = await rawFetch(`/api/fantasy/match/${matchId}`, { method: "GET" });
     if (resp.status && resp.status !== "success") return null;
     const data = unpackData<MatchInfo>(resp);
-    return data ? normalizeMatch(data) : null;
+    if (!data) return null;
+
+    // MANUAL DECRYPT: decrypt any remaining encrypted player strings
+    const { decrypt } = await import("./crypto");
+    const decryptArray = (arr: any[]) => (arr || []).map((p: any) => {
+      if (typeof p === "string") {
+        const dec = decrypt<any>(p);
+        return dec || p;
+      }
+      return p;
+    }).filter((p: any) => p && typeof p === "object");
+
+    (data as any).left_team_players = decryptArray((data as any).left_team_players || []);
+    (data as any).right_team_players = decryptArray((data as any).right_team_players || []);
+
+    const leftCount = ((data as any).left_team_players || []).length;
+    const rightCount = ((data as any).right_team_players || []).length;
+    console.log(`[getMatchDetail] Fallback rawFetch + manual decrypt: ${leftCount} left + ${rightCount} right players`);
+
+    return normalizeMatch(data);
+  } catch (err2) {
+    console.error(`[getMatchDetail] Both proxy and rawFetch failed:`, err2);
+    return null;
   }
 }
 
