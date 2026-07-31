@@ -528,6 +528,86 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
                 <div><label className="text-[9px] text-muted-foreground">VC Lock</label><input type="text" placeholder="Auto" value={vcLock} onChange={(e) => setVcLock(e.target.value)} className="w-full h-8 text-[10px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1" /></div>
               </div>
             </div>
+
+            {/* === AFTER LINEUP – SMART 7 CORE === */}
+            {/* Per user spec: "After Lineup – Smart 7 Core button add cheyyanam" */}
+            <div className="p-3 rounded-xl border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className="text-[11px] font-black text-emerald-700 dark:text-emerald-400 uppercase">
+                    🧠 After Lineup – Smart 7 Core
+                  </p>
+                  <p className="text-[9px] text-muted-foreground mt-0.5">
+                    AI selects best 7 Core Players from Playing XI. All teams include these 7.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  // Import Smart 7 Core engine
+                  const { selectSmart7CorePlayers, getCorePlayerIds } = await import("@/lib/smart-7-core");
+
+                  // Get all players from playerPool
+                  const allPlayers = playerPool;
+                  if (allPlayers.length === 0) {
+                    toast.error("No player data available — load match first");
+                    return;
+                  }
+
+                  // Check if lineup is announced
+                  const playingCount = allPlayers.filter((p: any) => Number(p.playing) === 1).length;
+                  if (playingCount < 11) {
+                    toast.error(`Lineup not confirmed yet — only ${playingCount} players marked as playing (need 11+)`);
+                    return;
+                  }
+
+                  toast.info("🧠 AI analyzing Playing XI for 7 Core Players...");
+
+                  // Select 7 core players
+                  const corePlayers = selectSmart7CorePlayers(allPlayers);
+                  if (corePlayers.length === 0) {
+                    toast.error("Could not select 7 Core Players — check if lineup is confirmed");
+                    return;
+                  }
+
+                  // Get player names for the lock field
+                  const coreNames = corePlayers.map(cp => cp.player.name);
+                  const coreIds = getCorePlayerIds(corePlayers);
+
+                  // Set locked players (these 7 will be in ALL generated teams)
+                  setLockedPlayers(coreNames.join(", "));
+
+                  // Show success message with details
+                  toast.success(
+                    `✅ AI selected ${corePlayers.length} Core Players:\n` +
+                    corePlayers.map(cp => `#${cp.rank} ${cp.player.name} (${cp.confidenceScore}/100)`).join("\n")
+                  );
+
+                  // Log details
+                  console.log("\n[Smart7Core] 🧠 AI Selected 7 Core Players:");
+                  corePlayers.forEach(cp => {
+                    console.log(`  #${cp.rank} ${cp.player.name} — Confidence: ${cp.confidenceScore}/100`);
+                    cp.reasons.forEach(r => console.log(`     ${r}`));
+                  });
+                }}
+                className="w-full h-10 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-[11px] font-bold hover:from-emerald-600 hover:to-teal-700 transition-all active:scale-95 shadow-md"
+              >
+                🧠 Select Smart 7 Core (AI)
+              </button>
+              {lockedPlayers && lockedPlayers.split(",").length >= 5 && (
+                <div className="mt-2 p-2 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700">
+                  <p className="text-[9px] font-bold text-emerald-700 dark:text-emerald-400 mb-1">
+                    ✅ {lockedPlayers.split(",").filter(Boolean).length} Core Players Locked:
+                  </p>
+                  <p className="text-[9px] text-emerald-600 dark:text-emerald-500 leading-relaxed">
+                    {lockedPlayers}
+                  </p>
+                  <p className="text-[8px] text-muted-foreground mt-1">
+                    All generated teams will include these players. AI optimizes remaining 4 + C/VC.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
