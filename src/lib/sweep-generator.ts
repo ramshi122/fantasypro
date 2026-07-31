@@ -833,13 +833,13 @@ export async function generateSweep(
 
   // 1. Clean and rank players by EFV
   // Detect lineup: if ANY player has playing === 1, lineup is announced
-  // CRITICAL FIX: Per user spec "Offline player added after lineup"
-  // Also check (players as any)[0].lineup_out === 1 — backend match data field
-  // that explicitly says "lineup is announced" even if playing field is not set on all players.
+  // CRITICAL FIX: Per user spec "before linup plyr not working"
+  // Before lineup, ALL players have playing=0 (means "not confirmed yet").
+  // Only treat as "lineup announced" if lineup_status=1 OR 11+ players have playing=1.
+  // Otherwise use ALL players (pre-lineup mode).
   const lineupDetectedPreClean =
-    players.some((p) => Number(p.playing) === 1) ||
-    (players as any).some((p: any) => Number(p.lineup_out) === 1) ||
-    (players as any).some((p: any) => p.lineup_announced === true || p.lineup_out === true);
+    (players as any).some((p: any) => Number(p.lineup_status) === 1) ||
+    players.filter((p) => Number(p.playing) === 1).length >= 11;
 
   // If lineup is detected, FORCE-filter playing === 0 players (they are benched)
   // Per user spec: "Offline player added after lineup" — these should never be in teams

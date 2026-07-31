@@ -387,30 +387,38 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
 
       if (allPlayers.length < 11) { toast.error(`Only ${allPlayers.length} players available`); setGenerating(false); return; }
 
-      // === AFTER LINEUP: Filter to ONLY confirmed playing XI ===
-      // Detect lineup: lineup_status===1 OR at least 11 players have playing===1
+      // === LINEUP DETECTION + PLAYER FILTERING ===
+      // Per user spec: "before linup plyr not working after linup make proppr plying 11 update
+      // no any low plyer and bench exetra"
+      //
+      // BEFORE lineup (lineup_status=0): ALL players have playing=0 — use ALL players.
+      // Backend marks ALL as playing=0 before lineup is announced (means "not confirmed yet").
+      // Filtering playing===1 before lineup gives 0 players → generation fails.
+      //
+      // AFTER lineup (lineup_status=1): backend sets playing=1 for Playing XI,
+      // playing=0 for benched. Filter to playing===1 ONLY (remove bench).
       const playingCount = allPlayers.filter((p: any) => Number(p.playing) === 1).length;
       const lineupActive = announced || playingCount >= 11;
 
       if (lineupActive) {
-        // STRICT: ONLY playing === 1 players — NO exceptions
+        // AFTER LINEUP: ONLY playing === 1 players — remove bench
         const playingOnly = allPlayers.filter((p: any) => Number(p.playing) === 1);
-        console.log(`[generator] Lineup active: ${playingOnly.length} playing players out of ${allPlayers.length} total`);
+        console.log(`[generator] 🟢 AFTER LINEUP: ${playingOnly.length} playing players out of ${allPlayers.length} total`);
 
         if (playingOnly.length >= 11) {
           allPlayers = playingOnly;
-          setProgress(`✅ Lineup confirmed — using ${allPlayers.length} playing XI players ONLY (bench removed)`);
+          setProgress(`🟢 After Lineup — using ${allPlayers.length} confirmed Playing XI players ONLY (bench removed)`);
         } else if (playingOnly.length > 0) {
-          // Even if < 11 playing, still use ONLY playing players
-          // Generator will handle if not enough
           allPlayers = playingOnly;
-          setProgress(`⚠️ Only ${playingOnly.length} confirmed playing — using them only (some teams may fail)`);
+          setProgress(`⚠️ After Lineup — only ${playingOnly.length} confirmed playing (need 11, some teams may fail)`);
         } else {
-          // No playing players marked — can't determine lineup
-          setProgress(`🟡 No playing status found — using all ${allPlayers.length} players (pre-lineup mode)`);
+          setProgress(`🟡 Lineup status=1 but no playing=1 players — using all ${allPlayers.length} players`);
         }
       } else {
-        setProgress(`🟡 Lineup pending — using all ${allPlayers.length} players (pre-lineup mode)`);
+        // BEFORE LINEUP: ALL players have playing=0 (means "not confirmed yet" NOT "benched")
+        // Use ALL players — don't filter by playing field
+        console.log(`[generator] 🟡 BEFORE LINEUP — using all ${allPlayers.length} players (lineup not announced yet)`);
+        setProgress(`🟡 Before Lineup — using all ${allPlayers.length} players (lineup pending, will refine after toss)`);
       }
 
       // === APPLY USER SETTINGS: Exclude players (text input) ===
