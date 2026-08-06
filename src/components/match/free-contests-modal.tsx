@@ -19,11 +19,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
-  fetchFreeContests,
+  fetchFreeContestsForAccount,
   getLinkedAccount,
-  joinFreeContest,
   joinAllAccountsContest,
-  listFantasyTeams,
+  joinFreeContestForAccount,
+  listFantasyTeamsForAccount,
+  setActiveFantasyAccount,
   type FantasyApp,
   type FreeContest,
   type MatchInfo,
@@ -97,7 +98,9 @@ export function FreeContestsModal({
     if (apps.length > 0) setSelectedApp(apps[0]);
   }, [open]);
 
-  // Fetch free contests when modal opens or app changes
+  // Fetch free contests when modal opens or app changes OR when the selected
+  // account changes. Per user spec: "When Account #2 is selected, every API
+  // must use Account #2's authentication token and user ID only."
   useEffect(() => {
     if (!open || linkedApps.length === 0) return;
     let active = true;
@@ -105,19 +108,31 @@ export function FreeContestsModal({
       setPhase("loading");
       setError(null);
       try {
-        const account = getLinkedAccount(selectedApp);
-        if (!account) {
+        // Determine the target account: first user-selected, otherwise default.
+        // Per user spec: "fetch real Dream11 data for the selected account
+        // before enabling Join Contest or Transfer."
+        const allAccounts = getActiveAccountsForApp(selectedApp);
+        const targetAccount =
+          allAccounts.find(a => selectedJoinAccountIds.includes(a.id)) ||
+          allAccounts.find(a => a.isDefault) ||
+          allAccounts[0];
+
+        if (!targetAccount) {
           setError("Account not linked");
           setPhase("ready");
           return;
         }
 
-        // Fetch existing teams on the fantasy platform (for team IDs)
+        // Mark this as the active account so legacy code paths resolve it correctly
+        setActiveFantasyAccount(selectedApp, targetAccount.id);
+
+        // Fetch existing teams on the fantasy platform using the per-account API
+        // (so Account #2's teams don't leak into Account #1's view).
         let teamIds: number[] = [];
         try {
-          const existingTeams = await listFantasyTeams({
+          const existingTeams = await listFantasyTeamsForAccount({
+            accountId: targetAccount.id,
             fantasyApp: selectedApp,
-            authToken: account.token,
             matchId,
           });
           teamIds = existingTeams
@@ -139,9 +154,12 @@ export function FreeContestsModal({
           return;
         }
 
-        const res = await fetchFreeContests({
+        // Fetch free contests using the per-account API (auto-refreshes token
+        // if expired, caches result per-account so Account #1 cache doesn't
+        // bleed into Account #2).
+        const res = await fetchFreeContestsForAccount({
+          accountId: targetAccount.id,
           fantasyApp: selectedApp,
-          authToken: account.token,
           matchId,
           allTeamIds: teamIds,
         });
@@ -168,7 +186,8 @@ export function FreeContestsModal({
     return () => {
       active = false;
     };
-  }, [open, selectedApp, linkedApps.length, refreshKey, matchId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedApp, linkedApps.length, refreshKey, matchId, selectedJoinAccountIds]);
 
   // Reset when closed
   useEffect(() => {
@@ -183,8 +202,16 @@ export function FreeContestsModal({
   if (!open) return null;
 
   async function handleJoinContest(contest: FreeContest) {
-    const account = getLinkedAccount(selectedApp);
-    if (!account) {
+    // Determine target account: first user-selected (multi-select), otherwise default.
+    // Per user spec: "When Account #2 is selected, every API must use Account #2's
+    // authentication token and user ID only."
+    const allAccounts = getActiveAccountsForApp(selectedApp);
+    const targetAccount =
+      allAccounts.find(a => selectedJoinAccountIds.includes(a.id)) ||
+      allAccounts.find(a => a.isDefault) ||
+      allAccounts[0];
+
+    if (!targetAccount || !targetAccount.id) {
       toast.error("Account not linked");
       return;
     }
@@ -230,21 +257,25 @@ export function FreeContestsModal({
       return;
     }
 
-    console.log(`[Contest][Join] Mode: ${joinMode}, Available: ${allAvailable.length}, Joining: ${teamIds.length} teams: [${teamIds.join(",")}]`);
+    console.log(`[Contest][Join] Account=${targetAccount.id} (${targetAccount.label}), Mode: ${joinMode}, Available: ${allAvailable.length}, Joining: ${teamIds.length} teams: [${teamIds.join(",")}]`);
 
     setJoiningContest(contest.contestId);
     setPhase("joining");
     try {
-      const res = await joinFreeContest({
+      // Use the per-account API: this threads the accountId through the
+      // cache + token-refresh logic so Account #2's join uses Account #2's
+      // token (NOT Account #1's) and any token refresh is persisted back
+      // to Account #2 only.
+      const res = await joinFreeContestForAccount({
+        accountId: targetAccount.id,
         fantasyApp: selectedApp,
-        authToken: account.token,
         matchId,
         contestId: contest.contestId,
         teamIds,
       });
 
       if (res.status === "success" && res.summary.successCount > 0) {
-        toast.success(`Joined ${res.summary.successCount} team(s) to ${contest.contestName || "contest"}`);
+        toast.success(`Joined ${res.summary.successCount} team(s) to ${contest.contestName || "contest"} (${targetAccount.label || targetAccount.id})`);
         // Update local state to mark teams as joined
         setContests((prev) =>
           prev.map((c) => {
@@ -263,7 +294,7 @@ export function FreeContestsModal({
         setPhase("done");
       } else if (res.needsReauth) {
         // Token expired — prompt re-link via OTP
-        toast.error(res.message || "Session expired — re-link via OTP");
+        toast.error(res.message || `Session expired for ${targetAccount.label || "account"} — re-link via OTP`);
         setTimeout(() => onOpenOtpLogin(), 800);
         setPhase("ready");
       } else {

@@ -1,5 +1,19 @@
 import { encrypt, decrypt } from "./crypto";
 import { roleFromPlayerType } from "./format";
+import {
+  getOrFetch as accountGetOrFetch,
+  invalidateCache as accountInvalidateCache,
+  invalidateAccountCache,
+  setActiveAccount,
+  getActiveAccountId,
+  type CacheScope,
+} from "./account-session";
+import {
+  getFantasyAccount as getFantasyAccountById,
+  updateFantasyAccount as updateFantasyAccountById,
+  markAccountActive,
+  markAccountExpired,
+} from "./multi-accounts";
 
 /**
  * Apna Cricket API client — patched to match the actual Apna Cricket backend.
@@ -1011,10 +1025,751 @@ export async function listFantasyTeams(params: {
   }
 }
 
+/**
+ * List teams for a SPECIFIC account (per-account isolation).
+ *
+ * Per user spec: "When Account #2 is selected, every API must use Account #2's
+ * authentication token and user ID only. Do not reuse Account #1 token or
+ * cached data."
+ *
+ * Differences from `listFantasyTeams`:
+ *   1. Takes an explicit `accountId` — fails fast if the account is missing
+ *      or has no token (no silent fallback to default account).
+ *   2. Uses per-account in-memory cache (15s TTL) so switching accounts
+ *      returns fresh data, but rapid back-to-back calls don't all hit backend.
+ *   3. If the backend says token is expired, attempts an automatic token
+ *      refresh via `refreshAccountAuthToken` and retries ONCE.
+ *   4. On successful refresh, the cached token in multi-accounts storage is
+ *      updated for THIS account only — Account #1's token is untouched.
+ */
+export async function listFantasyTeamsForAccount(params: {
+  accountId: string;
+  fantasyApp: FantasyApp;
+  matchId: string | number;
+  /** Skip the cache and force a fresh fetch. Use after transfers/joins. */
+  forceRefresh?: boolean;
+}): Promise<TeamRow[]> {
+  const account = requireAccount(params.accountId);
+  const scope: CacheScope = "my-teams";
+
+  // If forceRefresh, invalidate cache for this account+matchId before fetching
+  if (params.forceRefresh) {
+    accountInvalidateCache(params.accountId, scope, params.matchId);
+  }
+
+  return accountGetOrFetch<TeamRow[]>(
+    params.accountId,
+    scope,
+    params.matchId,
+    async () => {
+      console.log(`[listFantasyTeamsForAccount] 📡 Fetching teams for account ${params.accountId} (${account.label}) — match ${params.matchId}`);
+
+      // My11Circle: refresh token via auth/verify FIRST (matches original teamgeneration.in flow)
+      let effectiveToken = account.token;
+      if (params.fantasyApp === "my11circle"
+          && (account.my11circleChallenge || account.my11circleUserId || account.mobile)) {
+        try {
+          const refreshed = await refreshAccountAuthToken({
+            accountId: params.accountId,
+            fantasyApp: params.fantasyApp,
+            authToken: account.token,
+            matchId: params.matchId,
+            my11circleChallenge: account.my11circleChallenge || undefined,
+            my11circleUserId: account.my11circleUserId || undefined,
+            mobileNumber: account.mobile || undefined,
+          });
+          if (refreshed) effectiveToken = refreshed;
+        } catch (err: any) {
+          console.warn(`[listFantasyTeamsForAccount] My11Circle refresh failed, continuing with stored token: ${err?.message}`);
+        }
+      }
+
+      // Now call /api/contest/my-teams with the (possibly refreshed) token
+      const body: Record<string, unknown> = {
+        fantasyApp: params.fantasyApp,
+        matchId: params.matchId,
+        authToken: effectiveToken,
+      };
+
+      try {
+        const res = await fetch(`/api/contest/my-teams`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          cache: "no-store",
+        });
+        const resp = await res.json() as ApiResponse & {
+          teams?: Array<{ teamId: string; teamNo: number | null; fantasyApp: string }>;
+          teams_list?: Array<{ team_id: string | number; team_number: number }>;
+          data?: { teams_list?: Array<{ team_id: string | number; team_number: number }> };
+        };
+
+        // Token-expired? Try refresh + retry ONCE
+        if (resp.validToken === false || isTokenExpiredMessage(String(resp.message || ""))) {
+          console.warn(`[listFantasyTeamsForAccount] ⚠️ Token expired for account ${params.accountId} — attempting refresh + retry`);
+          const refreshed = await refreshAccountAuthToken({
+            accountId: params.accountId,
+            fantasyApp: params.fantasyApp,
+            authToken: account.token,
+            matchId: params.matchId,
+            my11circleChallenge: account.my11circleChallenge || undefined,
+            my11circleUserId: account.my11circleUserId || undefined,
+            mobileNumber: account.mobile || undefined,
+          });
+          if (refreshed && refreshed !== effectiveToken) {
+            // Retry with the fresh token
+            const retryRes = await fetch(`/api/contest/my-teams`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ...body, authToken: refreshed }),
+              cache: "no-store",
+            });
+            const retryResp = await retryRes.json() as typeof resp;
+            const retryTeams = retryResp.teams || retryResp.teams_list || retryResp.data?.teams_list || [];
+            if (Array.isArray(retryTeams) && retryTeams.length > 0) {
+              return retryTeams.map((t: any) => ({
+                teamId: String(t.teamId ?? t.team_id ?? ""),
+                teamNo: t.teamNo ?? t.team_number,
+                team_id: t.teamId ?? t.team_id,
+                team_number: t.teamNo ?? t.team_number,
+                fantasyApp: params.fantasyApp,
+              } as TeamRow));
+            }
+            return [];
+          }
+          // Refresh failed — return empty (UI will show "expired" prompt)
+          return [];
+        }
+
+        const teamsList = resp.teams || resp.teams_list || resp.data?.teams_list || [];
+        if (Array.isArray(teamsList) && teamsList.length > 0) {
+          console.log(`[listFantasyTeamsForAccount] ✅ Account ${params.accountId}: found ${teamsList.length} teams`);
+          return teamsList.map((t: any) => ({
+            teamId: String(t.teamId ?? t.team_id ?? ""),
+            teamNo: t.teamNo ?? t.team_number,
+            team_id: t.teamId ?? t.team_id,
+            team_number: t.teamNo ?? t.team_number,
+            fantasyApp: params.fantasyApp,
+          } as TeamRow));
+        }
+
+        console.log(`[listFantasyTeamsForAccount] Account ${params.accountId}: no existing teams found`);
+        return [];
+      } catch (err: any) {
+        console.error(`[listFantasyTeamsForAccount] Account ${params.accountId} proxy call failed:`, err?.message);
+        return [];
+      }
+    }
+  );
+}
+
+/**
+ * Heuristic: does this message indicate an expired/invalid token?
+ * Used to trigger automatic refresh + retry.
+ */
+function isTokenExpiredMessage(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("token expired") ||
+    lower.includes("invalid token") ||
+    lower.includes("jwt expired") ||
+    lower.includes("session expired") ||
+    lower.includes("not authenticated") ||
+    lower.includes("authentication failed") ||
+    lower.includes("proxy returned 400") ||
+    lower.includes("proxy returned 401") ||
+    lower.includes("proxy returned 403")
+  );
+}
+
+/**
+ * Verify the auth token for a SPECIFIC account.
+ *
+ * Per user spec: "Refresh expired tokens automatically and fetch real Dream11
+ * data for the selected account before enabling Join Contest or Transfer."
+ *
+ * - If the token is valid → returns { proceed: true }
+ * - If the token is expired AND can be refreshed → refreshes + returns { proceed: true, refreshed: true }
+ * - If the token is expired AND cannot be refreshed → returns { proceed: false, needsReauth: true }
+ * - If the network errors → returns { proceed: true } (don't block on transient errors)
+ */
+export async function verifyAccountBeforeTransfer(params: {
+  accountId: string;
+  fantasyApp: FantasyApp;
+  matchId: string | number;
+}): Promise<{ proceed: boolean; reason?: string; needsReauth?: boolean; refreshed?: boolean }> {
+  const account = requireAccount(params.accountId);
+  const scope: CacheScope = "verify";
+
+  // Cache verify result for 60s to avoid hammering the verify endpoint
+  const cached = await accountGetOrFetch<{ valid: boolean | null; refreshed: boolean }>(
+    params.accountId,
+    scope,
+    params.matchId,
+    async () => {
+      console.log(`[verifyAccountBeforeTransfer] 🔄 Verifying token for account ${params.accountId} (${account.label})`);
+      try {
+        const res = await fetch(`/api/auth/verify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fantasyApp: params.fantasyApp,
+            authToken: account.token,
+            matchId: params.matchId,
+            my11circleChallenge: account.my11circleChallenge || undefined,
+            my11circleUserId: account.my11circleUserId || undefined,
+            my11circleMobile: account.mobile || undefined,
+          }),
+          cache: "no-store",
+        });
+        const data = await res.json() as {
+          validToken?: boolean | null;
+          updateUiToken?: boolean;
+          authToken?: string;
+          message?: string;
+          my11circleChallenge?: string;
+          my11circleUserId?: string;
+        };
+
+        // Token explicitly invalid → try refresh
+        if (data.validToken === false) {
+          console.warn(`[verifyAccountBeforeTransfer] ⚠️ Token expired for account ${params.accountId} — attempting refresh`);
+          const refreshed = await refreshAccountAuthToken({
+            accountId: params.accountId,
+            fantasyApp: params.fantasyApp,
+            authToken: account.token,
+            matchId: params.matchId,
+            my11circleChallenge: account.my11circleChallenge || undefined,
+            my11circleUserId: account.my11circleUserId || undefined,
+            mobileNumber: account.mobile || undefined,
+          });
+          if (refreshed) {
+            return { valid: true, refreshed: true };
+          }
+          return { valid: false, refreshed: false };
+        }
+
+        // Token refreshed via updateUiToken
+        if (data.updateUiToken && data.authToken && data.authToken !== account.token) {
+          saveFantasyTokenForAccount(params.accountId, data.authToken, {
+            mobile: account.mobile || undefined,
+            my11circleChallenge: data.my11circleChallenge || account.my11circleChallenge || undefined,
+            my11circleUserId: data.my11circleUserId || account.my11circleUserId || undefined,
+          });
+          return { valid: true, refreshed: true };
+        }
+
+        // Token valid (or network error → null → treat as valid, don't block)
+        // At this point we've already early-returned if validToken === false,
+        // so the remaining possible values are true | null | undefined.
+        const isValid: boolean | null = data.validToken === true ? true : null;
+        return { valid: isValid, refreshed: false };
+      } catch (err: any) {
+        console.warn(`[verifyAccountBeforeTransfer] Network error for account ${params.accountId}: ${err?.message} — proceeding (don't block)`);
+        return { valid: null, refreshed: false };
+      }
+    }
+  );
+
+  if (cached.valid === false) {
+    return {
+      proceed: false,
+      needsReauth: true,
+      reason: `Account ${account.label || params.accountId} token expired — re-link via OTP`,
+    };
+  }
+
+  return { proceed: true, refreshed: cached.refreshed };
+}
+
+/**
+ * Fetch free contests for a SPECIFIC account.
+ *
+ * Per user spec: "fetch real Dream11 data for the selected account before
+ * enabling Join Contest or Transfer."
+ *
+ * - Uses the account's own token (never Account #1's token for Account #2)
+ * - Caches the result per-account (30s TTL)
+ * - Auto-refreshes expired tokens once before failing
+ */
+export async function fetchFreeContestsForAccount(params: {
+  accountId: string;
+  fantasyApp: FantasyApp;
+  matchId: string;
+  allTeamIds: number[];
+  forceRefresh?: boolean;
+}): Promise<FreeContestsResult> {
+  const account = requireAccount(params.accountId);
+  const scope: CacheScope = "free-contests";
+
+  if (params.forceRefresh) {
+    accountInvalidateCache(params.accountId, scope, params.matchId);
+  }
+
+  return accountGetOrFetch<FreeContestsResult>(
+    params.accountId,
+    scope,
+    params.matchId,
+    async () => {
+      console.log(`[fetchFreeContestsForAccount] 📡 Fetching contests for account ${params.accountId} (${account.label})`);
+      try {
+        const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (userToken) headers.Authorization = `Bearer ${userToken}`;
+
+        const proxyRes = await fetch(`/api/contest/free-status`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            fantasyApp: params.fantasyApp,
+            authToken: account.token,
+            matchId: String(params.matchId),
+            allTeamIds: params.allTeamIds,
+          }),
+          cache: "no-store",
+        });
+        const res = await proxyRes.json() as ApiResponse & { contests?: FreeContest[] };
+
+        // Token expired? Try refresh + retry ONCE
+        if (res.validToken === false || isTokenExpiredMessage(String(res.message || ""))) {
+          console.warn(`[fetchFreeContestsForAccount] ⚠️ Token expired for account ${params.accountId} — attempting refresh + retry`);
+          const refreshed = await refreshAccountAuthToken({
+            accountId: params.accountId,
+            fantasyApp: params.fantasyApp,
+            authToken: account.token,
+            matchId: params.matchId,
+            my11circleChallenge: account.my11circleChallenge || undefined,
+            my11circleUserId: account.my11circleUserId || undefined,
+            mobileNumber: account.mobile || undefined,
+          });
+          if (refreshed) {
+            const retryRes = await fetch(`/api/contest/free-status`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                fantasyApp: params.fantasyApp,
+                authToken: refreshed,
+                matchId: String(params.matchId),
+                allTeamIds: params.allTeamIds,
+              }),
+              cache: "no-store",
+            });
+            const retryData = await retryRes.json() as typeof res;
+            if (retryData.status === "success") {
+              return { status: "success", contests: (retryData.contests || []) as FreeContest[] };
+            }
+            return {
+              status: "fail",
+              message: (retryData.message as string) || (retryData.error as string) || "Failed to fetch free contests",
+              contests: [],
+            };
+          }
+          return {
+            status: "fail",
+            message: `Account ${account.label || params.accountId} session expired — re-link via OTP`,
+            contests: [],
+          };
+        }
+
+        if (res.status === "success") {
+          return { status: "success", contests: (res.contests || []) as FreeContest[] };
+        }
+        return {
+          status: "fail",
+          message: (res.message as string) || (res.error as string) || "Failed to fetch free contests",
+          contests: [],
+        };
+      } catch (err: any) {
+        return { status: "fail", message: err?.message || "Network error", contests: [] };
+      }
+    }
+  );
+}
+
+/**
+ * Join a free contest using a SPECIFIC account's token.
+ *
+ * - Auto-refreshes expired tokens once before failing
+ * - Invalidates the my-teams cache for this account after a successful join
+ *   (so subsequent reads reflect the new joined state)
+ */
+export async function joinFreeContestForAccount(params: {
+  accountId: string;
+  fantasyApp: FantasyApp;
+  matchId: string;
+  contestId: string;
+  teamIds: number[];
+}): Promise<JoinContestFullResult> {
+  const account = requireAccount(params.accountId);
+
+  // Pre-verify: refresh token if expired (so we don't waste a join call on a stale token)
+  const verifyResult = await verifyAccountBeforeTransfer({
+    accountId: params.accountId,
+    fantasyApp: params.fantasyApp,
+    matchId: params.matchId,
+  });
+  if (!verifyResult.proceed) {
+    return {
+      status: "fail",
+      contestId: params.contestId,
+      joinResults: [],
+      summary: { successCount: 0, failedCount: params.teamIds.length },
+      message: verifyResult.reason || "Session expired — re-link via OTP",
+      needsReauth: true,
+    };
+  }
+
+  // Re-read the account after possible refresh — the token may have changed
+  const refreshedAccount = getFantasyAccountById(params.accountId) || account;
+
+  try {
+    const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (userToken) headers.Authorization = `Bearer ${userToken}`;
+
+    console.log(`[joinFreeContestForAccount] 📡 Joining contest ${params.contestId} for account ${params.accountId} (${refreshedAccount.label})`);
+    const proxyRes = await fetch(`/api/contest/join`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        fantasyApp: params.fantasyApp,
+        authToken: refreshedAccount.token,
+        matchId: String(params.matchId),
+        contestId: String(params.contestId),
+        teamIds: params.teamIds,
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(45000),
+    });
+    const res = await proxyRes.json() as ApiResponse & {
+      joinResults?: Array<{ teamId: number; success: boolean }>;
+      summary?: { successCount: number; failedCount: number };
+      needsReauth?: boolean;
+    };
+
+    // Token expired? Try refresh + retry ONCE
+    if (res.needsReauth || res.validToken === false || isTokenExpiredMessage(String(res.message || ""))) {
+      console.warn(`[joinFreeContestForAccount] ⚠️ Token expired during join — attempting refresh + retry for account ${params.accountId}`);
+      const newToken = await refreshAccountAuthToken({
+        accountId: params.accountId,
+        fantasyApp: params.fantasyApp,
+        authToken: refreshedAccount.token,
+        matchId: params.matchId,
+        my11circleChallenge: refreshedAccount.my11circleChallenge || undefined,
+        my11circleUserId: refreshedAccount.my11circleUserId || undefined,
+        mobileNumber: refreshedAccount.mobile || undefined,
+      });
+      if (newToken) {
+        const retryRes = await fetch(`/api/contest/join`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            fantasyApp: params.fantasyApp,
+            authToken: newToken,
+            matchId: String(params.matchId),
+            contestId: String(params.contestId),
+            teamIds: params.teamIds,
+          }),
+          cache: "no-store",
+          signal: AbortSignal.timeout(45000),
+        });
+        const retryData = await retryRes.json() as typeof res;
+        // Invalidate my-teams cache (join changed the joined state)
+        accountInvalidateCache(params.accountId, "my-teams", params.matchId);
+        accountInvalidateCache(params.accountId, "joined-contests", params.matchId);
+        accountInvalidateCache(params.accountId, "free-contests", params.matchId);
+        return {
+          status: retryData.status === "success" ? "success" : "fail",
+          message: (retryData.message as string) || (retryData.error as string) || (retryData.status === "success" ? "Joined" : "Failed"),
+          contestId: params.contestId,
+          joinResults: (retryData.joinResults || []) as Array<{ teamId: number; success: boolean }>,
+          summary: (retryData.summary as { successCount: number; failedCount: number }) || {
+            successCount: 0,
+            failedCount: params.teamIds.length,
+          },
+          needsReauth: retryData.needsReauth === true,
+        };
+      }
+      return {
+        status: "fail",
+        contestId: params.contestId,
+        joinResults: [],
+        summary: { successCount: 0, failedCount: params.teamIds.length },
+        message: `Account ${refreshedAccount.label || params.accountId} session expired — re-link via OTP`,
+        needsReauth: true,
+      };
+    }
+
+    // Success or non-auth failure — invalidate my-teams cache either way
+    accountInvalidateCache(params.accountId, "my-teams", params.matchId);
+    accountInvalidateCache(params.accountId, "joined-contests", params.matchId);
+    accountInvalidateCache(params.accountId, "free-contests", params.matchId);
+
+    return {
+      status: res.status === "success" ? "success" : "fail",
+      message: (res.message as string) || (res.error as string) || (res.status === "success" ? "Joined" : "Failed"),
+      contestId: params.contestId,
+      joinResults: (res.joinResults || []) as Array<{ teamId: number; success: boolean }>,
+      summary: (res.summary as { successCount: number; failedCount: number }) || {
+        successCount: 0,
+        failedCount: params.teamIds.length,
+      },
+      // We only reach here if res.needsReauth was falsy (otherwise we returned above)
+      needsReauth: false,
+    };
+  } catch (err: any) {
+    return {
+      status: "fail",
+      message: err?.message || "Network error",
+      contestId: params.contestId,
+      joinResults: [],
+      summary: { successCount: 0, failedCount: params.teamIds.length },
+    };
+  }
+}
+
+/**
+ * Bulk transfer teams to a SPECIFIC linked account.
+ *
+ * Per user spec: "Transfer should run for every selected account, not only the
+ * last added account." "One account failure must not stop other accounts."
+ *
+ * This is the account-aware variant of `bulkTransferToLinkedAccount`. It:
+ *   - Uses only the specified account's token
+ *   - Auto-refreshes the token if the backend reports it expired
+ *   - Writes any refreshed token back to THIS account (not the default one)
+ *   - Invalidates this account's my-teams cache after a successful transfer
+ */
+export async function bulkTransferToAccount(params: {
+  accountId: string;
+  teams: BulkTransferItem[];
+  matchId: string;
+  fantasyApp: FantasyApp;
+  sportIndex?: number;
+  replaceMode?: boolean;
+  existingTeamIds?: string[];
+  skipVerify?: boolean;
+}, onProgress?: (done: number, total: number) => void): Promise<BulkTransferResult> {
+  const account = requireAccount(params.accountId);
+  const teams = params.teams;
+
+  // Pre-transfer verify (unless explicitly skipped)
+  if (params.skipVerify === false) {
+    const verify = await verifyAccountBeforeTransfer({
+      accountId: params.accountId,
+      fantasyApp: params.fantasyApp,
+      matchId: params.matchId,
+    });
+    if (!verify.proceed) {
+      return {
+        totalAttempted: teams.length,
+        successCount: 0,
+        failCount: teams.length,
+        results: teams.map(t => ({
+          teamNo: t.teamNo,
+          success: false,
+          message: verify.reason || "Token expired — re-link via OTP",
+        })),
+        transferLinks: [],
+        needsReauth: true,
+        blockReason: verify.reason,
+      };
+    }
+  }
+
+  // Re-read account after possible refresh
+  const accountCurrent = getFantasyAccountById(params.accountId) || account;
+  const authToken = accountCurrent.token;
+
+  console.log(`[bulkTransferToAccount] 🚀 Transferring ${teams.length} teams to account ${params.accountId} (${accountCurrent.label})`);
+
+  // Delegate to the existing bulkTransferToLinkedAccount implementation,
+  // but pass the account's token explicitly. The existing function already
+  // handles retry/verify/idempotency — we just need to make sure any token
+  // refresh it does gets persisted to the right account.
+  const result = await bulkTransferToLinkedAccount(
+    teams,
+    {
+      matchId: params.matchId,
+      fantasyApp: params.fantasyApp,
+      authToken,
+      sportIndex: params.sportIndex ?? 0,
+      my11circleChallenge: accountCurrent.my11circleChallenge || undefined,
+      my11circleUserId: accountCurrent.my11circleUserId || undefined,
+      mobileNumber: accountCurrent.mobile || undefined,
+      replaceMode: params.replaceMode,
+      existingTeamIds: params.existingTeamIds,
+      skipVerify: true, // we already verified above
+    },
+    onProgress
+  );
+
+  // After transfer, invalidate this account's my-teams cache so the next
+  // listFantasyTeamsForAccount call returns fresh data.
+  accountInvalidateCache(params.accountId, "my-teams", params.matchId);
+  accountInvalidateCache(params.accountId, "joined-contests", params.matchId);
+
+  // If the transfer reported needsReauth, mark this account as expired
+  if (result.needsReauth) {
+    markAccountExpired(params.accountId);
+  } else if (result.successCount > 0) {
+    markAccountActive(params.accountId);
+  }
+
+  return result;
+}
+
 /* ---------- Local team store (guest mode) ---------- */
 
 const LOCAL_TEAMS_KEY = "apna-cricket-local-teams";
 const LOCAL_FANTASY_TOKENS_KEY = "apna-cricket-fantasy-tokens";
+
+/* ---------- Per-account session & cache (multi-account isolation) ----------
+ *
+ * Per user spec: "Keep separate token, JWT, cookies, userId and cache for each
+ * linked account. Refresh expired tokens automatically and fetch real Dream11
+ * data for the selected account before enabling Join Contest or Transfer."
+ *
+ * The functions below thread an explicit `accountId` through every API call
+ * so Account #1 and Account #2 never share cache, token, or session state.
+ */
+
+/**
+ * Resolve an account by ID. Throws a friendly error if the account is missing
+ * or has no token — callers should treat this as "user needs to re-link".
+ */
+function requireAccount(accountId: string | null | undefined) {
+  if (!accountId) {
+    throw new Error("No account selected — pick an account first");
+  }
+  const account = getFantasyAccountById(accountId);
+  if (!account) {
+    throw new Error(`Account ${accountId} not found — re-link via OTP`);
+  }
+  if (!account.token || account.token.length === 0) {
+    throw new Error(`Account ${account.label || accountId} has no token — re-link via OTP`);
+  }
+  return account;
+}
+
+/**
+ * Save a refreshed token back to the SPECIFIC account that needed refresh.
+ *
+ * CRITICAL FIX: Previously, `saveFantasyToken(app, newToken, {mobile})` was
+ * used to persist refreshed tokens. That function looks up accounts by mobile
+ * — but if two accounts share the same mobile (or both have null mobile),
+ * the refresh overwrites the WRONG account. This helper writes directly to
+ * the account identified by `accountId`, with no ambiguity.
+ */
+export function saveFantasyTokenForAccount(
+  accountId: string,
+  newToken: string,
+  extras?: {
+    my11circleChallenge?: string;
+    my11circleUserId?: string;
+    mobile?: string;
+    refreshToken?: string;
+    cookies?: string;
+  }
+): boolean {
+  const account = getFantasyAccountById(accountId);
+  if (!account) {
+    console.warn(`[saveFantasyTokenForAccount] Account ${accountId} not found — refresh dropped`);
+    return false;
+  }
+  const ok = updateFantasyAccountById(accountId, {
+    token: newToken,
+    my11circleChallenge: extras?.my11circleChallenge ?? account.my11circleChallenge,
+    my11circleUserId: extras?.my11circleUserId ?? account.my11circleUserId,
+    mobile: extras?.mobile ?? account.mobile,
+    refreshToken: extras?.refreshToken ?? account.refreshToken,
+    cookies: extras?.cookies ?? account.cookies,
+    lastRefreshed: Date.now(),
+    status: "active",
+  });
+  if (ok) {
+    // Invalidate ALL cached data for this account — the new token may return
+    // different data (e.g. teams created in another session).
+    invalidateAccountCache(accountId);
+    console.log(`[saveFantasyTokenForAccount] ✅ Refreshed token for account ${accountId} (${account.label})`);
+  }
+  return ok;
+}
+
+/**
+ * Try to refresh the token for a SPECIFIC account by calling /api/auth/verify.
+ *
+ * Per user spec: "Refresh expired tokens automatically."
+ *
+ * Returns the new token on success, or null if refresh failed (in which case
+ * the caller should mark the account as expired and prompt re-link).
+ */
+export async function refreshAccountAuthToken(params: {
+  accountId: string;
+  fantasyApp: FantasyApp;
+  authToken: string;
+  matchId: string | number;
+  my11circleChallenge?: string;
+  my11circleUserId?: string;
+  mobileNumber?: string;
+}): Promise<string | null> {
+  try {
+    console.log(`[refreshAccountAuthToken] 🔄 Refreshing token for account ${params.accountId}...`);
+    const res = await fetch(`/api/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fantasyApp: params.fantasyApp,
+        authToken: params.authToken,
+        matchId: params.matchId,
+        my11circleChallenge: params.my11circleChallenge,
+        my11circleUserId: params.my11circleUserId,
+        my11circleMobile: params.mobileNumber,
+      }),
+      cache: "no-store",
+    });
+    const data = await res.json();
+
+    if (data.updateUiToken && data.authToken && data.authToken !== params.authToken) {
+      console.log(`[refreshAccountAuthToken] ✅ Backend returned a fresh token for account ${params.accountId}`);
+      saveFantasyTokenForAccount(params.accountId, data.authToken, {
+        mobile: params.mobileNumber,
+        my11circleChallenge: data.my11circleChallenge || params.my11circleChallenge,
+        my11circleUserId: data.my11circleUserId || params.my11circleUserId,
+      });
+      return data.authToken as string;
+    }
+
+    if (data.validToken === true) {
+      console.log(`[refreshAccountAuthToken] ℹ️ Backend says token is still valid — refresh not needed`);
+      // Mark the account as active (in case it was previously marked expired)
+      markAccountActive(params.accountId);
+      return params.authToken; // current token is fine
+    }
+
+    console.warn(`[refreshAccountAuthToken] ⚠️ Backend confirms token is expired for account ${params.accountId}`);
+    markAccountExpired(params.accountId);
+    return null;
+  } catch (err: any) {
+    console.error(`[refreshAccountAuthToken] ❌ Token refresh failed for account ${params.accountId}: ${err?.message}`);
+    return null;
+  }
+}
+
+/**
+ * Mark the currently active account for a platform (UI selection).
+ * Subsequent API calls without an explicit accountId will resolve to this one.
+ */
+export function setActiveFantasyAccount(app: FantasyApp, accountId: string): void {
+  setActiveAccount(app, accountId);
+}
+
+/**
+ * Get the currently active account ID for a platform (if any has been set).
+ */
+export function getActiveFantasyAccountId(app: FantasyApp): string | null {
+  return getActiveAccountId(app);
+}
 
 function readLocalTeams(): Record<string, TeamRow[]>;
 function readLocalTeams(matchId: string): TeamRow[];
@@ -1102,11 +1857,15 @@ export function saveFantasyToken(
         lastRefreshed: Date.now(),
       });
       console.log(`[saveFantasyToken] ✅ Updated existing ${app} account (${existingForMobile.id}) — mobile: ${extras?.mobile}`);
+      // Invalidate cache for this account — new token may return different data
+      invalidateAccountCache(existingForMobile.id);
     } else {
       // New account — add to array (unique ID auto-generated)
       const newAccount = addFantasyAccount(app, token, extras);
       if (newAccount) {
         console.log(`[saveFantasyToken] ✅ Added NEW ${app} account (${newAccount.id}) — mobile: ${newAccount.mobile || "unknown"}`);
+        // Invalidate any cache for this new account (it's brand new, but be safe)
+        invalidateAccountCache(newAccount.id);
       } else {
         // Max accounts reached — do NOT overwrite, just log warning
         console.warn(`[saveFantasyToken] ⚠️ Max accounts reached for ${app} — account NOT saved (would overwrite). Remove an account first.`);

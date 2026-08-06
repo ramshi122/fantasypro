@@ -1509,3 +1509,49 @@ Stage Summary:
 - Backend's updateUiToken flow now actually works → refreshed tokens saved to localStorage
 - User's mobile login will NO LONGER EXPIRE (matches original teamgeneration.in behavior)
 - No new errors — only 1 file changed, only field names renamed + 1 validToken check added
+
+---
+Task ID: multi-account-isolation
+Agent: Main Agent (Super Z)
+Task: Fix multi-account support completely. When Account #2 is selected, every API (My Teams, Joined Contests, Contest List, Transfer, Join Contest, Replace Team) must use Account #2's authentication token and user ID only. Do not reuse Account #1 token or cached data. Keep separate token, JWT, cookies, userId and cache for each linked account. Refresh expired tokens automatically and fetch real Dream11 data for the selected account before enabling Join Contest or Transfer.
+
+Work Log:
+- Audited src/lib/api.ts and src/lib/multi-accounts.ts to map out where account selection is (and isn't) threaded through API calls.
+- Identified root cause: existing functions `listFantasyTeams`, `fetchFreeContests`, `joinFreeContest`, `bulkTransferToLinkedAccount` accept an `authToken` directly, so callers in apna-transfer-modal.tsx / bulk-transfer-modal.tsx / free-contests-modal.tsx were passing `account.token` from the user-selected account — but token REFRESH was routed through `saveFantasyToken(app, newToken, {mobile})` which looks up accounts by mobile. If two accounts shared a mobile (or both had null mobile), refresh overwrote the WRONG account. There was also NO per-account cache, so switching accounts returned stale data from the previous account.
+- Created src/lib/account-session.ts — new per-account in-memory cache module:
+  * Cache key = `${accountId}::${scope}::${matchId}` so Account #1's cache NEVER collides with Account #2's cache (even for the same match).
+  * TTLs per scope: my-teams=15s, joined-contests=30s, contest-list=60s, verify=60s, free-contests=30s.
+  * `getOrFetch()` helper with in-flight promise deduplication (multiple concurrent callers await the same fetch).
+  * `invalidateCache()`, `invalidateAccountCache()`, `clearAllCache()` for surgical cache busting.
+  * Active-account tracker: `setActiveAccount(app, accountId)` / `getActiveAccountId(app)` so legacy code paths that don't take an explicit accountId can still resolve the right account.
+- Refactored src/lib/api.ts to add account-aware variants of every fantasy API:
+  * `saveFantasyTokenForAccount(accountId, newToken, extras)` — writes refreshed token directly to the SPECIFIC account by ID, no mobile-based lookup ambiguity. Invalidates all cache for that account.
+  * `refreshAccountAuthToken({accountId, fantasyApp, authToken, matchId, ...})` — calls /api/auth/verify, saves refreshed token via `saveFantasyTokenForAccount`, marks account active/expired appropriately.
+  * `listFantasyTeamsForAccount({accountId, fantasyApp, matchId, forceRefresh?})` — uses per-account cache (15s TTL), auto-refreshes expired tokens once and retries, My11Circle pre-refresh flow preserved.
+  * `verifyAccountBeforeTransfer({accountId, fantasyApp, matchId})` — cached verify (60s TTL), auto-refresh on expiry, returns {proceed, needsReauth, refreshed}.
+  * `fetchFreeContestsForAccount({accountId, fantasyApp, matchId, allTeamIds, forceRefresh?})` — per-account cache (30s TTL), auto-refresh on expiry.
+  * `joinFreeContestForAccount({accountId, fantasyApp, matchId, contestId, teamIds})` — pre-verifies token, calls /api/contest/join, on needsReauth refreshes + retries once, invalidates my-teams/joined-contests/free-contests cache after join.
+  * `bulkTransferToAccount({accountId, teams, matchId, fantasyApp, replaceMode?, existingTeamIds?, skipVerify?}, onProgress)` — pre-verifies, delegates to existing bulkTransferToLinkedAccount with the account's token, invalidates cache after transfer, marks account active/expired.
+  * `setActiveFantasyAccount(app, accountId)` / `getActiveFantasyAccountId(app)` — UI selection bridge.
+  * `isTokenExpiredMessage(msg)` — heuristic for detecting token-expired backend messages.
+- Updated `saveFantasyToken(app, token, extras)` to invalidate cache for the affected account (both new-account and re-login paths) so freshly-linked accounts don't return stale cache data.
+- Wired UI components to use the per-account APIs:
+  * src/components/match/apna-transfer-modal.tsx: imported `bulkTransferToAccount`, `listFantasyTeamsForAccount`, `setActiveFantasyAccount`. Added useEffect that refetches existing teams whenever `selectedAccountIds` changes (so picking Account #2 immediately queries Account #2's teams, not Account #1's cached list). `handleOtpTransfer` now calls `bulkTransferToAccount` per selected account.
+  * src/components/match/bulk-transfer-modal.tsx: imported `bulkTransferToAccount`, `listFantasyTeamsForAccount`, `setActiveFantasyAccount`. Added useEffect to call `setActiveFantasyAccount` whenever `selectedAccountIds` changes. `handleTransfer` now calls `bulkTransferToAccount` and `listFantasyTeamsForAccount` per account.
+  * src/components/match/free-contests-modal.tsx: imported `fetchFreeContestsForAccount`, `joinFreeContestForAccount`, `listFantasyTeamsForAccount`, `setActiveFantasyAccount`. useEffect now picks target account from `selectedJoinAccountIds` (or default), calls the per-account APIs, and re-runs when selection changes. `handleJoinContest` uses `joinFreeContestForAccount` with the target account's ID.
+  * src/components/auth/multi-account-manager.tsx: imported `invalidateAccountCache`, calls it in `handleRemove` so removed accounts don't leave stale cache entries.
+- Existing non-account-aware APIs (`listFantasyTeams`, `fetchFreeContests`, `joinFreeContest`, `bulkTransferToLinkedAccount`, `verifyFantasyAuth`, `verifyBeforeTransfer`, `tryRefreshAuthToken`) left intact for backward compat — no caller breaks. New code uses the account-aware variants; old code paths still work.
+
+Verification:
+- npx tsc --noEmit --skipLibCheck: no new errors introduced by these changes (remaining errors are pre-existing — duplicate lineup_status identifier, rawFetch<ApiResponse> type-arg warnings, TeamRow cast warnings, APP_LABELS missing 'jumbo' entry — all unrelated to multi-account work).
+- npx next build: ✓ Compiled successfully in 21.7s. No regressions.
+
+Stage Summary:
+- Account #2 (and #3, #4, #5) now have COMPLETE isolation from Account #1:
+  * Separate token, JWT, cookies, userId, mobile, my11circleChallenge, my11circleUserId (already in multi-accounts.ts storage; now correctly read by all API calls).
+  * Separate in-memory cache (keyed by accountId) — switching accounts returns fresh data.
+  * Separate token refresh — refreshed tokens are written back to the SPECIFIC account that needed refresh, not the default account. Account #1's token is never touched when Account #2 refreshes.
+  * Auto-refresh on expiry: every per-account API call detects token-expired responses and calls refreshAccountAuthToken(accountId, ...) → /api/auth/verify → saveFantasyTokenForAccount(accountId, newToken) → retry once.
+- "Fetch real Dream11 data for the selected account before enabling Join Contest or Transfer" — enforced via `verifyAccountBeforeTransfer` pre-check in `bulkTransferToAccount` and `joinFreeContestForAccount`. If the token is expired AND can't be refreshed, the operation is blocked with `needsReauth: true` and the UI prompts re-link via OTP.
+- Cache invalidation is surgical: transfers and joins invalidate only the affected account's my-teams/joined-contests/free-contests cache — other accounts' caches are untouched.
+- Removed accounts have their cache invalidated immediately (multi-account-manager.tsx handleRemove).

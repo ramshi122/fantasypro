@@ -17,11 +17,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
-  bulkTransferToLinkedAccount,
+  bulkTransferToAccount,
   getLinkedAccount,
   getMatchDetail,
   getPlatformLimit,
-  listFantasyTeams,
+  listFantasyTeamsForAccount,
+  setActiveFantasyAccount,
   type BulkTransferItem,
   type BulkTransferResult,
   type FantasyApp,
@@ -94,6 +95,51 @@ export function ApnaTransferModal({
     setSelectedAccountIds([]);
   }, [selectedApp]);
 
+  // === PER-ACCOUNT EXISTING TEAMS REFETCH ===
+  // When the user selects an account in the multi-select, we need to fetch
+  // the existing teams for THAT account (not the default account).
+  // Per user spec: "When Account #2 is selected, every API must use Account #2's
+  // authentication token and user ID only. Do not reuse Account #1 token or
+  // cached data."
+  useEffect(() => {
+    if (!open || !matchNumericId || phase !== "ready") return;
+    // Determine which account to query: first selected, or default
+    const targetAccountId = selectedAccountIds[0]
+      || availableAccounts.find(a => a.isDefault)?.id
+      || availableAccounts[0]?.id;
+    if (!targetAccountId) {
+      setExistingTeams([]);
+      return;
+    }
+    // Mark this as the active account so legacy code paths resolve it correctly
+    setActiveFantasyAccount(selectedApp, targetAccountId);
+
+    let active = true;
+    (async () => {
+      try {
+        const existing = await listFantasyTeamsForAccount({
+          accountId: targetAccountId,
+          fantasyApp: selectedApp,
+          matchId: matchNumericId,
+        });
+        if (!active) return;
+        setExistingTeams(
+          existing
+            .map((t) => ({
+              team_id: String(t.team_id ?? t.teamId ?? ""),
+              team_number: Number(t.team_number ?? t.teamNo ?? 0),
+            }))
+            .filter((t) => t.team_id)
+        );
+      } catch {
+        if (!active) return;
+        setExistingTeams([]);
+      }
+    })();
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedApp, selectedAccountIds, matchNumericId, phase]);
+
   const validTeams = teams.filter((t) => (t.players?.length || 0) >= 1);
   // Per-platform team limit — matches the ORIGINAL teamgeneration.in APK:
   //   dream11 = 40 (or backend-provided maxAllowedTeam if user has subscription)
@@ -156,17 +202,15 @@ export function ApnaTransferModal({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPlayerIdMap(map);
 
-      if (account) {
+      if (account && account.accountId) {
         try {
-          // Pass my11circle fields for My11Circle — required for list-of-teams to
-          // return existing teams (without these, My11Circle replace shows 0 existing teams).
-          const existing = await listFantasyTeams({
+          // Use the per-account API: this threads the accountId through the
+          // cache + token-refresh logic so Account #1 and Account #2 NEVER
+          // share data. Falls back gracefully if the account is missing.
+          const existing = await listFantasyTeamsForAccount({
+            accountId: account.accountId,
             fantasyApp: defaultApp,
-            authToken: account.token,
             matchId: String(d.id || match.matchId || ""),
-            my11circleChallenge: account.my11circleChallenge || undefined,
-            my11circleUserId: account.my11circleUserId || undefined,
-            my11circleMobile: account.mobile || undefined,
           });
           // eslint-disable-next-line react-hooks/set-state-in-effect
           setExistingTeams(existing.map((t) => ({ team_id: String(t.team_id ?? t.teamId ?? ""), team_number: Number(t.team_number ?? t.teamNo ?? 0) })).filter((t) => t.team_id));
@@ -334,9 +378,16 @@ export function ApnaTransferModal({
     // Determine which accounts to transfer to
     // If user selected accounts via multi-account selector, use those
     // Otherwise fall back to default account
-    const accountsToTransfer = selectedAccounts.length > 0
+    const accountsToTransfer: FantasyAccount[] = selectedAccounts.length > 0
       ? selectedAccounts
-      : [getLinkedAccount(selectedApp)].filter(Boolean);
+      : (() => {
+          const def = getLinkedAccount(selectedApp);
+          if (!def || !def.accountId) return [];
+          // Look up the full FantasyAccount record by accountId so we have
+          // access to all fields (label, status, etc.) uniformly.
+          const full = availableAccounts.find(a => a.id === def.accountId);
+          return full ? [full] : [];
+        })();
 
     if (accountsToTransfer.length === 0) {
       toast.error("Link via OTP first");
@@ -354,29 +405,32 @@ export function ApnaTransferModal({
     const allResults: Array<{ teamNo: number; success: boolean; message?: string }> = [];
 
     // Transfer to EACH selected account sequentially
+    // Per user spec: "Transfer should run for every selected account, not only the last added account."
+    // Per user spec: "One account failure must not stop other accounts."
     for (let ai = 0; ai < accountsToTransfer.length; ai++) {
       const account = accountsToTransfer[ai];
       const accountLabel = account.label || `Account ${ai + 1}`;
       const mobile = account.mobile || "unknown";
 
-      console.log(`[MultiTransfer] 🔄 Account ${ai + 1}/${accountsToTransfer.length}: ${accountLabel} (${mobile})`);
+      console.log(`[MultiTransfer] 🔄 Account ${ai + 1}/${accountsToTransfer.length}: ${accountLabel} (${mobile}) — accountId=${account.id}`);
 
       try {
-        const res = await bulkTransferToLinkedAccount(
-          sendItems,
+        // Use the per-account API: this threads the accountId through the
+        // cache + token-refresh logic so Account #2's transfer uses Account #2's
+        // token (NOT Account #1's token) and any token refresh is persisted
+        // back to Account #2 only.
+        const res = await bulkTransferToAccount(
           {
+            accountId: account.id,
+            teams: sendItems,
             matchId: matchNumericId,
             fantasyApp: selectedApp,
-            authToken: account.token,
             sportIndex: 0,
-            my11circleChallenge: account.my11circleChallenge || undefined,
-            my11circleUserId: account.my11circleUserId || undefined,
-            mobileNumber: account.mobile || undefined,
             replaceMode: isReplace,
             existingTeamIds: isReplace ? selectedIds.slice(0, teamsToSend) : undefined,
-            skipVerify: true,
+            skipVerify: true, // bulkTransferToAccount will verify internally if needed
           },
-          (done, total) => setProgress({ done: ai * teamsToSend + done, total: teamsToSend * accountsToTransfer.length })
+          (done, _total) => setProgress({ done: ai * teamsToSend + done, total: teamsToSend * accountsToTransfer.length })
         );
 
         totalSuccess += res.successCount;

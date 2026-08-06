@@ -26,6 +26,7 @@ import {
   countAccountsForApp,
   canAddMoreAccounts,
 } from "@/lib/multi-accounts";
+import { invalidateAccountCache } from "@/lib/account-session";
 import { canMultiAccountDream11, canMultiAccountMy11Circle } from "@/lib/subscription";
 
 interface MultiAccountManagerProps {
@@ -81,6 +82,9 @@ export function MultiAccountManager({
   function handleRemove(id: string) {
     if (!confirm("Remove this account? Teams saved with this account will remain.")) return;
     removeFantasyAccount(id);
+    // Invalidate any cached data for this account so we don't serve stale
+    // data belonging to a now-removed account.
+    invalidateAccountCache(id);
     onAccountRemoved?.(id);
     setRefreshKey(k => k + 1);
     toast.success("Account removed");

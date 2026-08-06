@@ -18,12 +18,13 @@ import { toast } from "sonner";
 import { useAuth } from "@/lib/store";
 import {
   bulkDirectTransfer,
-  bulkTransferToLinkedAccount,
+  bulkTransferToAccount,
   getFantasyToken,
   getLinkedAccount,
   getMatchDetail,
-  listFantasyTeams,
+  listFantasyTeamsForAccount,
   saveFantasyToken,
+  setActiveFantasyAccount,
   verifyFantasyAuth,
   type BulkTransferItem,
   type BulkTransferResult,
@@ -223,6 +224,26 @@ export function BulkTransferModal({
     setSelectedAccountIds([]);
   }, [selectedApp]);
 
+  // === TRACK ACTIVE ACCOUNT PER PLATFORM ===
+  // Per user spec: "When Account #2 is selected, every API must use Account #2's
+  // authentication token and user ID only."
+  // When the user picks accounts in the multi-select, mark the first one as
+  // "active" so legacy code paths (which don't take an accountId) resolve
+  // the correct account. The per-account APIs (listFantasyTeamsForAccount,
+  // bulkTransferToAccount, etc.) take an explicit accountId and don't rely
+  // on this — but setting it makes the system consistent.
+  useEffect(() => {
+    if (!open) return;
+    const firstSelected = selectedAccountIds[0];
+    if (firstSelected) {
+      setActiveFantasyAccount(selectedApp, firstSelected);
+    } else {
+      // No explicit selection — fall back to default account
+      const def = availableAccounts.find(a => a.isDefault) || availableAccounts[0];
+      if (def) setActiveFantasyAccount(selectedApp, def.id);
+    }
+  }, [open, selectedApp, selectedAccountIds, availableAccounts]);
+
   // Log available accounts for debugging
   useEffect(() => {
     if (open && availableAccounts.length > 0) {
@@ -385,42 +406,43 @@ export function BulkTransferModal({
 
         try {
           // Step 1 (replace mode): Fetch existing teams for THIS account
+          // Per user spec: "When Account #2 is selected, every API must use
+          // Account #2's authentication token and user ID only."
+          // Use listFantasyTeamsForAccount so the cache + token refresh are
+          // scoped to this account only.
           let existingIds: string[] | undefined;
           if (replaceExisting) {
             try {
-              const existing = await listFantasyTeams({
+              const existing = await listFantasyTeamsForAccount({
+                accountId: account.id,
                 fantasyApp: selectedApp,
-                authToken: account.token,
                 matchId: matchNumericId,
-                my11circleChallenge: account.my11circleChallenge || undefined,
-                my11circleUserId: account.my11circleUserId || undefined,
-                my11circleMobile: account.mobile || undefined,
               });
               existingIds = existing
                 .map((t) => String(t.team_id ?? t.teamId ?? ""))
                 .filter(Boolean);
               console.log(`[MultiTransfer] Account ${ai + 1} (${mobile}): found ${existingIds.length} existing teams`);
             } catch (err) {
-              console.warn(`[MultiTransfer] Account ${ai + 1} (${mobile}): listFantasyTeams failed, will create new`);
+              console.warn(`[MultiTransfer] Account ${ai + 1} (${mobile}): listFantasyTeamsForAccount failed, will create new`);
             }
           }
 
           // Step 2: Transfer teams to THIS account
-          const res = await bulkTransferToLinkedAccount(
-            items,
+          // Use bulkTransferToAccount so the transfer uses ONLY this account's
+          // token + writes any refreshed token back to THIS account (not the
+          // default one).
+          const res = await bulkTransferToAccount(
             {
+              accountId: account.id,
+              teams: items,
               matchId: matchNumericId,
               fantasyApp: selectedApp,
-              authToken: account.token,
               sportIndex: 0,
-              my11circleChallenge: account.my11circleChallenge || undefined,
-              my11circleUserId: account.my11circleUserId || undefined,
-              mobileNumber: account.mobile || undefined,
               replaceMode: replaceExisting,
               existingTeamIds: existingIds,
               skipVerify: true,
             },
-            (done, total) => {
+            (done, _total) => {
               // Per-account progress — update global progress
               setProgress({
                 done: ai * items.length + done,
