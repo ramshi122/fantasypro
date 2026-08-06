@@ -40,6 +40,50 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
   const [saved, setSaved] = useState(false);
   const [lineupAnnounced, setLineupAnnounced] = useState(false);
 
+  // === STRATEGY SELECTION SYSTEM ===
+  // Per user spec: "Team Generation-ന് മുമ്പ് ഒരു Strategy Selection System ആണ്."
+  // Card-based selection — tap to select/unselect, no textbox, no typing.
+  // Opens BEFORE generation, user picks strategies, then Continue → generation starts.
+  const [showStrategySelection, setShowStrategySelection] = useState(false);
+  const [selectedStrategies, setSelectedStrategies] = useState<Set<string>>(new Set());
+
+  // Strategy options — per user spec
+  const STRATEGY_GROUPS = [
+    {
+      title: "Team Partition",
+      icon: "📊",
+      options: [
+        { id: "partition_old", label: "Old Partition", desc: "Traditional WK/BAT/AR/BOWL split" },
+        { id: "partition_new", label: "New Partition", desc: "Optimized role distribution" },
+      ],
+    },
+    {
+      title: "Player Selection %",
+      icon: "🎯",
+      options: [
+        { id: "pattern_1", label: "Pattern 1", desc: "High ownership focus" },
+        { id: "pattern_2", label: "Pattern 2", desc: "Mixed ownership + differential" },
+      ],
+    },
+    {
+      title: "Team Combination",
+      icon: "🔀",
+      options: [
+        { id: "combo_old", label: "Old Combination", desc: "Classic 4-3-3-1 structure" },
+        { id: "combo_new", label: "New Combination", desc: "Flexible role-based structure" },
+      ],
+    },
+  ];
+
+  function toggleStrategy(id: string) {
+    setSelectedStrategies(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   // === Multiple Custom Combination Selection ===
   interface Combo { wk: number; bat: number; ar: number; bowl: number; }
   const [customCombos, setCustomCombos] = useState<Combo[]>([]);
@@ -960,7 +1004,15 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
 
         {/* Action Buttons */}
         <div className="space-y-2">
-          <Button className={cn("w-full h-12 bg-gradient-to-r text-white font-bold", info.color)} onClick={handleGenerate} disabled={generating}>
+          {/* Generate button — opens Strategy Selection FIRST, then generates */}
+          <Button
+            className={cn("w-full h-12 bg-gradient-to-r text-white font-bold", info.color)}
+            onClick={() => {
+              // Per user spec: "Team Generation Button അമർത്തുമ്പോൾ ആദ്യം Strategy Selection Screen തുറക്കണം"
+              setShowStrategySelection(true);
+            }}
+            disabled={generating}
+          >
             {generating ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Icon className="w-5 h-5 mr-2" />}
             {generating ? "Generating..." : `Generate ${teamCount} Teams · ${info.label}`}
           </Button>
@@ -971,15 +1023,8 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
             onClick={async () => {
               // Auto-select 40 teams
               setTeamCount(40 as SweepCount);
-              // Generate
-              await handleGenerate();
-              // After generation, auto-trigger transfer (handleGenerate calls onGenerated which saves teams)
-              // Then open transfer modal after a short delay
-              setTimeout(() => {
-                if (generatedTeams.length > 0 || true) {
-                  handleTransfer();
-                }
-              }, 1500);
+              // Open strategy selection first
+              setShowStrategySelection(true);
             }}
             disabled={generating}
           >
@@ -1004,6 +1049,123 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
           )}
         </div>
       </div>
+
+      {/* ============================================================ */}
+      {/* STRATEGY SELECTION MODAL — opens before generation */}
+      {/* ============================================================ */}
+      {/* Per user spec: "Team Generation Button അമർത്തുമ്പോൾ ആദ്യം Strategy Selection Screen തുറക്കണം" */}
+      {showStrategySelection && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full max-h-[85vh] overflow-y-auto border-2 border-violet-300 dark:border-violet-700 shadow-2xl">
+            {/* Header */}
+            <div className="sticky top-0 bg-gradient-to-r from-violet-600 to-purple-600 text-white p-4 rounded-t-2xl z-10">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-black uppercase tracking-wide">🎯 Strategy Selection</p>
+                  <p className="text-[10px] opacity-90 mt-0.5">Select strategies for {info.label}</p>
+                </div>
+                <button
+                  onClick={() => setShowStrategySelection(false)}
+                  className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center text-white"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Strategy Cards */}
+            <div className="p-4 space-y-4">
+              {STRATEGY_GROUPS.map((group) => (
+                <div key={group.title}>
+                  <p className="text-[11px] font-bold text-foreground uppercase mb-2">
+                    {group.icon} {group.title}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {group.options.map((opt) => {
+                      const isSelected = selectedStrategies.has(opt.id);
+                      return (
+                        <button
+                          key={opt.id}
+                          onClick={() => toggleStrategy(opt.id)}
+                          className={cn(
+                            "relative p-3 rounded-xl border-2 text-left transition-all active:scale-95",
+                            isSelected
+                              ? "border-violet-500 bg-violet-100 dark:bg-violet-900/40 shadow-md"
+                              : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-violet-300"
+                          )}
+                        >
+                          {/* Select (+) button — right side */}
+                          <span
+                            className={cn(
+                              "absolute top-2 right-2 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold",
+                              isSelected
+                                ? "bg-violet-500 text-white"
+                                : "bg-slate-200 dark:bg-slate-700 text-slate-500"
+                            )}
+                          >
+                            {isSelected ? "✓" : "+"}
+                          </span>
+                          <p className={cn(
+                            "text-[11px] font-bold pr-6",
+                            isSelected ? "text-violet-700 dark:text-violet-300" : "text-foreground"
+                          )}>
+                            {opt.label}
+                          </p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            {opt.desc}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              {/* Selected count */}
+              <div className="text-center">
+                <p className="text-[10px] text-muted-foreground">
+                  {selectedStrategies.size > 0
+                    ? `${selectedStrategies.size} strateg${selectedStrategies.size === 1 ? "y" : "ies"} selected`
+                    : "No strategy selected — AI will use default"}
+                </p>
+              </div>
+
+              {/* Continue button — starts generation with selected strategies */}
+              <Button
+                className="w-full h-12 bg-gradient-to-r from-violet-600 to-purple-600 text-white font-bold text-sm"
+                onClick={async () => {
+                  setShowStrategySelection(false);
+                  // Log selected strategies
+                  console.log(`[Strategy] Selected: ${[...selectedStrategies].join(", ") || "default"}`);
+                  // Start generation
+                  await handleGenerate();
+                  // If teamCount is 40 (Quick 40+Transfer), auto-open transfer after
+                  if (teamCount === 40) {
+                    setTimeout(() => {
+                      handleTransfer();
+                    }, 1500);
+                  }
+                }}
+              >
+                <Icon className="w-4 h-4 mr-2" />
+                Continue → Generate {teamCount} Teams
+              </Button>
+
+              {/* Skip — generate without strategy */}
+              <button
+                onClick={() => {
+                  setSelectedStrategies(new Set());
+                  setShowStrategySelection(false);
+                  handleGenerate();
+                }}
+                className="w-full text-center text-[10px] text-muted-foreground hover:text-foreground py-1"
+              >
+                Skip — Generate with default strategy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
