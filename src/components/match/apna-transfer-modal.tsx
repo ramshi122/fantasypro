@@ -312,51 +312,108 @@ export function ApnaTransferModal({
   }
 
   // OTP transfer: use /api/fantasy/add-team or /edit-team (requires OTP token)
+  // MULTI-ACCOUNT: Transfers to EACH selected account independently
   async function handleOtpTransfer() {
-    const account = getLinkedAccount(selectedApp);
-    if (!account) { toast.error("Link via OTP first"); onOpenOtpLogin(); return; }
-
     const items = buildItems();
+    if (items.length === 0) { toast.error("No valid teams to transfer"); return; }
+
     const isReplace = selectedTeamIds.size > 0;
     const selectedIds = Array.from(selectedTeamIds);
     const teamsToSend = isReplace ? Math.min(items.length, selectedIds.length) : Math.min(items.length, availableNewSlots);
     if (teamsToSend === 0) { toast.error("No teams to send"); return; }
 
+    // Determine which accounts to transfer to
+    // If user selected accounts via multi-account selector, use those
+    // Otherwise fall back to default account
+    const accountsToTransfer = selectedAccounts.length > 0
+      ? selectedAccounts
+      : [getLinkedAccount(selectedApp)].filter(Boolean);
+
+    if (accountsToTransfer.length === 0) {
+      toast.error("Link via OTP first");
+      onOpenOtpLogin();
+      return;
+    }
+
     setPhase("transferring");
-    setProgress({ done: 0, total: teamsToSend });
+    setProgress({ done: 0, total: teamsToSend * accountsToTransfer.length });
     setLastTransferType("otp");
 
-    try {
-      const sendItems = items.slice(0, teamsToSend);
-      const res = await bulkTransferToLinkedAccount(
-        sendItems,
-        { matchId: matchNumericId, fantasyApp: selectedApp, authToken: account.token, sportIndex: 0,
-          my11circleChallenge: account.my11circleChallenge || undefined, my11circleUserId: account.my11circleUserId || undefined,
-          mobileNumber: account.mobile || undefined, replaceMode: isReplace, existingTeamIds: isReplace ? selectedIds.slice(0, teamsToSend) : undefined },
-        (done, total) => setProgress({ done, total })
-      );
-      setResult(res);
-      setPhase("done");
+    const sendItems = items.slice(0, teamsToSend);
+    let totalSuccess = 0;
+    let totalFail = 0;
+    const allResults: Array<{ teamNo: number; success: boolean; message?: string }> = [];
 
-      // Handle pre-transfer auth-verify block
-      if (res.needsReauth) {
-        toast.error(res.blockReason || "Token expired — re-link via OTP");
-        // Auto-open OTP login modal so user can re-link
-        setTimeout(() => onOpenOtpLogin(), 800);
-        return;
+    // Transfer to EACH selected account sequentially
+    for (let ai = 0; ai < accountsToTransfer.length; ai++) {
+      const account = accountsToTransfer[ai];
+      const accountLabel = account.label || `Account ${ai + 1}`;
+      const mobile = account.mobile || "unknown";
+
+      console.log(`[MultiTransfer] 🔄 Account ${ai + 1}/${accountsToTransfer.length}: ${accountLabel} (${mobile})`);
+
+      try {
+        const res = await bulkTransferToLinkedAccount(
+          sendItems,
+          {
+            matchId: matchNumericId,
+            fantasyApp: selectedApp,
+            authToken: account.token,
+            sportIndex: 0,
+            my11circleChallenge: account.my11circleChallenge || undefined,
+            my11circleUserId: account.my11circleUserId || undefined,
+            mobileNumber: account.mobile || undefined,
+            replaceMode: isReplace,
+            existingTeamIds: isReplace ? selectedIds.slice(0, teamsToSend) : undefined,
+            skipVerify: true,
+          },
+          (done, total) => setProgress({ done: ai * teamsToSend + done, total: teamsToSend * accountsToTransfer.length })
+        );
+
+        totalSuccess += res.successCount;
+        totalFail += res.failCount;
+        allResults.push(...res.results.map(r => ({
+          ...r,
+          message: `[${accountLabel}] ${r.message || ""}`,
+        })));
+
+        console.log(`[MultiTransfer] Account ${ai + 1} done: ${res.successCount} success, ${res.failCount} fail`);
+      } catch (err: any) {
+        console.error(`[MultiTransfer] Account ${ai + 1} error:`, err?.message);
+        totalFail += sendItems.length;
+        allResults.push(...sendItems.map(it => ({
+          teamNo: it.teamNo,
+          success: false,
+          message: `[${accountLabel}] ${err?.message || "Transfer failed"}`,
+        })));
       }
 
-      if (res.successCount > 0) {
-        toast.success(`${res.successCount}/${res.totalAttempted} transferred`);
-      } else {
-        toast.error("Transfer failed — relink OTP");
+      // Delay between accounts
+      if (ai < accountsToTransfer.length - 1) {
+        await new Promise((r) => setTimeout(r, 1500));
       }
-    } catch (err: any) {
-      setResult({ totalAttempted: teamsToSend, successCount: 0, failCount: teamsToSend,
-        results: items.slice(0, teamsToSend).map((it) => ({ teamNo: it.teamNo, success: false, message: err?.message || "Error" })), transferLinks: [] });
-      setPhase("done");
+    }
+
+    const finalResult: BulkTransferResult = {
+      totalAttempted: teamsToSend * accountsToTransfer.length,
+      successCount: totalSuccess,
+      failCount: totalFail,
+      results: allResults,
+      transferLinks: [],
+    };
+
+    setResult(finalResult);
+    setPhase("done");
+
+    if (totalSuccess > 0 && totalFail === 0) {
+      toast.success(`✅ Transferred ${totalSuccess} teams across ${accountsToTransfer.length} account(s)`);
+    } else if (totalSuccess > 0) {
+      toast.success(`⚡ ${totalSuccess} transferred, ${totalFail} failed across ${accountsToTransfer.length} accounts`);
+    } else {
+      toast.error(`❌ Transfer failed for all ${accountsToTransfer.length} accounts`);
     }
   }
+
 
   return (
     <AnimatePresence>
