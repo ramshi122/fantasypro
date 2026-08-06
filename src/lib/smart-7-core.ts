@@ -208,7 +208,7 @@ export function selectSmart7CorePlayers(players: MatchPlayer[]): CorePlayerResul
   console.log(`[Smart7Core] 🎯 ${highConfidence.length} players passed confidence threshold (>${threshold})`);
 
   if (highConfidence.length < 7) {
-    console.warn(`[Smart7Core] ⚠️ Only ${highConfidence.length} high-confidence players (need 7) — using best available`);
+    console.warn(`[Smart7Core] ⚠️ Only ${highConfidence.length} high-confidence players (need 8) — using best available`);
   }
 
   // Step 4: Sort by confidence score (highest first)
@@ -236,7 +236,7 @@ export function selectSmart7CorePlayers(players: MatchPlayer[]): CorePlayerResul
       const r = getRole(s.player);
       return r === role && !selected.find(sel => sel.player === s.player);
     });
-    for (let i = 0; i < minCoverage[role] && i < candidates.length && selected.length < 7; i++) {
+    for (let i = 0; i < minCoverage[role] && i < candidates.length && selected.length < 8; i++) {
       const rank = selected.length + 1;
       selected.push({
         player: candidates[i].player,
@@ -250,7 +250,7 @@ export function selectSmart7CorePlayers(players: MatchPlayer[]): CorePlayerResul
 
   // Second pass: fill remaining slots with highest confidence players
   for (const s of highConfidence) {
-    if (selected.length >= 7) break;
+    if (selected.length >= 8) break;
     if (selected.find(sel => sel.player === s.player)) continue;
     const rank = selected.length + 1;
     selected.push({

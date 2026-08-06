@@ -466,7 +466,36 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
       }
 
       // === APPLY USER SETTINGS: Lock players (force include) ===
-      const lockList = parsePlayers(lockedPlayers);
+      // PER USER SPEC: "team generete thanne fix cheyyanam without error"
+      // Auto-fix 8 core players during generation — NO separate button needed.
+      // If user hasn't manually set lockedPlayers, auto-select 8 best core players.
+      let lockList = parsePlayers(lockedPlayers);
+
+      // Auto-fix 8 core players if:
+      // 1. User hasn't manually locked any players (lockedPlayers is empty)
+      // 2. We have enough players in the pool
+      if (lockList.length === 0 && allPlayers.length >= 11) {
+        try {
+          const { selectSmart7CorePlayers, getCorePlayerIds } = await import("@/lib/smart-7-core");
+          const corePlayers = selectSmart7CorePlayers(allPlayers);
+          if (corePlayers.length >= 7) {
+            // Take top 8 (or 7 if only 7 available) — these are auto-fixed into every team
+            const coreCount = Math.min(8, corePlayers.length);
+            const topCore = corePlayers.slice(0, coreCount);
+            const coreNames = topCore.map(cp => cp.player.name);
+            lockList = coreNames.map(n => n.toLowerCase());
+
+            // Update lockedPlayers field so user can see what was auto-fixed
+            setLockedPlayers(coreNames.join(", "));
+
+            console.log(`[AutoFix] 🧠 Auto-fixed ${coreCount} core players: ${coreNames.join(", ")}`);
+            setProgress(`🧠 Auto-fixed ${coreCount} core players — generating teams...`);
+            await new Promise(r => setTimeout(r, 300));
+          }
+        } catch (err) {
+          console.warn("[AutoFix] Smart core selection failed, continuing without auto-fix:", err);
+        }
+      }
 
       // Small delay to show status
       await new Promise(r => setTimeout(r, 500));
