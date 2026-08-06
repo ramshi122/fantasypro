@@ -236,50 +236,65 @@ export function BulkTransferModal({
   const validTeams = teams.filter((t) => (t.players?.length || 0) === 11);
 
   function buildTransferItems(app: FantasyApp): BulkTransferItem[] {
+    // COMMON TRANSFER PAYLOAD BUILDER — works for ALL modes (Elite AI + sweep)
     return validTeams.map((t) => {
-      // Map player IDs — ensure each player has a valid fantasy ID for the target app
-      const playerIds = (t.players || [])
+      let playerIds = (t.players || [])
         .map((p) => {
-          const fixedId = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? "");
+          const fixedId = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "");
           if (!fixedId) return "";
-          // Look up in playerIdMap first, fallback to fixedId
           const mapped = playerIdMap[`${fixedId}|${app}`];
           return mapped || fixedId;
         })
-        .filter(Boolean); // Remove empty strings
+        .filter(Boolean);
 
-      // Map captain — ensure it's a valid ID
-      const capFixedId = String(t.captain ?? t.c ?? "");
-      const captainId = capFixedId ? (playerIdMap[`${capFixedId}|${app}`] || capFixedId) : "";
-
-      // Map vice-captain — ensure it's a valid ID
-      const vcFixedId = String(t.viceCaptain ?? t.vc ?? t.vicecaptain ?? "");
-      const viceCaptainId = vcFixedId ? (playerIdMap[`${vcFixedId}|${app}`] || vcFixedId) : "";
-
-      // CRITICAL FIX: If captain or VC ID is not in the playerIds array,
-      // the transfer will fail. Ensure captain/VC are always valid player IDs
-      // from the team's player list.
-      let finalCaptain = captainId;
-      let finalVC = viceCaptainId;
-
-      // If captain is empty or not in playerIds, use first player as captain
-      if (!finalCaptain || !playerIds.includes(finalCaptain)) {
-        finalCaptain = playerIds[0] || "";
-        console.warn(`[buildTransferItems] Captain missing/invalid for team ${t.teamNo} — using first player: ${finalCaptain}`);
-      }
-      // If VC is empty or not in playerIds, use second player as VC
-      if (!finalVC || !playerIds.includes(finalVC) || finalVC === finalCaptain) {
-        finalVC = playerIds[1] || playerIds[0] || "";
-        console.warn(`[buildTransferItems] VC missing/invalid for team ${t.teamNo} — using second player: ${finalVC}`);
+      // Fix: If < 11 after mapping, try raw IDs
+      if (playerIds.length < 11) {
+        const rawIds = (t.players || [])
+          .map(p => String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? ""))
+          .filter(Boolean);
+        if (rawIds.length === 11) playerIds = rawIds;
       }
 
-      return {
-        teamNo: t.teamNo ?? 0,
-        playerIds,
-        captainId: finalCaptain,
-        viceCaptainId: finalVC,
-      };
-    }).filter(item => item.playerIds.length === 11 && item.captainId && item.viceCaptainId);
+      // Captain — try map, fallback to raw, fallback to first player
+      const capRaw = String(t.captain ?? t.c ?? "");
+      let captainId = capRaw ? (playerIdMap[`${capRaw}|${app}`] || capRaw) : "";
+      if (!captainId || !playerIds.includes(captainId)) {
+        const capPlayer = (t.players || []).find(p =>
+          String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "") === capRaw
+        );
+        if (capPlayer) {
+          const fid = String(capPlayer.player_fixed_id ?? capPlayer.pl_id ?? capPlayer.pid ?? "");
+          captainId = playerIdMap[`${fid}|${app}`] || fid;
+        }
+      }
+      if (!captainId || !playerIds.includes(captainId)) captainId = playerIds[0] || "";
+
+      // VC — try map, fallback to raw, fallback to different player
+      const vcRaw = String(t.viceCaptain ?? t.vc ?? t.vicecaptain ?? "");
+      let viceCaptainId = vcRaw ? (playerIdMap[`${vcRaw}|${app}`] || vcRaw) : "";
+      if (!viceCaptainId || !playerIds.includes(viceCaptainId)) {
+        const vcPlayer = (t.players || []).find(p =>
+          String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "") === vcRaw
+        );
+        if (vcPlayer) {
+          const fid = String(vcPlayer.player_fixed_id ?? vcPlayer.pl_id ?? vcPlayer.pid ?? "");
+          viceCaptainId = playerIdMap[`${fid}|${app}`] || fid;
+        }
+      }
+      if (!viceCaptainId || !playerIds.includes(viceCaptainId) || viceCaptainId === captainId) {
+        for (let i = 0; i < playerIds.length; i++) {
+          if (playerIds[i] !== captainId) { viceCaptainId = playerIds[i]; break; }
+        }
+        if (!viceCaptainId) viceCaptainId = playerIds[0] || "";
+      }
+
+      return { teamNo: t.teamNo ?? 0, playerIds, captainId, viceCaptainId };
+    }).filter(item =>
+      item.playerIds.length === 11 &&
+      item.captainId &&
+      item.viceCaptainId &&
+      item.captainId !== item.viceCaptainId
+    );
   }
 
   async function handleTransfer() {
