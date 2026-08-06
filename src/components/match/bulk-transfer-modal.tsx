@@ -485,10 +485,12 @@ export function BulkTransferModal({
           // Continue to next account — don't stop
         }
 
-        // Delay between accounts (avoid rate-limit)
+        // Delay between accounts — reduced from 1500ms to 500ms for speed.
+        // Per user spec: transfer is taking too long. 500ms is sufficient
+        // rate-limit protection between accounts.
         if (ai < selectedAccounts.length - 1) {
-          console.log(`[MultiTransfer] ⏳ Waiting 1.5s before next account (rate-limit protection)...`);
-          await new Promise((r) => setTimeout(r, 1500));
+          console.log(`[MultiTransfer] ⏳ Waiting 500ms before next account (rate-limit protection)...`);
+          await new Promise((r) => setTimeout(r, 500));
         }
       }
 

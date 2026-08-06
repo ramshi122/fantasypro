@@ -451,9 +451,12 @@ export function ApnaTransferModal({
         })));
       }
 
-      // Delay between accounts
+      // Delay between accounts — reduced from 1500ms to 500ms for speed.
+      // Per user spec: "Transfer valare slow anu dream11 time edukunnu transfer"
+      // (Dream11 transfer is very slow, taking too much time).
+      // 500ms is enough to avoid rate-limit between accounts.
       if (ai < accountsToTransfer.length - 1) {
-        await new Promise((r) => setTimeout(r, 1500));
+        await new Promise((r) => setTimeout(r, 500));
       }
     }
 
