@@ -236,23 +236,50 @@ export function BulkTransferModal({
   const validTeams = teams.filter((t) => (t.players?.length || 0) === 11);
 
   function buildTransferItems(app: FantasyApp): BulkTransferItem[] {
-    return validTeams.map((t) => ({
-      teamNo: t.teamNo ?? 0,
-      playerIds: (t.players || [])
+    return validTeams.map((t) => {
+      // Map player IDs — ensure each player has a valid fantasy ID for the target app
+      const playerIds = (t.players || [])
         .map((p) => {
           const fixedId = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? "");
-          return playerIdMap[`${fixedId}|${app}`] || fixedId;
+          if (!fixedId) return "";
+          // Look up in playerIdMap first, fallback to fixedId
+          const mapped = playerIdMap[`${fixedId}|${app}`];
+          return mapped || fixedId;
         })
-        .filter(Boolean),
-      captainId: (() => {
-        const capFixedId = String(t.captain ?? t.c ?? "");
-        return playerIdMap[`${capFixedId}|${app}`] || capFixedId;
-      })(),
-      viceCaptainId: (() => {
-        const vcFixedId = String(t.viceCaptain ?? t.vc ?? t.vicecaptain ?? "");
-        return playerIdMap[`${vcFixedId}|${app}`] || vcFixedId;
-      })(),
-    }));
+        .filter(Boolean); // Remove empty strings
+
+      // Map captain — ensure it's a valid ID
+      const capFixedId = String(t.captain ?? t.c ?? "");
+      const captainId = capFixedId ? (playerIdMap[`${capFixedId}|${app}`] || capFixedId) : "";
+
+      // Map vice-captain — ensure it's a valid ID
+      const vcFixedId = String(t.viceCaptain ?? t.vc ?? t.vicecaptain ?? "");
+      const viceCaptainId = vcFixedId ? (playerIdMap[`${vcFixedId}|${app}`] || vcFixedId) : "";
+
+      // CRITICAL FIX: If captain or VC ID is not in the playerIds array,
+      // the transfer will fail. Ensure captain/VC are always valid player IDs
+      // from the team's player list.
+      let finalCaptain = captainId;
+      let finalVC = viceCaptainId;
+
+      // If captain is empty or not in playerIds, use first player as captain
+      if (!finalCaptain || !playerIds.includes(finalCaptain)) {
+        finalCaptain = playerIds[0] || "";
+        console.warn(`[buildTransferItems] Captain missing/invalid for team ${t.teamNo} — using first player: ${finalCaptain}`);
+      }
+      // If VC is empty or not in playerIds, use second player as VC
+      if (!finalVC || !playerIds.includes(finalVC) || finalVC === finalCaptain) {
+        finalVC = playerIds[1] || playerIds[0] || "";
+        console.warn(`[buildTransferItems] VC missing/invalid for team ${t.teamNo} — using second player: ${finalVC}`);
+      }
+
+      return {
+        teamNo: t.teamNo ?? 0,
+        playerIds,
+        captainId: finalCaptain,
+        viceCaptainId: finalVC,
+      };
+    }).filter(item => item.playerIds.length === 11 && item.captainId && item.viceCaptainId);
   }
 
   async function handleTransfer() {
