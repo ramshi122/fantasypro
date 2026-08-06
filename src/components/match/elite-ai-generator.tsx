@@ -200,6 +200,16 @@ export function EliteAIGenerator({
 
       setResult(res);
 
+      // === POST-LINEUP STRICT MODE TOAST ===
+      // Per user spec: when lineup is announced, only confirmed Playing XI
+      // players are used. Show a confirmation toast.
+      if (lineupAnnounced) {
+        toast.success(
+          `🛡️ Post-Lineup Strict Mode active — all ${res.rankedTeams.length} teams use only confirmed Playing XI. No Low Chance/Bench/Injured/Doubtful players included.`,
+          { duration: 5000 }
+        );
+      }
+
       // === COMBINATION VERIFICATION TOAST ===
       // Per user spec: "combination propper need to work all"
       // Show the user exactly which combinations were used so they can verify.
@@ -319,6 +329,11 @@ export function EliteAIGenerator({
             <p className="text-[11px] text-amber-700 dark:text-amber-300">
               {team1Name} vs {team2Name} · {safePlayers.length} players · {lineupAnnounced ? "✓ Lineup announced" : "⚠ Lineup pending"}
             </p>
+            {lineupAnnounced && (
+              <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                🛡️ POST-LINEUP STRICT MODE — only confirmed Playing XI, no Low Chance/Bench/Injured/Doubtful players
+              </p>
+            )}
           </div>
 
           {/* Initial state — Run button */}

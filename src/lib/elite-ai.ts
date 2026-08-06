@@ -45,6 +45,11 @@ import type { MatchPlayer, TeamRow } from "./api";
 import { roleFromPlayerType } from "./format";
 import { calculateWinProbability, type WinProbability } from "./win-probability";
 import { calculateHackScores, getHackTierMultiplier } from "./hack-algorithms";
+import {
+  filterPlayersForPostLineup,
+  validateTeamForPostLineup,
+  scorePlayerForCaptaincy,
+} from "./post-lineup-filter";
 
 /* ============== Types ============== */
 
@@ -1838,23 +1843,21 @@ export function generateEliteTeams(
 
   const pool = players.filter((p) => p.name && credits(p) > 0);
 
-  // STRICT RULE: Never include bench/injured players — BUT only filter when
-  // lineup is actually announced. Before lineup announcement, the backend sets
-  // `playing: 0` for ALL players (meaning "not confirmed yet", NOT "benched").
-  //
-  // If we filter playing===0 before lineup, we'd remove everyone → 0 teams.
-  // After lineup announcement, playing===1 means "in Playing XI", playing===0
-  // means "benched" — then we filter.
+  // === STRICT POST-LINEUP FILTER (per user spec) ===
+  // "ലൈൻഅപ്പിന് ശേഷം സ്ഥിരീകരിച്ച Playing XI മാത്രം ഉപയോഗിക്കുക"
+  // After lineup: ONLY use confirmed Playing XI. Exclude:
+  //   - Low Chance, Impact Sub Only, Bench Player, Reserve Player,
+  //     Doubtful, Injured, Unconfirmed Player
+  // Before lineup: use all players (backend marks all as playing=0).
   let effectivePool: MatchPlayer[];
   if (lineupAnnounced) {
-    // Lineup confirmed — only keep playing XI (playing === 1 or undefined)
-    effectivePool = pool.filter((p) =>
-      p.playing === 1 || p.playing === undefined || p.playing === null
-    );
-    console.log(`[EliteAI] Lineup announced — filtered to ${effectivePool.length}/${pool.length} playing XI players`);
+    // Lineup confirmed — apply STRICT post-lineup filter
+    // This checks multiple field names (playing, playing_status, chance,
+    // impact_sub, bench, reserve, injured, doubtful, unconfirmed, status, etc.)
+    effectivePool = filterPlayersForPostLineup(pool, true);
+    console.log(`[EliteAI] ✅ Post-Lineup STRICT mode — filtered to ${effectivePool.length}/${pool.length} confirmed Playing XI players (excluded Low Chance, Bench, Injured, Doubtful, Impact Sub, Reserve, Unconfirmed)`);
   } else {
     // Lineup pending — use ALL players (backend marks all as playing=0)
-    // We'll only exclude explicitly injured players if marked
     effectivePool = pool;
     console.log(`[EliteAI] Lineup pending — using all ${pool.length} players (will refine after toss)`);
   }
@@ -2335,11 +2338,29 @@ export function generateEliteTeams(
       }
     };
 
-    // Sort team by hack-boosted EFV (EFV × hack tier multiplier)
+    // === COMBINED C/VC SCORING (hack-boosted EFV + post-lineup captaincy score) ===
+    // Per user spec rule 4 & 11: C/VC must be selected based on:
+    //   - Confirmed Playing XI (already filtered)
+    //   - മികച്ച സമീപകാല ഫോം (Good recent form)
+    //   - സ്ഥിരതയുള്ള ഫാന്റസി പ്രകടനം (Consistent fantasy performance)
+    //   - നല്ല Batting/Bowling Role (Good role)
+    //   - മത്സരത്തിൽ കൂടുതൽ പങ്കാളിത്ത സാധ്യത (More participation probability)
+    //   - ഏറ്റവും ഉയർന്ന Fantasy Points നേടാനുള്ള സാധ്യത (Highest fantasy points potential)
+    //
+    // We combine the existing hack-boosted EFV (which factors in form + role)
+    // with the new post-lineup captaincy score (which factors in points,
+    // consistency, captain %, last_play, etc.) for a comprehensive C/VC ranking.
     const sortedByHackEFV = [...team].sort((a, b) => {
       const efvA = calculatePlayerEFV(a) * hackGetTierMultiplier(a);
       const efvB = calculatePlayerEFV(b) * hackGetTierMultiplier(b);
-      return efvB - efvA;
+      // Post-lineup: add captaincy score (form, consistency, role, participation)
+      // to break ties and prefer players with proven track record.
+      const capScoreA = lineupAnnounced ? scorePlayerForCaptaincy(a) : 0;
+      const capScoreB = lineupAnnounced ? scorePlayerForCaptaincy(b) : 0;
+      // Combined score: 70% hack-boosted EFV + 30% captaincy score (post-lineup only)
+      const combinedA = efvA * 0.7 + capScoreA * 0.3;
+      const combinedB = efvB * 0.7 + capScoreB * 0.3;
+      return combinedB - combinedA;
     });
 
     // ROTATED C/VC selection — uses top 6 candidates with rotation offset
@@ -2465,6 +2486,19 @@ export function generateEliteTeams(
       capHackTier = capHack.tier;
       capHackScore = capHack.total;
     } catch { /* ignore */ }
+
+    // === FINAL VALIDATION (per user spec rule 8 & 12) ===
+    // "ഓരോ ടീമും കാണിക്കുന്നതിന് മുമ്പ് വീണ്ടും Validation നടത്തി തെറ്റുകളില്ലെന്ന് ഉറപ്പാക്കുക."
+    // (Validate again before showing each team to ensure no errors.)
+    // "Low Chance അല്ലെങ്കിൽ Uncertain Player ഉൾപ്പെട്ട ഏതൊരു ടീമും ഉടൻ നിരസിച്ച് (Reject)"
+    // (Reject any team with Low Chance or Uncertain Player.)
+    if (lineupAnnounced) {
+      const validation = validateTeamForPostLineup(team, true);
+      if (!validation.valid) {
+        console.warn(`[EliteAI] 🚫 Team ${i + 1} REJECTED (post-lineup validation failed): ${validation.reason}`);
+        continue; // skip this team — don't add to rankedTeams
+      }
+    }
 
     rankedTeams.push({
       rank: i + 1, // temporary, will be reassigned after sort
