@@ -1819,7 +1819,17 @@ export function generateEliteTeams(
   analysis: EliteAnalysisResult,
   lineupAnnounced: boolean = false,
   count: number = 10,
-  mode?: "smart" | "gl" | "advanced" | "combination"
+  mode?: "smart" | "gl" | "advanced" | "combination",
+  /**
+   * Custom role combinations provided by the user (Elite AI Combination mode).
+   * When mode === "combination" AND this array is non-empty, the generator
+   * distributes teams across ONLY these combinations (instead of the built-in
+   * strategy templates). Each combo must sum to 11.
+   *
+   * Per user spec: user provides a complete list of 45 valid combinations
+   * (1WK + 2WK + 3WK variants) that should ALL be usable.
+   */
+  customCombos?: Array<{ wk: number; bat: number; ar: number; bowl: number }>
 ): EliteRankedTeam[] {
   const startTime = Date.now();
 
@@ -1926,12 +1936,51 @@ export function generateEliteTeams(
   // Build the full composition list for this run
   // FIRST team = MAX WIN (strongest possible), then safe/balanced/diff/GL
   const roleCompositions: Array<{ WK: number; BAT: number; AR: number; BOWL: number; strategy: EliteRankedTeam["strategy"]; label: string }> = [];
-  // Add MAX WIN team first
-  roleCompositions.push({ ...maxWinTemplate, strategy: "safe" });
-  for (let i = 0; i < safeCount; i++) roleCompositions.push({ ...safeTemplates[i % safeTemplates.length], strategy: "safe" });
-  for (let i = 0; i < balancedCount; i++) roleCompositions.push({ ...balancedTemplates[i % balancedTemplates.length], strategy: "balanced" });
-  for (let i = 0; i < diffCount; i++) roleCompositions.push({ ...diffTemplates[i % diffTemplates.length], strategy: "differential" });
-  for (let i = 0; i < glCount; i++) roleCompositions.push({ ...glTemplates[i % glTemplates.length], strategy: "grand-league" });
+
+  // === CUSTOM COMBINATIONS MODE (per user spec) ===
+  // If mode === "combination" AND customCombos is provided (non-empty), use
+  // ONLY the user's custom combinations — ignore the strategy templates.
+  // This lets the user pin exactly which role distributions to use (e.g. all
+  // 45 standard Dream11 combinations from team-combos.ts).
+  //
+  // Teams are distributed round-robin across the custom combos so each one
+  // gets approximately the same number of teams.
+  const useCustomCombos = mode === "combination" && customCombos && customCombos.length > 0;
+
+  if (useCustomCombos && customCombos) {
+    console.log(`[EliteAI] 🎯 Combination Auto mode — using ${customCombos.length} custom combinations`);
+    // First team is still MAX WIN (strongest), then distribute remaining across custom combos
+    roleCompositions.push({ ...maxWinTemplate, strategy: "safe" });
+
+    // Distribute remaining teamCount-1 teams across the custom combos
+    const remaining = teamCount - 1;
+    for (let i = 0; i < remaining; i++) {
+      const combo = customCombos[i % customCombos.length];
+      // Validate the combo sums to 11 — skip if invalid
+      const sum = combo.wk + combo.bat + combo.ar + combo.bowl;
+      if (sum !== 11) {
+        console.warn(`[EliteAI] ⚠️ Skipping invalid combo: WK=${combo.wk} BAT=${combo.bat} AR=${combo.ar} BOWL=${combo.bowl} (sum=${sum}, need 11)`);
+        continue;
+      }
+      roleCompositions.push({
+        WK: combo.wk,
+        BAT: combo.bat,
+        AR: combo.ar,
+        BOWL: combo.bowl,
+        strategy: "balanced", // custom combos use "balanced" strategy by default
+        label: `Custom — WK${combo.wk} BAT${combo.bat} AR${combo.ar} BOWL${combo.bowl}`,
+      });
+    }
+    console.log(`[EliteAI] 🎯 Built ${roleCompositions.length} role compositions from custom combos`);
+  } else {
+    // Default: use strategy templates (safe/balanced/differential/GL)
+    // Add MAX WIN team first
+    roleCompositions.push({ ...maxWinTemplate, strategy: "safe" });
+    for (let i = 0; i < safeCount; i++) roleCompositions.push({ ...safeTemplates[i % safeTemplates.length], strategy: "safe" });
+    for (let i = 0; i < balancedCount; i++) roleCompositions.push({ ...balancedTemplates[i % balancedTemplates.length], strategy: "balanced" });
+    for (let i = 0; i < diffCount; i++) roleCompositions.push({ ...diffTemplates[i % diffTemplates.length], strategy: "differential" });
+    for (let i = 0; i < glCount; i++) roleCompositions.push({ ...glTemplates[i % glTemplates.length], strategy: "grand-league" });
+  }
 
   const rankedTeams: EliteRankedTeam[] = [];
   const usedTeamKeys = new Set<string>();
@@ -2966,7 +3015,17 @@ export async function runEliteAI(
   lineupAnnounced: boolean = false,
   onProgress?: (check: number, total: number, message: string) => void,
   teamCount: number = 10,
-  mode?: "smart" | "gl" | "advanced" | "combination"
+  mode?: "smart" | "gl" | "advanced" | "combination",
+  /**
+   * Custom role combinations for Combination Auto mode.
+   * Per user spec: user can provide a list of valid WK/BAT/AR/BOWL
+   * combinations (each summing to 11). When mode === "combination" and this
+   * array is non-empty, teams are distributed across ONLY these combos.
+   *
+   * If mode === "combination" but customCombos is empty/undefined, the
+   * built-in strategy templates are used as fallback.
+   */
+  customCombos?: Array<{ wk: number; bat: number; ar: number; bowl: number }>
 ): Promise<EliteGenerateResult> {
   const startTime = Date.now();
 
@@ -3000,7 +3059,7 @@ export async function runEliteAI(
 
     // Generate N ranked teams
     await new Promise((r) => setTimeout(r, 100));
-    const rankedTeams = generateEliteTeams(validPlayers, team1Name, team2Name, analysis, lineupAnnounced, teamCount, mode);
+    const rankedTeams = generateEliteTeams(validPlayers, team1Name, team2Name, analysis, lineupAnnounced, teamCount, mode, customCombos);
 
     if (rankedTeams.length === 0) {
       throw new Error("Team generation failed — all 173 checks completed but no valid teams could be built. This may be due to insufficient role coverage (need 1+ WK, 3+ BAT, 1+ AR, 3+ BOWL). Try refreshing match data.");

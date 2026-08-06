@@ -33,6 +33,7 @@ import {
   type EliteCheckGroup,
 } from "@/lib/elite-ai";
 import type { MatchInfo, MatchPlayer, TeamRow } from "@/lib/api";
+import { getAllStandardCombos, validateCombo, type RoleCombo } from "@/lib/team-combos";
 import { cn } from "@/lib/utils";
 
 interface EliteAIGeneratorProps {
@@ -82,9 +83,14 @@ export function EliteAIGenerator({
     if (sXI) { try { setManualPlayingXI(new Set(JSON.parse(sXI))); } catch {} }
     const sEx = localStorage.getItem(`apna-exclude-${matchId}`);
     if (sEx) { try { setManualExclude(new Set(JSON.parse(sEx))); } catch {} }
+    // Restore custom combos (per-user preset, not per-match)
+    const sCombos = localStorage.getItem("apna-elite-custom-combos");
+    if (sCombos) { try { setCustomCombos(JSON.parse(sCombos)); } catch {} }
   }, [matchId]);
   useEffect(() => { localStorage.setItem(`apna-playingxi-${matchId}`, JSON.stringify([...manualPlayingXI])); }, [manualPlayingXI, matchId]);
   useEffect(() => { localStorage.setItem(`apna-exclude-${matchId}`, JSON.stringify([...manualExclude])); }, [manualExclude, matchId]);
+  // Persist custom combos across sessions
+  useEffect(() => { localStorage.setItem("apna-elite-custom-combos", JSON.stringify(customCombos)); }, [customCombos]);
 
   function toggleXI(pid: string) { setManualPlayingXI(p => { const n = new Set(p); n.has(pid) ? n.delete(pid) : n.add(pid); return n; }); }
   function toggleEx(pid: string) { setManualExclude(p => { const n = new Set(p); n.has(pid) ? n.delete(pid) : n.add(pid); return n; }); }
@@ -104,6 +110,41 @@ export function EliteAIGenerator({
     setCustomCombos([...customCombos, { ...c }]); toast.success(`Added: WK ${c.wk} | BAT ${c.bat} | AR ${c.ar} | BOWL ${c.bowl}`);
   }
   function removeCombo(idx: number) { setCustomCombos(customCombos.filter((_, i) => i !== idx)); }
+
+  // === STANDARD COMBINATIONS PRESETS (per user spec) ===
+  // Loads ALL 45 valid Dream11 role combinations (1WK + 2WK + 3WK variants)
+  // into the customCombos array. Only adds combinations not already present.
+  function addAllStandardCombos() {
+    const allCombos = getAllStandardCombos();
+    const existing = new Set(customCombos.map(c => `${c.wk}-${c.bat}-${c.ar}-${c.bowl}`));
+    const toAdd = allCombos.filter(c => !existing.has(`${c.wk}-${c.bat}-${c.ar}-${c.bowl}`));
+    if (toAdd.length === 0) {
+      toast.info("All standard combinations already added");
+      return;
+    }
+    setCustomCombos([...customCombos, ...toAdd]);
+    toast.success(`✅ Added ${toAdd.length} standard combinations (${customCombos.length + toAdd.length} total)`);
+  }
+
+  function clearAllCombos() {
+    if (customCombos.length === 0) return;
+    setCustomCombos([]);
+    toast.info("Cleared all custom combinations");
+  }
+
+  // Validate all custom combos — show a warning toast if any are invalid
+  function validateAllCombos() {
+    if (customCombos.length === 0) {
+      toast.info("No custom combinations to validate");
+      return;
+    }
+    const invalid = customCombos.filter(c => !validateCombo(c).valid);
+    if (invalid.length === 0) {
+      toast.success(`✅ All ${customCombos.length} combinations are valid (sum to 11)`);
+    } else {
+      toast.error(`❌ ${invalid.length} invalid combinations found (must sum to 11)`);
+    }
+  }
   const xiCount = manualPlayingXI.size;
   const directMode = xiCount === 11;
 
@@ -125,6 +166,10 @@ export function EliteAIGenerator({
     setProgress({ check: 0, total: 173, message: "Initializing Elite AI — 150+ Data Point Analysis..." });
 
     try {
+      // Pass customCombos ONLY when in "combination" mode. In other modes
+      // (smart/gl/advanced), the engine uses its built-in strategy templates.
+      const combosToPass = eliteMode === "combination" ? customCombos : undefined;
+
       const res = await runEliteAI(
         pool,
         team1Name || "T1",
@@ -133,6 +178,7 @@ export function EliteAIGenerator({
         (check, total, message) => setProgress({ check, total, message }),
         selectedCount,
         eliteMode,
+        combosToPass,
       );
 
       if (!res || !res.rankedTeams || res.rankedTeams.length === 0) {
@@ -551,7 +597,50 @@ export function EliteAIGenerator({
 
                 {/* === Custom Combinations === */}
                 <div className="bg-violet-50 dark:bg-violet-950/20 rounded-lg p-2 border border-violet-200 dark:border-violet-900/30">
-                  <p className="text-[10px] font-bold text-violet-600 dark:text-violet-400 mb-1">📊 Custom Combos</p>
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-[10px] font-bold text-violet-600 dark:text-violet-400">📊 Custom Combos</p>
+                    {customCombos.length > 0 && (
+                      <span className="text-[8px] font-bold text-violet-700 dark:text-violet-300 bg-violet-200 dark:bg-violet-900 px-1.5 py-0.5 rounded-full">
+                        {customCombos.length} combo{customCombos.length !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* === STANDARD PRESETS — per user spec === */}
+                  {/* One-click buttons to load all 45 valid Dream11 combinations */}
+                  <div className="flex gap-1 mb-1.5">
+                    <Button
+                      size="sm"
+                      className="flex-1 h-6 text-[8px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                      onClick={addAllStandardCombos}
+                      title="Load all 45 standard Dream11 combinations (1WK + 2WK + 3WK variants)"
+                    >
+                      <Plus className="w-2.5 h-2.5 mr-0.5" />
+                      Add All 45 Standard
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 text-[8px] border-violet-300 text-violet-700 dark:text-violet-300"
+                      onClick={validateAllCombos}
+                      title="Check that all combinations sum to 11"
+                    >
+                      ✓ Validate
+                    </Button>
+                    {customCombos.length > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[8px] border-red-300 text-red-600 hover:bg-red-50"
+                        onClick={clearAllCombos}
+                        title="Remove all custom combinations"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Manual single-combo entry */}
                   <div className="grid grid-cols-4 gap-1 mb-1">
                     {(["WK","BAT","AR","BOWL"] as const).map((r) => (
                       <div key={r}>
@@ -564,17 +653,39 @@ export function EliteAIGenerator({
                     <span className={cn("text-[8px] font-bold", newCombo.wk + newCombo.bat + newCombo.ar + newCombo.bowl === 11 ? "text-emerald-600" : "text-red-500")}>
                       Total: {newCombo.wk + newCombo.bat + newCombo.ar + newCombo.bowl}/11
                     </span>
-                    <Button size="sm" className="h-6 text-[8px] bg-violet-600 hover:bg-violet-700 text-white" onClick={addCombo}><Plus className="w-2 h-2 mr-0.5" />Add</Button>
+                    <Button size="sm" className="h-6 text-[8px] bg-violet-600 hover:bg-violet-700 text-white" onClick={addCombo}><Plus className="w-2 h-2 mr-0.5" />Add Custom</Button>
                   </div>
+
+                  {/* Combo list — scrollable when many combos present */}
                   {customCombos.length > 0 && (
-                    <div className="mt-1 space-y-0.5">
-                      {customCombos.map((c, i) => (
-                        <div key={i} className="flex items-center justify-between bg-white dark:bg-slate-800 rounded px-1 py-0.5 border border-slate-200 dark:border-slate-700">
-                          <span className="text-[8px] font-mono">{i+1}. WK {c.wk} | BAT {c.bat} | AR {c.ar} | BOWL {c.bowl}</span>
-                          <button onClick={() => removeCombo(i)} className="text-red-500"><X className="w-2.5 h-2.5" /></button>
-                        </div>
-                      ))}
+                    <div className="mt-1.5 space-y-0.5 max-h-32 overflow-y-auto">
+                      {customCombos.map((c, i) => {
+                        const isValid = c.wk + c.bat + c.ar + c.bowl === 11;
+                        return (
+                          <div key={i} className={cn(
+                            "flex items-center justify-between rounded px-1 py-0.5 border",
+                            isValid
+                              ? "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                              : "bg-red-50 dark:bg-red-950/30 border-red-300 dark:border-red-800"
+                          )}>
+                            <span className={cn("text-[8px] font-mono", !isValid && "text-red-600")}>
+                              {i+1}. WK {c.wk} | BAT {c.bat} | AR {c.ar} | BOWL {c.bowl}
+                              {!isValid && ` (sum=${c.wk + c.bat + c.ar + c.bowl})`}
+                            </span>
+                            <button onClick={() => removeCombo(i)} className="text-red-500 hover:text-red-700"><X className="w-2.5 h-2.5" /></button>
+                          </div>
+                        );
+                      })}
                     </div>
+                  )}
+
+                  {/* Hint when in Combination mode but no combos added */}
+                  {eliteMode === "combination" && customCombos.length === 0 && (
+                    <p className="text-[8px] text-amber-600 dark:text-amber-400 mt-1 italic">
+                      ⚠️ Combination Auto mode is selected but no custom combos added —
+                      click "Add All 45 Standard" to load the full preset, or the AI
+                      will fall back to built-in strategy templates.
+                    </p>
                   )}
                 </div>
 
