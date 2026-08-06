@@ -166,9 +166,21 @@ export function EliteAIGenerator({
     setProgress({ check: 0, total: 173, message: "Initializing Elite AI — 150+ Data Point Analysis..." });
 
     try {
-      // Pass customCombos ONLY when in "combination" mode. In other modes
-      // (smart/gl/advanced), the engine uses its built-in strategy templates.
-      const combosToPass = eliteMode === "combination" ? customCombos : undefined;
+      // === AUTO-DETECT COMBINATION MODE ===
+      // Per user spec: "combination propper need to work all"
+      // If the user has added custom combos but forgot to select "Combination Auto"
+      // mode, auto-switch to it. This prevents the #1 user complaint: "I added
+      // combos but they weren't used" (because they were in "smart" mode).
+      let effectiveMode = eliteMode;
+      if (customCombos.length > 0 && eliteMode !== "combination") {
+        effectiveMode = "combination";
+        setEliteMode("combination");
+        console.log(`[EliteAI] Auto-switched to Combination mode (${customCombos.length} custom combos detected)`);
+      }
+
+      // Pass customCombos when in combination mode (or when auto-switched).
+      // In other modes (smart/gl/advanced), the engine uses built-in templates.
+      const combosToPass = effectiveMode === "combination" ? customCombos : undefined;
 
       const res = await runEliteAI(
         pool,
@@ -177,7 +189,7 @@ export function EliteAIGenerator({
         lineupAnnounced,
         (check, total, message) => setProgress({ check, total, message }),
         selectedCount,
-        eliteMode,
+        effectiveMode,
         combosToPass,
       );
 
@@ -188,7 +200,40 @@ export function EliteAIGenerator({
       }
 
       setResult(res);
-      toast.success(`Elite AI generated ${res.rankedTeams.length} ranked teams in ${(res.durationMs / 1000).toFixed(2)}s`);
+
+      // === COMBINATION VERIFICATION TOAST ===
+      // Per user spec: "combination propper need to work all"
+      // Show the user exactly which combinations were used so they can verify.
+      if (effectiveMode === "combination" && customCombos.length > 0) {
+        // Count unique role distributions in generated teams
+        const distCounts = new Map<string, number>();
+        for (const rt of res.rankedTeams) {
+          const players = rt.team.players || [];
+          const dist = { WK: 0, BAT: 0, AR: 0, BOWL: 0 };
+          for (const p of players) {
+            const pt = (p.player_type || "").toUpperCase();
+            const rn = Number(p.role);
+            if (pt.includes("KEEP") || pt.includes("WK") || rn === 0 || rn === 1) dist.WK++;
+            else if (pt.includes("BOWL") || rn === 3 || rn === 6) dist.BOWL++;
+            else if (pt.includes("ALL") || pt.includes("AR") || rn === 2 || rn === 5) dist.AR++;
+            else dist.BAT++;
+          }
+          const key = `${dist.WK}-${dist.BAT}-${dist.AR}-${dist.BOWL}`;
+          distCounts.set(key, (distCounts.get(key) || 0) + 1);
+        }
+        const comboSummary = [...distCounts.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([k, c]) => `${k.split("-")[0]}W·${k.split("-")[1]}B·${k.split("-")[2]}A·${k.split("-")[3]}L: ${c}`)
+          .join(" | ");
+        toast.success(
+          `🎯 ${res.rankedTeams.length} teams from ${customCombos.length} combos in ${(res.durationMs / 1000).toFixed(1)}s\n` +
+          `Top distributions: ${comboSummary}`,
+          { duration: 6000 }
+        );
+      } else {
+        toast.success(`Elite AI generated ${res.rankedTeams.length} ranked teams in ${(res.durationMs / 1000).toFixed(2)}s`);
+      }
     } catch (err: any) {
       console.error("[EliteAI] error:", err);
       toast.error(err?.message || "Elite AI failed — check console for details");
@@ -1111,6 +1156,21 @@ function RankedTeamCard({
   const captain = (team.players || []).find((p) => String(p.player_fixed_id ?? p.pid) === team.captain);
   const viceCaptain = (team.players || []).find((p) => String(p.player_fixed_id ?? p.pid) === team.viceCaptain);
 
+  // === ROLE DISTRIBUTION (per user spec: verify combinations are followed) ===
+  // Count WK/BAT/AR/BOWL in this team so the user can verify the combo was respected.
+  const roleDist = (team.players || []).reduce((acc, p) => {
+    const role = ((): "WK" | "BAT" | "AR" | "BOWL" => {
+      const pt = (p.player_type || "").toUpperCase();
+      const rn = Number(p.role);
+      if (pt.includes("KEEP") || pt.includes("WK") || rn === 0 || rn === 1) return "WK";
+      if (pt.includes("BOWL") || rn === 3 || rn === 6) return "BOWL";
+      if (pt.includes("ALL") || pt.includes("AR") || rn === 2 || rn === 5) return "AR";
+      return "BAT";
+    })();
+    acc[role] = (acc[role] || 0) + 1;
+    return acc;
+  }, { WK: 0, BAT: 0, AR: 0, BOWL: 0 } as Record<string, number>);
+
   return (
     <div className={cn(
       "rounded-xl border-2 overflow-hidden transition-all",
@@ -1163,6 +1223,14 @@ function RankedTeamCard({
           </span>
           <span className={cn("px-1.5 py-0.5 rounded-full font-bold", riskColor)}>
             {riskLevel.toUpperCase()}
+          </span>
+          {/* === ROLE DISTRIBUTION BADGE === */}
+          {/* Per user spec: verify combinations are followed. Shows WK/BAT/AR/BOWL counts. */}
+          <span className="ml-auto text-[9px] font-mono font-bold flex items-center gap-0.5">
+            <span className="px-1 py-0.5 rounded bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300">WK{roleDist.WK}</span>
+            <span className="px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300">BAT{roleDist.BAT}</span>
+            <span className="px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300">AR{roleDist.AR}</span>
+            <span className="px-1 py-0.5 rounded bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300">BOWL{roleDist.BOWL}</span>
           </span>
         </div>
         <p className="text-[10px] text-muted-foreground truncate">

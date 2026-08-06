@@ -1949,30 +1949,45 @@ export function generateEliteTeams(
 
   if (useCustomCombos && customCombos) {
     console.log(`[EliteAI] 🎯 Combination Auto mode — using ${customCombos.length} custom combinations`);
-    // First team is still MAX WIN (strongest), then distribute remaining across custom combos
-    roleCompositions.push({ ...maxWinTemplate, strategy: "safe" });
 
-    // Distribute remaining teamCount-1 teams across the custom combos
-    const remaining = teamCount - 1;
-    for (let i = 0; i < remaining; i++) {
-      const combo = customCombos[i % customCombos.length];
-      // Validate the combo sums to 11 — skip if invalid
-      const sum = combo.wk + combo.bat + combo.ar + combo.bowl;
+    // Filter to only valid combos (sum to 11)
+    const validCombos = customCombos.filter(c => {
+      const sum = c.wk + c.bat + c.ar + c.bowl;
       if (sum !== 11) {
-        console.warn(`[EliteAI] ⚠️ Skipping invalid combo: WK=${combo.wk} BAT=${combo.bat} AR=${combo.ar} BOWL=${combo.bowl} (sum=${sum}, need 11)`);
-        continue;
+        console.warn(`[EliteAI] ⚠️ Skipping invalid combo: WK=${c.wk} BAT=${c.bat} AR=${c.ar} BOWL=${c.bowl} (sum=${sum}, need 11)`);
+        return false;
       }
-      roleCompositions.push({
-        WK: combo.wk,
-        BAT: combo.bat,
-        AR: combo.ar,
-        BOWL: combo.bowl,
-        strategy: "balanced", // custom combos use "balanced" strategy by default
-        label: `Custom — WK${combo.wk} BAT${combo.bat} AR${combo.ar} BOWL${combo.bowl}`,
-      });
+      return true;
+    });
+
+    if (validCombos.length === 0) {
+      console.warn(`[EliteAI] ⚠️ No valid custom combos — falling back to built-in templates`);
+    } else {
+      // First team is still MAX WIN (strongest), then distribute remaining across custom combos
+      roleCompositions.push({ ...maxWinTemplate, strategy: "safe" });
+
+      // Build a POOL of custom combos (cycled) large enough to fill teamCount
+      // even if some get skipped due to insufficient players in a role.
+      // We cycle through the combos multiple times to ensure enough attempts.
+      const remaining = teamCount - 1;
+      // Generate 2x the needed count so skipped combos don't reduce final count
+      const attempts = Math.max(remaining * 2, remaining + validCombos.length);
+      for (let i = 0; i < attempts; i++) {
+        const combo = validCombos[i % validCombos.length];
+        roleCompositions.push({
+          WK: combo.wk,
+          BAT: combo.bat,
+          AR: combo.ar,
+          BOWL: combo.bowl,
+          strategy: "balanced",
+          label: `Custom — WK${combo.wk} BAT${combo.bat} AR${combo.ar} BOWL${combo.bowl}`,
+        });
+      }
+      console.log(`[EliteAI] 🎯 Built ${roleCompositions.length} role composition attempts from ${validCombos.length} custom combos (will produce up to ${teamCount} teams)`);
     }
-    console.log(`[EliteAI] 🎯 Built ${roleCompositions.length} role compositions from custom combos`);
-  } else {
+  }
+
+  if (roleCompositions.length === 0) {
     // Default: use strategy templates (safe/balanced/differential/GL)
     // Add MAX WIN team first
     roleCompositions.push({ ...maxWinTemplate, strategy: "safe" });
@@ -1995,6 +2010,11 @@ export function generateEliteTeams(
   console.log(`[EliteAI] Session seed: ${sessionSeed} (ensures unique teams this run)`);
 
   for (let i = 0; i < roleCompositions.length; i++) {
+    // === STOP ONCE WE HAVE ENOUGH TEAMS ===
+    // We may have generated 2x the needed compositions (to handle skipped combos).
+    // Stop as soon as we reach the requested team count.
+    if (rankedTeams.length >= teamCount) break;
+
     const cfg = roleCompositions[i];
     const isMaxWin = i === 0; // First team = MAX WIN
     const rotationOffset = i + sessionSeed; // shifts every team + unique per run
@@ -2052,8 +2072,23 @@ export function generateEliteTeams(
       const need = cfg[role];
       let poolForRole = byRole[role];
 
-      // DEFENSIVE FALLBACK: If this role pool is too small, borrow from other roles
-      if (poolForRole.length < need) {
+      // === STRICT MODE for custom combinations ===
+      // Per user spec: "combination propper need to work all"
+      // When using custom combos, DO NOT borrow from other roles — that would
+      // change the actual WK/BAT/AR/BOWL distribution and defeat the purpose.
+      // If a role pool is too small to fill the requested count, SKIP this
+      // combo entirely (the team won't be generated, and the next combo in
+      // the list will be tried instead).
+      if (useCustomCombos && poolForRole.length < need) {
+        console.warn(`[EliteAI] ⚠️ Combo WK=${cfg.WK} BAT=${cfg.BAT} AR=${cfg.AR} BOWL=${cfg.BOWL} skipped — ${role} has only ${poolForRole.length} players (need ${need})`);
+        roleFailed = true;
+        break;
+      }
+
+      // DEFENSIVE FALLBACK (only for non-custom mode): If this role pool is too
+      // small, borrow from other roles. This preserves old behavior for
+      // smart/gl/advanced modes but does NOT apply to custom combinations.
+      if (!useCustomCombos && poolForRole.length < need) {
         console.warn(`[EliteAI] Role ${role} has only ${poolForRole.length} players, need ${need} — trying fallback`);
         // Fallback 1: Borrow from AR pool (all-rounders can fill any role)
         if (role !== "AR" && byRole.AR.length > poolForRole.length) {
