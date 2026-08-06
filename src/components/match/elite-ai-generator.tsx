@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertCircle,
@@ -34,6 +34,15 @@ import {
 } from "@/lib/elite-ai";
 import type { MatchInfo, MatchPlayer, TeamRow } from "@/lib/api";
 import { getAllStandardCombos, validateCombo, type RoleCombo } from "@/lib/team-combos";
+import {
+  classifyAllPlayers,
+  classifyPlayer,
+  shouldExcludePlayer,
+  getPlayerId,
+  getClassificationSummary,
+  CATEGORY_META,
+  type PlayerClassification,
+} from "@/lib/player-classification";
 import { cn } from "@/lib/utils";
 
 interface EliteAIGeneratorProps {
@@ -78,6 +87,20 @@ export function EliteAIGenerator({
   const matchId = (match?.matchId ?? match?.id ?? "") as string;
   const safePlayers = Array.isArray(players) ? players : [];
 
+  // === COLOR-BASED PLAYER CLASSIFICATION ===
+  // Per user spec: "MANUAL PLAYER SELECTION – COLOR BASED AI SYSTEM"
+  // Classify every player into BEST_PICK / SAFE_PICK / MID_RISK / RISKY /
+  // AVOID / NOT_PLAYING / UNKNOWN based on AI confidence score.
+  // Recomputes automatically when lineupAnnounced changes or players change.
+  const playerClassifications = useMemo(
+    () => classifyAllPlayers(safePlayers, lineupAnnounced),
+    [safePlayers, lineupAnnounced]
+  );
+  const classificationSummary = useMemo(
+    () => getClassificationSummary(playerClassifications),
+    [playerClassifications]
+  );
+
   useEffect(() => {
     const sXI = localStorage.getItem(`apna-playingxi-${matchId}`);
     if (sXI) { try { setManualPlayingXI(new Set(JSON.parse(sXI))); } catch {} }
@@ -95,6 +118,82 @@ export function EliteAIGenerator({
   function toggleXI(pid: string) { setManualPlayingXI(p => { const n = new Set(p); n.has(pid) ? n.delete(pid) : n.add(pid); return n; }); }
   function toggleEx(pid: string) { setManualExclude(p => { const n = new Set(p); n.has(pid) ? n.delete(pid) : n.add(pid); return n; }); }
   function selectAllXI() { setManualPlayingXI(new Set(safePlayers.map((p: any) => String(p.player_fixed_id ?? p.pid ?? p.name)))); }
+
+  // === COLOR-BASED QUICK ACTIONS (per user spec) ===
+  // ✅ Select Best Picks — select all 🟢 BEST_PICK players
+  function selectBestPicks() {
+    const bestIds = new Set<string>();
+    for (const p of safePlayers) {
+      const id = getPlayerId(p as any);
+      const c = playerClassifications.get(id);
+      if (c?.category === "BEST_PICK") bestIds.add(id);
+    }
+    setManualPlayingXI(bestIds);
+    toast.success(`✅ Selected ${bestIds.size} BEST PICK players`);
+  }
+
+  // ✅ Select Best + Safe — select all 🟢 BEST_PICK + 🟢 SAFE_PICK
+  function selectBestAndSafe() {
+    const ids = new Set<string>();
+    for (const p of safePlayers) {
+      const id = getPlayerId(p as any);
+      const c = playerClassifications.get(id);
+      if (c?.category === "BEST_PICK" || c?.category === "SAFE_PICK") ids.add(id);
+    }
+    setManualPlayingXI(ids);
+    toast.success(`✅ Selected ${ids.size} BEST + SAFE players`);
+  }
+
+  // ❌ Exclude All Avoid Players — add all 🔴 AVOID to exclude set
+  function excludeAllAvoid() {
+    const avoidIds = new Set(manualExclude);
+    for (const p of safePlayers) {
+      const id = getPlayerId(p as any);
+      const c = playerClassifications.get(id);
+      if (c && shouldExcludePlayer(c)) avoidIds.add(id);
+    }
+    setManualExclude(avoidIds);
+    toast.success(`❌ Excluded all AVOID/NOT_PLAYING players (${avoidIds.size} total)`);
+  }
+
+  // ⚫ Exclude Non-Playing Players — add all ⚫ NOT_PLAYING to exclude set
+  function excludeNonPlaying() {
+    const npIds = new Set(manualExclude);
+    let count = 0;
+    for (const p of safePlayers) {
+      const id = getPlayerId(p as any);
+      const c = playerClassifications.get(id);
+      if (c?.category === "NOT_PLAYING") {
+        npIds.add(id);
+        count++;
+      }
+    }
+    setManualExclude(npIds);
+    toast.success(`⚫ Excluded ${count} non-playing players`);
+  }
+
+  // 🎯 AI Smart Selection — auto-select BEST + SAFE, exclude AVOID + NOT_PLAYING
+  function aiSmartSelection() {
+    const selected = new Set<string>();
+    const excluded = new Set<string>();
+    for (const p of safePlayers) {
+      const id = getPlayerId(p as any);
+      const c = playerClassifications.get(id);
+      if (!c) continue;
+      if (c.category === "BEST_PICK" || c.category === "SAFE_PICK") {
+        selected.add(id);
+      } else if (shouldExcludePlayer(c)) {
+        excluded.add(id);
+      }
+    }
+    setManualPlayingXI(selected);
+    setManualExclude(excluded);
+    toast.success(
+      `🎯 AI Smart Selection: ${selected.size} selected (BEST+SAFE), ${excluded.size} excluded (AVOID+NOT_PLAYING)`,
+      { duration: 5000 }
+    );
+  }
+
   function autoOfficialXI() {
     const pl = safePlayers.filter((p: any) => Number(p.playing) === 1);
     if (pl.length === 0) { toast.warning("No official Playing XI found"); return; }
@@ -149,8 +248,29 @@ export function EliteAIGenerator({
   const directMode = xiCount === 11;
 
   async function handleRun() {
-    // Apply Manual Playing XI + Exclude filters
+    // === COLOR-BASED AUTO-EXCLUSION (per user spec) ===
+    // "Players marked ⚫ NOT PLAYING or 🔴 AVOID must NEVER be selected in any
+    //  generated team."
+    // Even if the user didn't manually exclude them, auto-filter them out here
+    // so the engine never sees them. This is a SAFETY NET — the UI buttons make
+    // it easy to exclude manually, but this guarantees it.
     let pool = [...safePlayers];
+    // Auto-exclude AVOID + NOT_PLAYING players (color-based)
+    const autoExcluded: string[] = [];
+    pool = pool.filter((p: any) => {
+      const id = getPlayerId(p);
+      const c = playerClassifications.get(id);
+      if (c && shouldExcludePlayer(c)) {
+        autoExcluded.push(`${p.name || id} (${c.label})`);
+        return false;
+      }
+      return true;
+    });
+    if (autoExcluded.length > 0) {
+      console.log(`[EliteAI] 🚫 Auto-excluded ${autoExcluded.length} AVOID/NOT_PLAYING players: ${autoExcluded.join(", ")}`);
+    }
+
+    // Apply user's manual exclude (in addition to auto-exclude above)
     if (manualExclude.size > 0) {
       pool = pool.filter((p: any) => !manualExclude.has(String(p.player_fixed_id ?? p.pid ?? p.name)));
     }
@@ -160,7 +280,14 @@ export function EliteAIGenerator({
       if (directMode) { toast.info("🎯 Direct Mode — 11 players selected, AI picks only C/VC"); }
       else { toast.info(`🧠 AI Mode — ${pool.length} players selected`); }
     }
-    if (pool.length < 11) { toast.error("Need at least 11 players in pool"); return; }
+    if (pool.length < 11) {
+      toast.error(
+        `Need at least 11 players in pool (currently ${pool.length}). ` +
+        `${autoExcluded.length} players were auto-excluded (AVOID/NOT_PLAYING). ` +
+        `Use AI Smart Selection or manually select more players.`
+      );
+      return;
+    }
     setRunning(true);
     setResult(null);
     setProgress({ check: 0, total: 173, message: "Initializing Elite AI — 150+ Data Point Analysis..." });
@@ -634,8 +761,68 @@ export function EliteAIGenerator({
                     <p className="text-2xl font-black text-emerald-300">89%—95%</p>
                   </div>
                 </div>
-                {/* === Manual Playing XI Selection === */}
-                <div className="bg-emerald-50 dark:bg-emerald-950/20 rounded-lg p-3 border border-emerald-200 dark:border-emerald-900/30">
+                {/* === COLOR-BASED AI PLAYER CLASSIFICATION === */}
+                {/* Per user spec: "MANUAL PLAYER SELECTION – COLOR BASED AI SYSTEM" */}
+                <div className="bg-gradient-to-br from-violet-50 to-emerald-50 dark:from-violet-950/30 dark:to-emerald-950/30 rounded-lg p-2.5 border-2 border-violet-300 dark:border-violet-800">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-[10px] font-bold text-violet-700 dark:text-violet-300">
+                      🎨 Color-Based AI Classification
+                      <span className="ml-1 text-[8px] font-normal text-muted-foreground">
+                        ({lineupAnnounced ? "After Lineup" : "Before Lineup"})
+                      </span>
+                    </p>
+                    {lineupAnnounced && (
+                      <span className="text-[8px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded-full">
+                        🔄 Auto-updated
+                      </span>
+                    )}
+                  </div>
+
+                  {/* === CLASSIFICATION SUMMARY === */}
+                  <div className="flex flex-wrap gap-1 mb-2 text-[8px] font-bold">
+                    {classificationSummary.BEST_PICK > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500 text-white">🟢 BEST: {classificationSummary.BEST_PICK}</span>
+                    )}
+                    {classificationSummary.SAFE_PICK > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-green-400 text-white">🟢 SAFE: {classificationSummary.SAFE_PICK}</span>
+                    )}
+                    {classificationSummary.MID_RISK > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-yellow-500 text-white">🟡 MID: {classificationSummary.MID_RISK}</span>
+                    )}
+                    {classificationSummary.RISKY > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-orange-500 text-white">🟠 RISKY: {classificationSummary.RISKY}</span>
+                    )}
+                    {classificationSummary.AVOID > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-red-500 text-white">🔴 AVOID: {classificationSummary.AVOID}</span>
+                    )}
+                    {classificationSummary.NOT_PLAYING > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-slate-600 text-white">⚫ NOT PLAYING: {classificationSummary.NOT_PLAYING}</span>
+                    )}
+                    {classificationSummary.UNKNOWN > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-slate-400 text-white">⚫ UNKNOWN: {classificationSummary.UNKNOWN}</span>
+                    )}
+                  </div>
+
+                  {/* === QUICK ACTION BUTTONS (per user spec) === */}
+                  <div className="grid grid-cols-2 gap-1 mb-2">
+                    <Button size="sm" className="h-7 text-[8px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold" onClick={selectBestPicks} title="Select all 🟢 BEST PICK players">
+                      ✅ Select Best Picks
+                    </Button>
+                    <Button size="sm" className="h-7 text-[8px] bg-green-500 hover:bg-green-600 text-white font-bold" onClick={selectBestAndSafe} title="Select all 🟢 BEST + 🟢 SAFE players">
+                      ✅ Select Best + Safe
+                    </Button>
+                    <Button size="sm" className="h-7 text-[8px] bg-red-500 hover:bg-red-600 text-white font-bold" onClick={excludeAllAvoid} title="Exclude all 🔴 AVOID + ⚫ NOT_PLAYING players">
+                      ❌ Exclude All Avoid
+                    </Button>
+                    <Button size="sm" className="h-7 text-[8px] bg-slate-600 hover:bg-slate-700 text-white font-bold" onClick={excludeNonPlaying} title="Exclude all ⚫ NOT_PLAYING players">
+                      ⚫ Exclude Non-Playing
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 text-[8px] border-violet-400 text-violet-700 dark:text-violet-300 col-span-2 font-bold" onClick={aiSmartSelection} title="Auto-select BEST+SAFE, exclude AVOID+NOT_PLAYING">
+                      🎯 AI Smart Selection (auto-pick best + exclude worst)
+                    </Button>
+                  </div>
+
+                  {/* === PLAYER LIST WITH COLOR BADGES + CONFIDENCE % === */}
                   <div className="flex items-center justify-between mb-1">
                     <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">✅ Manual Playing XI</p>
                     <div className="flex gap-1.5">
@@ -647,14 +834,31 @@ export function EliteAIGenerator({
                   <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded-full", directMode ? "bg-amber-500 text-white" : xiCount >= 11 ? "bg-emerald-500 text-white" : "bg-red-500 text-white")}>
                     {xiCount} {directMode ? "· 🎯 Direct" : xiCount >= 11 ? "· 🧠 AI" : "· ❌ 11+"}
                   </span>
-                  <div className="max-h-[20vh] overflow-y-auto grid grid-cols-3 gap-0.5 mt-1">
+                  <div className="max-h-[20vh] overflow-y-auto grid grid-cols-2 gap-0.5 mt-1">
                     {safePlayers.map((p: any, i: number) => {
                       const pid = String(p.player_fixed_id ?? p.pid ?? p.name ?? `p${i}`);
                       const sel = manualPlayingXI.has(pid);
+                      const classification = playerClassifications.get(pid);
+                      const rowBg = classification?.rowBgClass || "bg-white dark:bg-slate-800 border-slate-200";
                       return (
-                        <label key={i} className={cn("flex items-center gap-0.5 text-[8px] px-1 py-0.5 rounded border cursor-pointer", sel ? "bg-emerald-100 dark:bg-emerald-950/40 border-emerald-400 text-emerald-700" : "bg-white dark:bg-slate-800 border-slate-200")}>
-                          <input type="checkbox" checked={sel} onChange={() => toggleXI(pid)} className="w-2.5 h-2.5 accent-emerald-500" />
-                          <span className="truncate">{String(p.name || `P${i+1}`).slice(0, 8)}</span>
+                        <label
+                          key={i}
+                          className={cn(
+                            "flex items-center gap-1 text-[8px] px-1 py-0.5 rounded border cursor-pointer",
+                            sel ? "bg-emerald-100 dark:bg-emerald-950/40 border-emerald-400 text-emerald-700" : rowBg
+                          )}
+                          title={classification?.reason || "No classification"}
+                        >
+                          <input type="checkbox" checked={sel} onChange={() => toggleXI(pid)} className="w-2.5 h-2.5 accent-emerald-500 flex-shrink-0" />
+                          {classification && (
+                            <span className={cn("text-[7px] font-bold px-1 py-0 rounded flex-shrink-0", classification.colorClass)}>
+                              {classification.emoji}
+                            </span>
+                          )}
+                          <span className="truncate flex-1">{String(p.name || `P${i+1}`).slice(0, 10)}</span>
+                          {classification?.confidence !== null && classification?.confidence !== undefined && (
+                            <span className="text-[7px] font-bold text-muted-foreground flex-shrink-0">{classification.confidence}%</span>
+                          )}
                         </label>
                       );
                     })}
@@ -667,14 +871,31 @@ export function EliteAIGenerator({
                     <p className="text-[10px] font-bold text-red-600 dark:text-red-400">🚫 Exclude</p>
                     {manualExclude.size > 0 && <button onClick={clearEx} className="text-[8px] text-red-500 underline">Clear ({manualExclude.size})</button>}
                   </div>
-                  <div className="max-h-[15vh] overflow-y-auto grid grid-cols-3 gap-0.5">
+                  <div className="max-h-[15vh] overflow-y-auto grid grid-cols-2 gap-0.5">
                     {safePlayers.map((p: any, i: number) => {
                       const pid = String(p.player_fixed_id ?? p.pid ?? p.name ?? `p${i}`);
                       const ex = manualExclude.has(pid);
+                      const classification = playerClassifications.get(pid);
+                      const rowBg = classification?.rowBgClass || "bg-white dark:bg-slate-800 border-slate-200";
                       return (
-                        <label key={i} className={cn("flex items-center gap-0.5 text-[8px] px-1 py-0.5 rounded border cursor-pointer", ex ? "bg-red-100 dark:bg-red-950/40 border-red-400 text-red-500 line-through" : "bg-white dark:bg-slate-800 border-slate-200")}>
-                          <input type="checkbox" checked={ex} onChange={() => toggleEx(pid)} className="w-2.5 h-2.5 accent-red-500" />
-                          <span className="truncate">{String(p.name || `P${i+1}`).slice(0, 8)}</span>
+                        <label
+                          key={i}
+                          className={cn(
+                            "flex items-center gap-1 text-[8px] px-1 py-0.5 rounded border cursor-pointer",
+                            ex ? "bg-red-100 dark:bg-red-950/40 border-red-400 text-red-500 line-through" : rowBg
+                          )}
+                          title={classification?.reason || "No classification"}
+                        >
+                          <input type="checkbox" checked={ex} onChange={() => toggleEx(pid)} className="w-2.5 h-2.5 accent-red-500 flex-shrink-0" />
+                          {classification && (
+                            <span className={cn("text-[7px] font-bold px-1 py-0 rounded flex-shrink-0", classification.colorClass)}>
+                              {classification.emoji}
+                            </span>
+                          )}
+                          <span className="truncate flex-1">{String(p.name || `P${i+1}`).slice(0, 10)}</span>
+                          {classification?.confidence !== null && classification?.confidence !== undefined && (
+                            <span className="text-[7px] font-bold text-muted-foreground flex-shrink-0">{classification.confidence}%</span>
+                          )}
                         </label>
                       );
                     })}
