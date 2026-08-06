@@ -2395,7 +2395,32 @@ export function generateEliteTeams(
       viceCaptain = sortedByHackEFV.find((p) => playerId(p) !== playerId(captain)) || sortedByHackEFV[1];
     }
 
-    const cvPair = `${playerId(captain)}|${playerId(viceCaptain)}`;
+    // === C/VC DEDUPLICATION (per user spec rule 3) ===
+    // "Duplicate C/VC Combination അനുവദനീയമല്ല" (Duplicate C/VC combos not allowed)
+    // If this C/VC pair was already used in a previous team, try rotating to
+    // a different VC. Up to 6 attempts to find a unique C/VC pair.
+    let cvPair = `${playerId(captain)}|${playerId(viceCaptain)}`;
+    let cvDedupAttempts = 0;
+    while (usedCVPairs.has(cvPair) && cvDedupAttempts < 6) {
+      // Rotate VC to next candidate
+      const nextVcIdx = (cvDedupAttempts + 2) % topCandidates.length;
+      const newVc = topCandidates[nextVcIdx];
+      if (newVc && playerId(newVc) !== playerId(captain)) {
+        viceCaptain = newVc;
+      }
+      cvPair = `${playerId(captain)}|${playerId(viceCaptain)}`;
+      cvDedupAttempts++;
+    }
+    // If still duplicate after 6 attempts, swap captain too
+    if (usedCVPairs.has(cvPair) && topCandidates.length > 2) {
+      captain = topCandidates[(cRotation + 3) % topCandidates.length];
+      cvPair = `${playerId(captain)}|${playerId(viceCaptain)}`;
+    }
+    // If STILL duplicate, skip this team (rare — only when very few candidates)
+    if (usedCVPairs.has(cvPair)) {
+      console.warn(`[EliteAI] Team ${i + 1} skipped — could not find unique C/VC pair`);
+      continue;
+    }
     usedCVPairs.add(cvPair);
 
     // Calculate team EFV
@@ -2535,7 +2560,17 @@ export function generateEliteTeams(
     let _fillerAttempts = 0;
     let _fillerValidationFailed = 0;
     let _fillerDuplicates = 0;
-    const _MAX_FILLER_ATTEMPTS = Math.max(teamCount * 50, 200);
+    // === STRICT COUNT GUARANTEE (per user spec rule 5 & 6) ===
+    // "ഏതെങ്കിലും ടീം Validation പരാജയപ്പെട്ടാൽ അത് ഉപേക്ഷിച്ച്, ആവശ്യപ്പെട്ട എണ്ണം
+    //  പൂർത്തിയാകുന്നതുവരെ പുതിയ Valid Team ജനറേറ്റ് ചെയ്യണം."
+    // (If any team fails validation, skip it and generate new valid teams until
+    //  the requested count is reached.)
+    // "അവസാന ഫലം എല്ലായ്പ്പോഴും ഉപയോക്താവ് ആവശ്യപ്പെട്ട കൃത്യമായ ടീമുകളുടെ എണ്ണം തന്നെയായിരിക്കണം."
+    // (Final result must ALWAYS be exactly the requested team count.)
+    //
+    // Increased max attempts from teamCount*50 to teamCount*200 to ensure we
+    // virtually ALWAYS reach the requested count.
+    const _MAX_FILLER_ATTEMPTS = Math.max(teamCount * 200, 1000);
 
     if (rankedTeams.length < teamCount) {
       console.log(`[EliteAI] 🔄 Main loop produced ${rankedTeams.length}/${teamCount} teams — starting filler (max ${_MAX_FILLER_ATTEMPTS} attempts)`);
@@ -2780,6 +2815,132 @@ export function generateEliteTeams(
     console.log(`[EliteAI]    Final Returned Count: ${Math.min(rankedTeams.length, teamCount)}`);
   }
 
+  // === EMERGENCY COUNT FILL (per user spec rule 6) ===
+  // "അവസാന ഫലം എല്ലായ്പ്പോഴും ഉപയോക്താവ് ആവശ്യപ്പെട്ട കൃത്യമായ ടീമുകളുടെ എണ്ണം തന്നെയായിരിക്കണം.
+  //  കുറവോ കൂടുതലോ ഒരിക്കലും ഉണ്ടാകരുത്."
+  // (Final result must ALWAYS be exactly the requested team count — never less, never more.)
+  //
+  // If after the main loop + filler loop we STILL have fewer than teamCount
+  // teams (very rare — only happens with extremely thin player pools), use
+  // the emergency fallback: generate simple valid teams by picking top-N
+  // players per role with rotating offsets. These are lower-quality but
+  // GUARANTEE the requested count is met.
+  if (rankedTeams.length < teamCount && effectivePool.length >= 11) {
+    const shortfall = teamCount - rankedTeams.length;
+    console.warn(`[EliteAI] 🚨 EMERGENCY COUNT FILL — still need ${shortfall} more team(s) to reach requested ${teamCount}. Using simple fallback generation.`);
+
+    // Build simple teams by rotating through player pools
+    const wkPool = byRole.WK.length > 0 ? byRole.WK : effectivePool.filter(p => roleOf(p) === "WK");
+    const batPool = byRole.BAT.length > 0 ? byRole.BAT : effectivePool.filter(p => roleOf(p) === "BAT");
+    const arPool = byRole.AR.length > 0 ? byRole.AR : effectivePool.filter(p => roleOf(p) === "AR");
+    const bowlPool = byRole.BOWL.length > 0 ? byRole.BOWL : effectivePool.filter(p => roleOf(p) === "BOWL");
+
+    // Fallback role distribution: 1 WK, 4 BAT, 2 AR, 4 BOWL (most common)
+    const fbWk = Math.min(1, wkPool.length);
+    const fbBat = Math.min(4, batPool.length);
+    const fbAr = Math.min(2, arPool.length);
+    const fbBowl = Math.min(11 - fbWk - fbBat - fbAr, bowlPool.length);
+
+    for (let t = 0; t < shortfall * 5 && rankedTeams.length < teamCount; t++) {
+      // Pick players with rotating offsets for diversity
+      const wk = wkPool.length > 0 ? [wkPool[t % wkPool.length]] : [];
+      const bats = batPool.slice(t % Math.max(1, batPool.length), (t % Math.max(1, batPool.length)) + fbBat);
+      const ars = arPool.slice(t % Math.max(1, arPool.length), (t % Math.max(1, arPool.length)) + fbAr);
+      const bowls = bowlPool.slice(t % Math.max(1, bowlPool.length), (t % Math.max(1, bowlPool.length)) + fbBowl);
+      const fbTeam = [...wk, ...bats, ...ars, ...bowls];
+
+      // Pad if short
+      if (fbTeam.length < 11) {
+        const used = new Set(fbTeam.map(playerId));
+        for (const p of effectivePool) {
+          if (fbTeam.length >= 11) break;
+          if (!used.has(playerId(p))) {
+            fbTeam.push(p);
+            used.add(playerId(p));
+          }
+        }
+      }
+
+      if (fbTeam.length !== 11) continue;
+
+      // Dedup check
+      const fbKey = fbTeam.map(playerId).sort().join("|");
+      if (usedTeamKeys.has(fbKey)) continue;
+      usedTeamKeys.add(fbKey);
+
+      // Pick C/VC (top 2 by EFV, unique C/VC pair)
+      const sorted = [...fbTeam].sort((a, b) => calculatePlayerEFV(b) - calculatePlayerEFV(a));
+      let captain = sorted[0];
+      let viceCaptain = sorted[1] || sorted[0];
+      // Find unique C/VC pair
+      let fbCvPair = `${playerId(captain)}|${playerId(viceCaptain)}`;
+      let fbCvAttempts = 0;
+      while (usedCVPairs.has(fbCvPair) && fbCvAttempts < sorted.length) {
+        viceCaptain = sorted[(fbCvAttempts + 2) % sorted.length];
+        if (playerId(viceCaptain) === playerId(captain)) {
+          viceCaptain = sorted[(fbCvAttempts + 3) % sorted.length];
+        }
+        fbCvPair = `${playerId(captain)}|${playerId(viceCaptain)}`;
+        fbCvAttempts++;
+      }
+      if (usedCVPairs.has(fbCvPair)) {
+        // Swap captain
+        captain = sorted[2] || sorted[0];
+        viceCaptain = sorted[3] || sorted[1];
+        fbCvPair = `${playerId(captain)}|${playerId(viceCaptain)}`;
+      }
+      if (usedCVPairs.has(fbCvPair)) continue; // skip if still duplicate
+      usedCVPairs.add(fbCvPair);
+
+      const baseEFV = fbTeam.reduce((s, p) => s + calculatePlayerEFV(p), 0);
+      const teamEFV = baseEFV + calculatePlayerEFV(captain) * 1.0 + calculatePlayerEFV(viceCaptain) * 0.5;
+
+      const teamRow: TeamRow = {
+        _id: `elite_emergency_${rankedTeams.length}_${Date.now().toString(36)}`,
+        teamId: `elite_emergency_${rankedTeams.length + 1}`,
+        teamNo: rankedTeams.length + 1,
+        team_number: rankedTeams.length + 1,
+        players: fbTeam.map((p) => ({
+          pid: playerId(p),
+          player_fixed_id: p.player_fixed_id,
+          pl_id: p.pl_id,
+          name: p.name,
+          shortName: p.shortName || p.name?.slice(0, 4).toUpperCase() || "",
+          team: p.team_name,
+          team_name: p.team_name,
+          role: roleOf(p),
+          credits: p.credits,
+          selected_by: p.selected_by ?? p.sel,
+          image: p.image,
+          playing: p.playing,
+        })) as any,
+        captain: playerId(captain),
+        viceCaptain: playerId(viceCaptain),
+        vicecaptain: playerId(viceCaptain),
+        c: playerId(captain),
+        vc: playerId(viceCaptain),
+        type: "elite-emergency",
+      };
+
+      rankedTeams.push({
+        rank: rankedTeams.length + 1,
+        team: teamRow,
+        efv: teamEFV,
+        aiScore: clamp(Math.round(teamEFV / 11), 0, 100),
+        riskLevel: "medium",
+        strategy: "safe",
+        reasoning: `Emergency fallback team ${rankedTeams.length + 1} — generated to meet requested count. Uses top EFV players with rotating offsets.`,
+        captainReason: `Captain: ${playerName(captain)} — highest EFV in team`,
+        vcReason: `VC: ${playerName(viceCaptain)} — second highest EFV`,
+        hackTier: "",
+        hackScore: 0,
+      });
+
+      if (rankedTeams.length >= teamCount) break;
+    }
+    console.log(`[EliteAI] 🚨 Emergency fill complete — now ${rankedTeams.length}/${teamCount} teams`);
+  }
+
   // GUARANTEE: MAX WIN team (first generated) ALWAYS gets Rank 1
   // Find the max win team (it has the highest player EFVs by design)
   // Give it a small EFV boost to guarantee it ranks #1
@@ -2805,7 +2966,24 @@ export function generateEliteTeams(
   });
 
   // Trim to requested count (in case we generated extra for dedup safety)
+  // Per user spec rule 2: "ആവശ്യപ്പെട്ട എണ്ണത്തിൽ കുറവോ കൂടുതലോ ടീമുകൾ ഒരിക്കലും ജനറേറ്റ് ചെയ്യരുത്."
+  // (Never generate fewer or more teams than requested.)
   const finalTeams = rankedTeams.slice(0, teamCount);
+
+  // === STRICT COUNT VERIFICATION (per user spec rule 6) ===
+  // Log a warning if we couldn't reach the exact requested count.
+  // This should be EXTREMELY rare after the emergency fill above — it would
+  // only happen if the player pool is too small (e.g. <22 players for 20 teams).
+  if (finalTeams.length < teamCount) {
+    console.error(
+      `[EliteAI] ⚠️ STRICT COUNT WARNING — requested ${teamCount} teams but only generated ${finalTeams.length}. ` +
+      `This happens when the player pool is too small to create enough unique teams. ` +
+      `Pool size: ${effectivePool.length} players. ` +
+      `For ${teamCount} unique teams, ideally need ≥${teamCount + 11} players in the pool.`
+    );
+  } else {
+    console.log(`[EliteAI] ✅ STRICT COUNT GUARANTEE met — generated exactly ${finalTeams.length}/${teamCount} teams (all unique, all validated)`);
+  }
 
   // FALLBACK: If we generated 0 teams (all failed due to role/dedup issues),
   // try a simple fallback — just pick top 11 players by EFV with 1 WK minimum

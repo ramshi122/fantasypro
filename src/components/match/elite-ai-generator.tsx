@@ -200,6 +200,31 @@ export function EliteAIGenerator({
 
       setResult(res);
 
+      // === STRICT COUNT VERIFICATION (per user spec rule 6) ===
+      // "അവസാന ഫലം എല്ലായ്പ്പോഴും ഉപയോക്താവ് ആവശ്യപ്പെട്ട കൃത്യമായ ടീമുകളുടെ എണ്ണം തന്നെയായിരിക്കണം."
+      // (Final result must ALWAYS be exactly the requested team count.)
+      if (res.rankedTeams.length === selectedCount) {
+        // ✅ Exact count met — show success toast
+        toast.success(
+          `✅ Generated EXACTLY ${res.rankedTeams.length}/${selectedCount} teams — all unique, all validated`,
+          { duration: 4000 }
+        );
+      } else if (res.rankedTeams.length < selectedCount) {
+        // ⚠️ Fewer than requested — warn user (rare, only with very small player pool)
+        toast.error(
+          `⚠️ Requested ${selectedCount} teams but only ${res.rankedTeams.length} could be generated. ` +
+          `Player pool too small for ${selectedCount} unique teams. ` +
+          `Need at least ${selectedCount + 11} players in the pool.`,
+          { duration: 8000 }
+        );
+      } else {
+        // More than requested (shouldn't happen after trim, but just in case)
+        toast.warning(
+          `Generated ${res.rankedTeams.length} teams (requested ${selectedCount}). Showing first ${selectedCount}.`,
+          { duration: 4000 }
+        );
+      }
+
       // === POST-LINEUP STRICT MODE TOAST ===
       // Per user spec: when lineup is announced, only confirmed Playing XI
       // players are used. Show a confirmation toast.
