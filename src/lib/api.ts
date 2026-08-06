@@ -2822,59 +2822,118 @@ export async function bulkTransferToLinkedAccount(
       }
     }
 
-    // === STEP 4: SEQUENTIAL TRANSFER WITH VERIFICATION ===
+    // === STEP 4: PARALLEL-BATCH TRANSFER WITH VERIFICATION ===
     //
-    // SPEED-OPTIMIZED transfer loop:
-    //   - For DEFINITE success (HTTP 200 + status:success): TRUST the response,
-    //     skip verification entirely. Saves ~1.3s per team = 26s for 20 teams.
-    //   - For TENTATIVE success (HTTP 201 + "Something Went Wrong!" — backend
-    //     proxy bug): verify via list-of-teams to confirm.
-    //   - For failures: idempotency check before retrying (in case the team
-    //     was actually created despite the error response).
-    //   - Max 2 retry attempts per team (was 3) — most failures are auth or
-    //     deadline, not transient.
-    //   - Inter-team delay: 0ms for Dream11 (no rate-limit observed), 500ms
-    //     for My11Circle (more sensitive).
+    // SPEED-OPTIMIZED PARALLEL TRANSFER:
+    //   - Dream11: 3 workers in parallel (~3x speedup, no rate-limit observed)
+    //   - My11Circle: 1 worker (sequential — backend is more sensitive)
+    //   - Other: 1 worker (safe default)
     //
-    // Result: ~5x faster than previous version for the happy path.
-    //   Old: 20 teams × (transfer 1s + verify delay 300ms + verify call 1s + inter-team 100ms) = ~48s
-    //   New: 20 teams × (transfer 1s + inter-team 0ms) = ~20s
+    // Per-team retry strategy (each worker runs this independently):
+    //   - Max 2 retry attempts per team
+    //   - Backoff: 200ms → 500ms
+    //   - DEFINITE success → trust response, skip verification (saves 1.3s/team)
+    //   - TENTATIVE success → verify via list-of-teams
+    //   - Failure → idempotency check before retry
+    //   - Token expired → refresh once (shared across all workers — only 1 refresh
+    //     happens at a time, other workers await the same refresh promise)
+    //
+    // Timing (20 Dream11 teams, happy path):
+    //   Sequential: 20 × 1s = 20s
+    //   Parallel-3: 20 / 3 × 1s = ~7s  (3x faster)
+    //
+    // FAILURE SAFETY:
+    //   - If parallel causes backend issues, we auto-detect via response codes
+    //     and the per-team retry loop handles it.
+    //   - Token refresh is coordinated via shared promise — no duplicate refreshs.
+    //   - Results are recorded in a pre-allocated array (indexed by team position)
+    //     so order is preserved regardless of completion order.
     const MAX_ATTEMPTS_PER_TEAM = 2;
     const RETRY_BACKOFFS = [200, 500];
-    const INTER_TEAM_DELAY = params.fantasyApp === "my11circle" ? 500
-                          : params.fantasyApp === "dream11" ? 0
-                          : 100;
-    const VERIFY_DELAY_MS = 100; // wait 100ms after transfer before verifying (only for tentative)
-    const RECHECK_DELAY_MS = 200; // wait 200ms before second verify (only for tentative)
+    const VERIFY_DELAY_MS = 100;
+    const RECHECK_DELAY_MS = 200;
+    const REQUEST_TIMEOUT_MS = 15000; // was 45000 — fail fast, retry fast
 
-    // Track the latest known team count (updated after each successful transfer + verify)
+    // Concurrency per platform
+    const CONCURRENCY = params.fantasyApp === "dream11" ? 3
+                      : params.fantasyApp === "my11circle" ? 1
+                      : 1;
+
+    // === SHARED STATE ACROSS WORKERS ===
+    // All workers read from `sharedParams.authToken` — when one worker refreshes
+    // the token, all subsequent attempts by other workers use the new token.
+    let sharedParams = { ...params };
     let latestKnownTeamCount = initialTeamCount;
+    let completedCount = 0;
+    let batchNeedsReauth = false; // set if ANY worker hits a permanent auth failure
 
-    for (let i = 0; i < teams.length; i++) {
+    // Token refresh coordination — only one worker should refresh at a time.
+    // Other workers await the same promise and reuse the result.
+    let refreshPromise: Promise<string | null> | null = null;
+
+    /**
+     * Get or trigger a token refresh. If a refresh is already in-flight
+     * (started by another worker), await the same promise instead of
+     * firing a duplicate refresh call.
+     */
+    async function getRefreshedToken(): Promise<string | null> {
+      if (refreshPromise) {
+        // Another worker is already refreshing — await its result
+        console.log("[bulkTransfer]    ⏳ Another worker is refreshing token — awaiting...");
+        return refreshPromise;
+      }
+      console.log("[bulkTransfer]    🔄 This worker will refresh token via /api/auth/verify...");
+      refreshPromise = (async () => {
+        try {
+          const refreshed = await tryRefreshAuthToken(sharedParams);
+          if (refreshed) {
+            // Update sharedParams so all workers use the new token
+            sharedParams = { ...sharedParams, authToken: refreshed };
+            console.log("[bulkTransfer]    ✅ Token refreshed (shared with all workers)");
+          }
+          return refreshed;
+        } finally {
+          // Clear the promise so a future refresh can happen if needed
+          refreshPromise = null;
+        }
+      })();
+      return refreshPromise;
+    }
+
+    // Pre-allocate results array (preserves order regardless of completion order)
+    const teamResults: Array<{
+      teamNo: number;
+      success: boolean;
+      message: string;
+      transferred: boolean;
+      verified: boolean;
+      needsReauth: boolean;
+    }> = new Array(teams.length);
+
+    /**
+     * Process ONE team: build body, call /api/transfer, handle retry/verify.
+     * This function is called by N parallel workers.
+     */
+    async function processTeam(i: number): Promise<void> {
       const t = teams[i];
-      const hasExistingId = params.replaceMode && params.existingTeamIds && i < params.existingTeamIds.length && params.existingTeamIds[i];
+      const hasExistingId = sharedParams.replaceMode && sharedParams.existingTeamIds && i < sharedParams.existingTeamIds.length && sharedParams.existingTeamIds[i];
       const isReplace = !!hasExistingId;
       const numericPlayers = t.playerIds.map((id) => Number(id)).filter((n) => !isNaN(n));
       const numericCaptain = Number(t.captainId);
       const numericVC = Number(t.viceCaptainId);
 
       const body: Record<string, unknown> = {
-        matchId: params.matchId,
+        matchId: sharedParams.matchId,
         captain: isNaN(numericCaptain) ? t.captainId : numericCaptain,
         vice_captain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
         vicecaptain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
         players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
-        fantasyApp: params.fantasyApp,
-        authToken: params.authToken,
-        sportIndex: params.sportIndex ?? 0,
+        fantasyApp: sharedParams.fantasyApp,
+        authToken: sharedParams.authToken,
+        sportIndex: sharedParams.sportIndex ?? 0,
         type: isReplace ? "edit" : "new",
       };
-      if (isReplace && params.existingTeamIds) body.id = params.existingTeamIds[i];
-
-      console.log(`\n${"-".repeat(60)}`);
-      console.log(`[bulkTransfer] 🏏 Team ${i + 1}/${teams.length} (teamNo=${t.teamNo}) — ${isReplace ? "REPLACE" : "ADD"}`);
-      console.log(`[bulkTransfer]    Captain: ${body.captain}, VC: ${body.vice_captain}, Players: ${(body.players as number[]).length}`);
-      console.log(`${"-".repeat(60)}`);
+      if (isReplace && sharedParams.existingTeamIds) body.id = sharedParams.existingTeamIds[i];
 
       let teamTransferred = false;
       let teamVerified = false;
@@ -2883,18 +2942,23 @@ export async function bulkTransferToLinkedAccount(
       let tokenRefreshedForTeam = false;
 
       for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_TEAM; attempt++) {
-        console.log(`[bulkTransfer]    → Attempt ${attempt}/${MAX_ATTEMPTS_PER_TEAM} for team ${t.teamNo}`);
+        // Stop if another worker already discovered the token is permanently expired
+        if (batchNeedsReauth) {
+          teamErrorMessage = "Token expired — re-link via OTP";
+          needsReauthForTeam = true;
+          break;
+        }
 
         try {
-          // Always use the latest token (may have been refreshed)
-          const attemptBody = { ...body, authToken: params.authToken, skipPreVerify: true };
+          // Always use the latest token (may have been refreshed by another worker)
+          const attemptBody = { ...body, authToken: sharedParams.authToken, skipPreVerify: true };
 
           const proxyRes = await fetch(`/api/transfer`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(attemptBody),
             cache: "no-store",
-            signal: AbortSignal.timeout(45000),
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
           });
           const res = await proxyRes.json() as ApiResponse & {
             needsReauth?: boolean;
@@ -2906,43 +2970,33 @@ export async function bulkTransferToLinkedAccount(
 
           // ── CASE 1: SESSION EXPIRED ──
           if (res.needsReauth) {
-            console.warn(`[bulkTransfer]    ⚠️ Session expired (code: ${res.code || "UNKNOWN"})`);
+            console.warn(`[bulkTransfer] Team ${t.teamNo} attempt ${attempt}: ⚠️ Session expired (code: ${res.code || "UNKNOWN"})`);
 
-            // Try token refresh once per team
+            // Try token refresh once per team (shared across workers)
             if (!tokenRefreshedForTeam) {
-              console.log(`[bulkTransfer]    🔄 Attempting token refresh via /api/auth/verify...`);
-              const refreshedToken = await tryRefreshAuthToken(params);
-              if (refreshedToken) {
-                params = { ...params, authToken: refreshedToken };
+              const refreshed = await getRefreshedToken();
+              if (refreshed) {
                 tokenRefreshedForTeam = true;
-                console.log(`[bulkTransfer]    ✅ Token refreshed! Retrying transfer with new token...`);
-                // Don't count this as an attempt — give it a fresh try
-                attempt--; // undo the attempt counter increment
+                console.log(`[bulkTransfer] Team ${t.teamNo}: ✅ Token refreshed! Retrying with new token...`);
+                attempt--; // don't count this as an attempt
                 continue;
               } else {
-                console.error(`[bulkTransfer]    ❌ Token refresh failed — session permanently expired`);
+                console.error(`[bulkTransfer] Team ${t.teamNo}: ❌ Token refresh failed — session permanently expired`);
+                // Mark the ENTIRE batch as needing reauth — other workers should stop
+                batchNeedsReauth = true;
               }
             }
 
-            // Refresh failed or already tried — permanent auth failure
             needsReauthForTeam = true;
             teamErrorMessage = (res.error as string) || "Session expired — re-link via OTP";
-            break; // exit retry loop, mark as failed
+            break;
           }
 
           // ── CASE 2: SUCCESS RESPONSE ──
           if (res.status === "success") {
-            console.log(`[bulkTransfer]    ✅ Transfer response: SUCCESS (confidence: ${res.confidence || "definite"})`);
-
-            // SPEED OPTIMIZATION: For definite-success responses (HTTP 200 +
-            // status:success from backend), TRUST the response and skip the
-            // list-of-teams verification. The verification call adds ~1.3s per
-            // team and is unnecessary when the backend explicitly says success.
-            // Only verify on TENTATIVE success (HTTP 201 + proxy bug) where
-            // we can't be sure the team was actually created.
+            // SPEED OPTIMIZATION: For definite-success, trust the response.
             if (res.confidence !== "tentative") {
-              console.log(`[bulkTransfer]    ⚡ DEFINITE success — skipping verification (saved ~1.3s)`);
-              latestKnownTeamCount = isReplace ? latestKnownTeamCount : latestKnownTeamCount + 1;
+              console.log(`[bulkTransfer] Team ${t.teamNo}: ✅ SUCCESS (definite, skipped verify)`);
               teamTransferred = true;
               teamVerified = true;
               break;
@@ -2950,134 +3004,164 @@ export async function bulkTransferToLinkedAccount(
 
             // TENTATIVE success — verify via list-of-teams
             await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
-            const verifyResult = await verifyTransferCompletion(params, isReplace, latestKnownTeamCount, i + 1);
+            const verifyResult = await verifyTransferCompletion(sharedParams, isReplace, latestKnownTeamCount, i + 1);
 
             if (verifyResult.verified) {
-              console.log(`[bulkTransfer]    ✅ VERIFIED — team confirmed on platform (count: ${verifyResult.newCount})`);
-              latestKnownTeamCount = verifyResult.newCount ?? (latestKnownTeamCount + (isReplace ? 0 : 1));
-              teamTransferred = true;
-              teamVerified = true;
-              break; // success — move to next team
-            } else {
-              console.warn(`[bulkTransfer]    ⚠️ Verification failed — team may not be registered yet. Count: ${verifyResult.newCount} (expected ${isReplace ? latestKnownTeamCount : latestKnownTeamCount + 1})`);
-
-              // Idempotency check: maybe the team WAS created but verification was stale
-              // Re-check after another short delay
-              await new Promise((r) => setTimeout(r, RECHECK_DELAY_MS));
-              const recheckResult = await verifyTransferCompletion(params, isReplace, latestKnownTeamCount, i + 1);
-              if (recheckResult.verified) {
-                console.log(`[bulkTransfer]    ✅ VERIFIED on second check — team confirmed (count: ${recheckResult.newCount})`);
-                latestKnownTeamCount = recheckResult.newCount ?? (latestKnownTeamCount + (isReplace ? 0 : 1));
-                teamTransferred = true;
-                teamVerified = true;
-                break;
-              }
-
-              // Verification failed twice — response was "tentative" success but we
-              // can't confirm. Trust it anyway (backend may have delayed list-of-teams cache).
-              console.warn(`[bulkTransfer]    ⚠️ Verification failed twice but response was success — trusting response`);
-              latestKnownTeamCount = isReplace ? latestKnownTeamCount : latestKnownTeamCount + 1;
+              console.log(`[bulkTransfer] Team ${t.teamNo}: ✅ VERIFIED (count: ${verifyResult.newCount})`);
               teamTransferred = true;
               teamVerified = true;
               break;
             }
-          } else {
-            // ── CASE 3: FAILURE RESPONSE ──
-            teamErrorMessage = (res.error as string) || (res.message as string) || "Transfer failed";
-            const lowerErr = teamErrorMessage.toLowerCase();
-            console.warn(`[bulkTransfer]    ⚠️ Transfer failed (attempt ${attempt}): ${teamErrorMessage} [code: ${res.code || "N/A"}]`);
 
-            // Check for NON-RETRYABLE errors (deadline passed, team limit, etc.)
-            if (res.code === "DEADLINE_PASSED" || lowerErr.includes("deadline")) {
-              console.error(`[bulkTransfer]    ❌ Deadline passed — NOT retrying`);
-              break;
-            }
-            if (res.code === "TEAM_LIMIT_REACHED" || lowerErr.includes("limit") || lowerErr.includes("maximum")) {
-              console.error(`[bulkTransfer]    ❌ Team limit reached — NOT retrying`);
-              break;
-            }
-
-            // Idempotency check: before retrying, check if the team was actually created
-            // (the response may have been a false negative)
-            console.log(`[bulkTransfer]    🔍 Idempotency check — verifying if team was actually created...`);
-            await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
-            const idempotencyCheck = await verifyTransferCompletion(params, isReplace, latestKnownTeamCount, i + 1);
-            if (idempotencyCheck.verified) {
-              console.log(`[bulkTransfer]    ✅ IDEMPOTENCY CHECK: team was actually created (count: ${idempotencyCheck.newCount}) — marking as success`);
-              latestKnownTeamCount = idempotencyCheck.newCount ?? (latestKnownTeamCount + (isReplace ? 0 : 1));
+            // Re-check after short delay
+            await new Promise((r) => setTimeout(r, RECHECK_DELAY_MS));
+            const recheckResult = await verifyTransferCompletion(sharedParams, isReplace, latestKnownTeamCount, i + 1);
+            if (recheckResult.verified) {
+              console.log(`[bulkTransfer] Team ${t.teamNo}: ✅ VERIFIED on 2nd check (count: ${recheckResult.newCount})`);
               teamTransferred = true;
               teamVerified = true;
               break;
             }
-            console.log(`[bulkTransfer]    🔍 Idempotency check: team was NOT created — safe to retry`);
+
+            // Trust the success response anyway (backend list-of-teams cache lag)
+            console.warn(`[bulkTransfer] Team ${t.teamNo}: ⚠️ Verify failed twice but response was success — trusting`);
+            teamTransferred = true;
+            teamVerified = true;
+            break;
+          }
+
+          // ── CASE 3: FAILURE RESPONSE ──
+          teamErrorMessage = (res.error as string) || (res.message as string) || "Transfer failed";
+          const lowerErr = teamErrorMessage.toLowerCase();
+          console.warn(`[bulkTransfer] Team ${t.teamNo} attempt ${attempt}: ⚠️ ${teamErrorMessage} [code: ${res.code || "N/A"}]`);
+
+          // Non-retryable errors
+          if (res.code === "DEADLINE_PASSED" || lowerErr.includes("deadline")) {
+            console.error(`[bulkTransfer] Team ${t.teamNo}: ❌ Deadline passed — NOT retrying`);
+            break;
+          }
+          if (res.code === "TEAM_LIMIT_REACHED" || lowerErr.includes("limit") || lowerErr.includes("maximum")) {
+            console.error(`[bulkTransfer] Team ${t.teamNo}: ❌ Team limit reached — NOT retrying`);
+            break;
+          }
+
+          // Idempotency check before retry
+          await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
+          const idempotencyCheck = await verifyTransferCompletion(sharedParams, isReplace, latestKnownTeamCount, i + 1);
+          if (idempotencyCheck.verified) {
+            console.log(`[bulkTransfer] Team ${t.teamNo}: ✅ Idempotency check — team was actually created`);
+            teamTransferred = true;
+            teamVerified = true;
+            break;
           }
         } catch (err: any) {
           // ── CASE 4: NETWORK ERROR / TIMEOUT ──
           const errMsg = err?.message || "Network error";
           const isTimeout = errMsg.includes("timeout") || errMsg.includes("abort");
-          const isNetwork = errMsg.includes("network") || errMsg.includes("fetch") || isTimeout;
           teamErrorMessage = isTimeout ? "Request timed out" : `Network error: ${errMsg}`;
-          console.warn(`[bulkTransfer]    ⚠️ ${isTimeout ? "TIMEOUT" : "NETWORK ERROR"} (attempt ${attempt}): ${teamErrorMessage}`);
-
-          // Network errors are always retryable
+          console.warn(`[bulkTransfer] Team ${t.teamNo} attempt ${attempt}: ⚠️ ${isTimeout ? "TIMEOUT" : "NETWORK"} ${teamErrorMessage}`);
         }
 
-        // Backoff before next attempt (if not the last attempt)
-        if (attempt < MAX_ATTEMPTS_PER_TEAM && !teamTransferred && !needsReauthForTeam) {
-          const backoff = RETRY_BACKOFFS[attempt - 1] || 8000;
-          console.log(`[bulkTransfer]    ⏳ Waiting ${backoff}ms before retry...`);
+        // Backoff before next attempt
+        if (attempt < MAX_ATTEMPTS_PER_TEAM && !teamTransferred && !needsReauthForTeam && !batchNeedsReauth) {
+          const backoff = RETRY_BACKOFFS[attempt - 1] || 500;
           await new Promise((r) => setTimeout(r, backoff));
         }
       } // end of per-team retry loop
 
-      // === STEP 5: RECORD TEAM RESULT ===
-      if (teamTransferred && teamVerified) {
-        successCount++;
-        results.push({
-          teamNo: t.teamNo,
-          success: true,
-          message: teamVerified ? "Transferred and verified" : "Transferred (verification skipped)",
-        });
-        transferLinks.push({ teamNo: t.teamNo });
-        console.log(`[bulkTransfer] ✅✅ Team ${t.teamNo} — SUCCESS (transferred + verified)`);
-      } else {
-        failCount++;
-        results.push({
-          teamNo: t.teamNo,
-          success: false,
-          message: teamErrorMessage || "Transfer failed after all retries",
-        });
-        transferLinks.push({ teamNo: t.teamNo });
-        console.error(`[bulkTransfer] ❌❌ Team ${t.teamNo} — FAILED: ${teamErrorMessage}`);
+      // Record result in pre-allocated array (preserves order)
+      teamResults[i] = {
+        teamNo: t.teamNo,
+        success: teamTransferred && teamVerified,
+        message: teamTransferred && teamVerified
+          ? "Transferred"
+          : (teamErrorMessage || "Transfer failed after all retries"),
+        transferred: teamTransferred,
+        verified: teamVerified,
+        needsReauth: needsReauthForTeam,
+      };
 
-        // If session expired, stop the entire bulk transfer
-        if (needsReauthForTeam) {
-          console.error(`[bulkTransfer] 🛑 Session expired — stopping bulk transfer, marking remaining teams as skipped`);
-          for (let j = i + 1; j < teams.length; j++) {
-            failCount++;
-            results.push({ teamNo: teams[j].teamNo, success: false, message: "Skipped — token expired" });
-            transferLinks.push({ teamNo: teams[j].teamNo });
-            onProgress?.(j + 1, teams.length);
-          }
-          return {
-            totalAttempted: teams.length,
-            successCount,
-            failCount,
-            results,
-            transferLinks,
+      completedCount++;
+      onProgress?.(completedCount, teams.length);
+
+      if (teamTransferred && teamVerified) {
+        console.log(`[bulkTransfer] ✅ Team ${t.teamNo} — SUCCESS [${completedCount}/${teams.length}]`);
+      } else {
+        console.error(`[bulkTransfer] ❌ Team ${t.teamNo} — FAILED: ${teamErrorMessage} [${completedCount}/${teams.length}]`);
+      }
+    }
+
+    // === RUN WORKERS (sequential or parallel) ===
+    console.log(`[bulkTransfer] 🚀 Starting transfer: ${teams.length} teams, concurrency=${CONCURRENCY} (${sharedParams.fantasyApp})`);
+
+    if (CONCURRENCY === 1) {
+      // Sequential — preserves original behavior (for My11Circle, etc.)
+      for (let i = 0; i < teams.length; i++) {
+        if (batchNeedsReauth) {
+          // Token expired mid-batch — mark remaining teams as skipped
+          teamResults[i] = {
+            teamNo: teams[i].teamNo,
+            success: false,
+            message: "Skipped — token expired",
+            transferred: false,
+            verified: false,
             needsReauth: true,
-            blockReason: teamErrorMessage,
           };
+          completedCount++;
+          onProgress?.(completedCount, teams.length);
+          continue;
+        }
+        await processTeam(i);
+      }
+    } else {
+      // Parallel batch — N workers pull from a shared queue
+      const queue = Array.from({ length: teams.length }, (_, i) => i);
+      const workers: Promise<void>[] = [];
+
+      for (let w = 0; w < CONCURRENCY; w++) {
+        workers.push((async () => {
+          while (queue.length > 0) {
+            // Stop if batch is aborted (token permanently expired)
+            if (batchNeedsReauth) break;
+
+            const i = queue.shift();
+            if (i === undefined) break;
+
+            await processTeam(i);
+          }
+        })());
+      }
+
+      await Promise.all(workers);
+
+      // If batch was aborted, mark any unprocessed teams as skipped
+      for (let i = 0; i < teams.length; i++) {
+        if (!teamResults[i]) {
+          teamResults[i] = {
+            teamNo: teams[i].teamNo,
+            success: false,
+            message: "Skipped — token expired",
+            transferred: false,
+            verified: false,
+            needsReauth: true,
+          };
+          completedCount++;
+          onProgress?.(completedCount, teams.length);
         }
       }
+    }
 
-      onProgress?.(i + 1, teams.length);
-
-      // Inter-team delay (sequential queue — wait before next team)
-      if (i < teams.length - 1) {
-        console.log(`[bulkTransfer] ⏳ Inter-team delay: ${INTER_TEAM_DELAY}ms`);
-        await new Promise((r) => setTimeout(r, INTER_TEAM_DELAY));
+    // === STEP 5: BUILD FINAL RESULTS ===
+    for (let i = 0; i < teams.length; i++) {
+      const r = teamResults[i];
+      if (r.success) {
+        successCount++;
+      } else {
+        failCount++;
+        if (r.needsReauth) batchNeedsReauth = true;
       }
+      results.push({ teamNo: r.teamNo, success: r.success, message: r.message });
+      transferLinks.push({ teamNo: r.teamNo });
     }
 
     // === STEP 6: FINAL SUMMARY ===
@@ -3085,11 +3169,10 @@ export async function bulkTransferToLinkedAccount(
     console.log(`\n${"=".repeat(70)}`);
     console.log(`[bulkTransfer] 🏁 BULK TRANSFER COMPLETE`);
     console.log(`[bulkTransfer]    Platform: ${params.fantasyApp}`);
+    console.log(`[bulkTransfer]    Concurrency: ${CONCURRENCY} workers`);
     console.log(`[bulkTransfer]    Total: ${teams.length}`);
     console.log(`[bulkTransfer]    Success: ${successCount} (${successRate}%)`);
     console.log(`[bulkTransfer]    Failed: ${failCount}`);
-    console.log(`[bulkTransfer]    Initial team count: ${initialTeamCount}`);
-    console.log(`[bulkTransfer]    Final team count: ${latestKnownTeamCount}`);
     if (failCount > 0) {
       console.log(`[bulkTransfer]    ❌ Failed teams:`);
       results.filter((r) => !r.success).forEach((r) => {
@@ -3098,7 +3181,14 @@ export async function bulkTransferToLinkedAccount(
     }
     console.log(`${"=".repeat(70)}\n`);
 
-    return { totalAttempted: teams.length, successCount, failCount, results, transferLinks };
+    return {
+      totalAttempted: teams.length,
+      successCount,
+      failCount,
+      results,
+      transferLinks,
+      ...(batchNeedsReauth ? { needsReauth: true, blockReason: "Token expired — re-link via OTP" } : {}),
+    };
   } finally {
     // Always release the mutex — even on error
     bulkTransferMutex.release();
