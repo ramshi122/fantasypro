@@ -166,21 +166,20 @@ export function EliteAIGenerator({
     setProgress({ check: 0, total: 173, message: "Initializing Elite AI — 150+ Data Point Analysis..." });
 
     try {
-      // === AUTO-DETECT COMBINATION MODE ===
-      // Per user spec: "combination propper need to work all"
-      // If the user has added custom combos but forgot to select "Combination Auto"
-      // mode, auto-switch to it. This prevents the #1 user complaint: "I added
-      // combos but they weren't used" (because they were in "smart" mode).
-      let effectiveMode = eliteMode;
-      if (customCombos.length > 0 && eliteMode !== "combination") {
-        effectiveMode = "combination";
-        setEliteMode("combination");
-        console.log(`[EliteAI] Auto-switched to Combination mode (${customCombos.length} custom combos detected)`);
-      }
+      // === CUSTOM COMBOS WORK IN ALL MODES ===
+      // Per user spec: "same combination system add smart section and all others"
+      // Custom combos are now passed to the engine in EVERY mode (smart/gl/
+      // advanced/combination). The engine uses them as the role distribution
+      // source of truth whenever they're provided. The selected mode only
+      // affects player picking style + C/VC rotation.
+      //
+      // If no custom combos are added, the engine falls back to built-in
+      // strategy templates (preserves original behavior).
+      const combosToPass = customCombos.length > 0 ? customCombos : undefined;
 
-      // Pass customCombos when in combination mode (or when auto-switched).
-      // In other modes (smart/gl/advanced), the engine uses built-in templates.
-      const combosToPass = effectiveMode === "combination" ? customCombos : undefined;
+      if (combosToPass) {
+        console.log(`[EliteAI] Passing ${combosToPass.length} custom combos to engine (mode: ${eliteMode})`);
+      }
 
       const res = await runEliteAI(
         pool,
@@ -189,7 +188,7 @@ export function EliteAIGenerator({
         lineupAnnounced,
         (check, total, message) => setProgress({ check, total, message }),
         selectedCount,
-        effectiveMode,
+        eliteMode,
         combosToPass,
       );
 
@@ -204,7 +203,9 @@ export function EliteAIGenerator({
       // === COMBINATION VERIFICATION TOAST ===
       // Per user spec: "combination propper need to work all"
       // Show the user exactly which combinations were used so they can verify.
-      if (effectiveMode === "combination" && customCombos.length > 0) {
+      // This toast now fires in ALL modes (smart/gl/advanced/combination)
+      // whenever custom combos were provided.
+      if (customCombos.length > 0) {
         // Count unique role distributions in generated teams
         const distCounts = new Map<string, number>();
         for (const rt of res.rankedTeams) {
@@ -227,7 +228,7 @@ export function EliteAIGenerator({
           .map(([k, c]) => `${k.split("-")[0]}W·${k.split("-")[1]}B·${k.split("-")[2]}A·${k.split("-")[3]}L: ${c}`)
           .join(" | ");
         toast.success(
-          `🎯 ${res.rankedTeams.length} teams from ${customCombos.length} combos in ${(res.durationMs / 1000).toFixed(1)}s\n` +
+          `🎯 ${res.rankedTeams.length} teams from ${customCombos.length} combos (${eliteMode} mode) in ${(res.durationMs / 1000).toFixed(1)}s\n` +
           `Top distributions: ${comboSummary}`,
           { duration: 6000 }
         );
@@ -724,12 +725,12 @@ export function EliteAIGenerator({
                     </div>
                   )}
 
-                  {/* Hint when in Combination mode but no combos added */}
-                  {eliteMode === "combination" && customCombos.length === 0 && (
-                    <p className="text-[8px] text-amber-600 dark:text-amber-400 mt-1 italic">
-                      ⚠️ Combination Auto mode is selected but no custom combos added —
-                      click "Add All Standard" to load the full preset, or the AI
-                      will fall back to built-in strategy templates.
+                  {/* Hint when custom combos are added — works in ALL modes now */}
+                  {customCombos.length > 0 && (
+                    <p className="text-[8px] text-emerald-600 dark:text-emerald-400 mt-1 italic">
+                      ✅ {customCombos.length} custom combos active — will be used in
+                      ALL modes (Smart/GL/Advanced/Combination). Mode only affects
+                      player picking style + C/VC rotation.
                     </p>
                   )}
                 </div>

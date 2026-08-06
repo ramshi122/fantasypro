@@ -1945,10 +1945,20 @@ export function generateEliteTeams(
   //
   // Teams are distributed round-robin across the custom combos so each one
   // gets approximately the same number of teams.
-  const useCustomCombos = mode === "combination" && customCombos && customCombos.length > 0;
+  // === CUSTOM COMBOS — works in ALL modes (smart/gl/advanced/combination) ===
+  // Per user spec: "same combination system add smart section and all others"
+  // If the user has added custom combos, they are used as the role distribution
+  // source of truth in EVERY mode. The selected mode only affects:
+  //   - Player picking style (safe/balanced/differential/grand-league)
+  //   - C/VC rotation pattern
+  // The role counts (WK/BAT/AR/BOWL) always come from the custom combos.
+  //
+  // If NO custom combos are provided, the built-in strategy templates are used
+  // (preserves original behavior for users who don't add custom combos).
+  const useCustomCombos = customCombos && customCombos.length > 0;
 
   if (useCustomCombos && customCombos) {
-    console.log(`[EliteAI] 🎯 Combination Auto mode — using ${customCombos.length} custom combinations`);
+    console.log(`[EliteAI] 🎯 Custom combinations ACTIVE in '${mode || "smart"}' mode — using ${customCombos.length} combos`);
 
     // Filter to only valid combos (sum to 11)
     const validCombos = customCombos.filter(c => {
@@ -1963,30 +1973,48 @@ export function generateEliteTeams(
     if (validCombos.length === 0) {
       console.warn(`[EliteAI] ⚠️ No valid custom combos — falling back to built-in templates`);
     } else {
-      // First team is still MAX WIN (strongest), then distribute remaining across custom combos
+      // Determine the strategy to assign to custom-combo teams based on mode.
+      // This controls player picking style + C/VC rotation pattern.
+      //   smart       → "safe"          (pick top players, safe C/VC)
+      //   gl          → "grand-league"  (contrarian picks, contrarian C/VC)
+      //   advanced    → cycle through all 4 strategies for max diversity
+      //   combination → "balanced"      (50/50 top+mid picks)
+      const strategyForMode: EliteRankedTeam["strategy"] =
+        mode === "gl" ? "grand-league" :
+        mode === "advanced" ? "balanced" :  // will be cycled below for advanced
+        mode === "combination" ? "balanced" :
+        "safe"; // smart (default)
+
+      // First team is always MAX WIN (strongest, strategy=safe)
       roleCompositions.push({ ...maxWinTemplate, strategy: "safe" });
 
       // Build a POOL of custom combos (cycled) large enough to fill teamCount
       // even if some get skipped due to insufficient players in a role.
-      // We cycle through the combos multiple times to ensure enough attempts.
       const remaining = teamCount - 1;
-      // Generate 2x the needed count so skipped combos don't reduce final count
       const attempts = Math.max(remaining * 2, remaining + validCombos.length);
+
+      // For "advanced" mode, cycle through strategies for max diversity
+      const strategiesCycle: EliteRankedTeam["strategy"][] = ["safe", "balanced", "differential", "grand-league"];
+
       for (let i = 0; i < attempts; i++) {
         const combo = validCombos[i % validCombos.length];
+        const strat = mode === "advanced"
+          ? strategiesCycle[i % strategiesCycle.length]
+          : strategyForMode;
         roleCompositions.push({
           WK: combo.wk,
           BAT: combo.bat,
           AR: combo.ar,
           BOWL: combo.bowl,
-          strategy: "balanced",
+          strategy: strat,
           label: `Custom — WK${combo.wk} BAT${combo.bat} AR${combo.ar} BOWL${combo.bowl}`,
         });
       }
-      console.log(`[EliteAI] 🎯 Built ${roleCompositions.length} role composition attempts from ${validCombos.length} custom combos (will produce up to ${teamCount} teams)`);
+      console.log(`[EliteAI] 🎯 Built ${roleCompositions.length} role composition attempts from ${validCombos.length} custom combos (strategy: ${mode || "smart"}), will produce up to ${teamCount} teams`);
     }
   }
 
+  // Fallback: if no custom combos (or all were invalid), use built-in templates
   if (roleCompositions.length === 0) {
     // Default: use strategy templates (safe/balanced/differential/GL)
     // Add MAX WIN team first
