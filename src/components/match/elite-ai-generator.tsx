@@ -607,16 +607,16 @@ export function EliteAIGenerator({
                   </div>
 
                   {/* === STANDARD PRESETS — per user spec === */}
-                  {/* One-click buttons to load all 45 valid Dream11 combinations */}
+                  {/* One-click button to load all 46 valid Dream11 combinations */}
                   <div className="flex gap-1 mb-1.5">
                     <Button
                       size="sm"
                       className="flex-1 h-6 text-[8px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
                       onClick={addAllStandardCombos}
-                      title="Load all 45 standard Dream11 combinations (1WK + 2WK + 3WK variants)"
+                      title="Load all 46 standard Dream11 combinations (1WK + 2WK + 3WK variants)"
                     >
                       <Plus className="w-2.5 h-2.5 mr-0.5" />
-                      Add All 45 Standard
+                      Add All Standard ({getAllStandardCombos().length})
                     </Button>
                     <Button
                       size="sm"
@@ -683,7 +683,7 @@ export function EliteAIGenerator({
                   {eliteMode === "combination" && customCombos.length === 0 && (
                     <p className="text-[8px] text-amber-600 dark:text-amber-400 mt-1 italic">
                       ⚠️ Combination Auto mode is selected but no custom combos added —
-                      click "Add All 45 Standard" to load the full preset, or the AI
+                      click "Add All Standard" to load the full preset, or the AI
                       will fall back to built-in strategy templates.
                     </p>
                   )}
