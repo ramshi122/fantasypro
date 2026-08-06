@@ -679,8 +679,8 @@ function pickCaptainVCDeterministic(
 
     const c = candidates[cIdx];
     const vc = candidates[vcIdx];
-    const cId = String(c.player_fixed_id ?? c.pid ?? c.name);
-    const vcId = String(vc.player_fixed_id ?? vc.pid ?? vc.name);
+    const cId = String(c.player_fixed_id ?? c.pl_id ?? c.pid ?? c.name);
+    const vcId = String(vc.player_fixed_id ?? vc.pl_id ?? vc.pid ?? vc.name);
     const pairKey = `${cId}|${vcId}`;
 
     if (!usedCVPairs.has(pairKey)) {
@@ -697,8 +697,8 @@ function pickCaptainVCDeterministic(
   const c = candidates[randomC];
   const vc = candidates[randomVC];
   return {
-    captain: String(c.player_fixed_id ?? c.pid ?? c.name),
-    viceCaptain: String(vc.player_fixed_id ?? vc.pid ?? vc.name),
+    captain: String(c.player_fixed_id ?? c.pl_id ?? c.pid ?? c.name),
+    viceCaptain: String(vc.player_fixed_id ?? vc.pl_id ?? vc.pid ?? vc.name),
   };
 }
 
@@ -1231,7 +1231,7 @@ export async function generateSweep(
       teamNo: i + 1,
       team_number: i + 1,
       players: team.map((p) => ({
-        pid: p.player_fixed_id ?? p.pid,
+        pid: String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? ""),
         player_fixed_id: p.player_fixed_id,
         pl_id: p.pl_id,
         name: p.name,
@@ -1247,11 +1247,11 @@ export async function generateSweep(
         image: p.image,
         playing: p.playing, // CRITICAL: save playing field for replace engine
       })),
-      captain: cv.captain,
-      viceCaptain: cv.viceCaptain,
-      vicecaptain: cv.viceCaptain,
-      c: cv.captain,
-      vc: cv.viceCaptain,
+      captain: String(cv.captain ?? ""),
+      viceCaptain: String(cv.viceCaptain ?? ""),
+      vicecaptain: String(cv.viceCaptain ?? ""),
+      c: String(cv.captain ?? ""),
+      vc: String(cv.viceCaptain ?? ""),
       type: `sweep-${strategy}`,
     };
     teams.push(teamRow);
@@ -1602,7 +1602,7 @@ export async function generateSweep(
         teamNo: teams.length + 1,
         team_number: teams.length + 1,
         players: _team.map((p) => ({
-          pid: p.player_fixed_id ?? p.pid,
+          pid: String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? ""),
           player_fixed_id: p.player_fixed_id,
           pl_id: p.pl_id,
           name: p.name,
@@ -1618,11 +1618,11 @@ export async function generateSweep(
           image: p.image,
           playing: p.playing,
         })),
-        captain: _cv.captain,
-        viceCaptain: _cv.viceCaptain,
-        vicecaptain: _cv.viceCaptain,
-        c: _cv.captain,
-        vc: _cv.viceCaptain,
+        captain: String(_cv.captain ?? ""),
+        viceCaptain: String(_cv.viceCaptain ?? ""),
+        vicecaptain: String(_cv.viceCaptain ?? ""),
+        c: String(_cv.captain ?? ""),
+        vc: String(_cv.viceCaptain ?? ""),
         type: `sweep-${_strategy}`,
       };
 
