@@ -100,6 +100,8 @@ export function BulkTransferModal({
   const [supportedApps, setSupportedApps] = useState<string[]>([]);
   // Map: "fixedId|appName" → fantasy player ID for that app
   const [playerIdMap, setPlayerIdMap] = useState<Record<string, string>>({});
+  // Track which apps have proper fantasy_id_list entries (not fallback IDs)
+  const [appsWithProperIds, setAppsWithProperIds] = useState<Set<string>>(new Set());
 
   // Refresh linked apps + match detail when modal opens
   useEffect(() => {
@@ -136,6 +138,10 @@ export function BulkTransferModal({
       const allApps = Array.from(new Set([...supported, "dream11", "my11circle", "jumbo", chosenApp]));
       const map: Record<string, string> = {};
       const all = [...(d.left_team_players || []), ...(d.right_team_players || [])].filter(Boolean);
+
+      // Track which apps have proper fantasy_id_list entries
+      const appsWithIds = new Set<string>();
+      
       for (const p of all) {
         let player = p;
         if (typeof p === "string") {
@@ -150,18 +156,36 @@ export function BulkTransferModal({
           const entry = fil.find((f: any) => f.name === app);
           if (entry?.id) {
             map[`${fixedId}|${app}`] = String(entry.id);
+            appsWithIds.add(app);
           }
         }
         // Fallback: use fixed_id for any app that doesn't have a specific mapping
+        // CRITICAL: Only use fixed_id as fallback if the app is NOT in fantasy_id_list
+        // Otherwise we'd send My11Circle IDs to Dream11 → mismatch → transfer fail
         if (fixedId) {
           for (const app of allApps) {
             if (!map[`${fixedId}|${app}`]) {
-              map[`${fixedId}|${app}`] = fixedId;
+              // Only fallback to fixed_id if this app is in fantasy_version (match supports it)
+              // OR if no app-specific IDs exist at all (old data format)
+              if (supported.includes(app) || appsWithIds.size === 0) {
+                map[`${fixedId}|${app}`] = fixedId;
+              }
             }
           }
         }
       }
       setPlayerIdMap(map);
+      setAppsWithProperIds(appsWithIds);
+
+      // Log which apps have proper IDs vs fallback
+      console.log(`[PlayerIdMap] Apps with proper fantasy_id_list: ${[...appsWithIds].join(", ") || "NONE"}`);
+      console.log(`[PlayerIdMap] Match supports: ${supported.join(", ")}`);
+      console.log(`[PlayerIdMap] Player ID map entries: ${Object.keys(map).length}`);
+      
+      // Check if selected app has proper IDs
+      if (!appsWithIds.has(chosenApp) && !supported.includes(chosenApp)) {
+        console.warn(`[PlayerIdMap] ⚠️ ${chosenApp} has NO fantasy_id_list entries — transfer may fail with ID mismatch`);
+      }
     })();
   }, [open, match]);
 
@@ -236,6 +260,30 @@ export function BulkTransferModal({
     if (items.length === 0) {
       toast.error("No valid teams to transfer (need 11 players each)");
       return;
+    }
+
+    // === PLAYER ID MISMATCH CHECK ===
+    // Per user spec: "Plyer id mismatch transferfail chek fix"
+    // If the selected app doesn't have proper fantasy_id_list entries,
+    // player IDs will be wrong → transfer fails.
+    // Warn user BEFORE attempting transfer.
+    if (mode === "linked" && !appsWithProperIds.has(selectedApp)) {
+      const hasSupported = supportedApps.includes(selectedApp);
+      if (!hasSupported) {
+        toast.error(
+          `⚠️ ${APP_LABELS[selectedApp]?.label || selectedApp} is NOT supported for this match. ` +
+          `This match only supports: ${supportedApps.join(", ")}. ` +
+          `Player IDs will mismatch — transfer will fail. ` +
+          `Please select a supported platform.`
+        );
+        return;
+      } else {
+        toast.warning(
+          `⚠️ ${APP_LABELS[selectedApp]?.label || selectedApp} player IDs may be incorrect ` +
+          `(no fantasy_id_list found). Transfer might fail. Proceeding anyway...`
+        );
+        console.warn(`[Transfer] ⚠️ Player ID mismatch risk: ${selectedApp} has no fantasy_id_list entries`);
+      }
     }
 
     // === MULTI-ACCOUNT TRANSFER ===
