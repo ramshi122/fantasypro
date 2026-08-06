@@ -199,6 +199,18 @@ function generateAccountId(app: FantasyApp): string {
 /**
  * Add a new fantasy account for a platform.
  * Returns the new account, or null if max accounts reached.
+ *
+ * TIER ENFORCEMENT (per user spec: "chek all subscription are propper loked"):
+ *   - The first account is ALWAYS allowed (any tier — even trial).
+ *   - The 2nd+ account requires a tier with multiAccountDream11/multiAccountMy11Circle
+ *     enabled (monthly / half_yearly / elite / lifetime).
+ *   - If `tier` is not provided, falls back to per-platform hard limit (5) for
+ *     backward compat — BUT callers SHOULD always pass the current license tier
+ *     so the gate is enforced.
+ *
+ * This is the LAST LINE OF DEFENSE on the client. Even if the UI in
+ * MultiAccountManager blocks the "Add Account" button, this function catches
+ * bypass paths (e.g. OTP login modal calling saveFantasyToken directly).
  */
 export function addFantasyAccount(
   app: FantasyApp,
@@ -213,14 +225,30 @@ export function addFantasyAccount(
     maxAllowedTeam?: number | null;
     subscriptionTier?: string | null;
     label?: string;
-  }
+  },
+  /** Current license tier (from useLicense / getLicenseState). Required to
+   *  enforce the multi-account subscription gate. If omitted, the gate is
+   *  BYPASSED — only pass undefined if you're sure you want that. */
+  tier?: string | null
 ): FantasyAccount | null {
   if (typeof window === "undefined") return null;
   const all = readAllAccounts();
   const accounts = all[app] || [];
 
-  if (accounts.length >= getAccountLimit(app)) {
-    console.warn(`[multi-accounts] Max ${getAccountLimit(app)} accounts reached for ${app}`);
+  // === TIER GATE ===
+  // Determine the max accounts this user is allowed to have for this platform.
+  //   - tier provided → use subscription-aware limit (1 for non-Pro, 5 for Pro)
+  //   - tier null/undefined → fall back to per-platform hard limit (legacy behavior)
+  let maxAllowed: number;
+  if (tier) {
+    maxAllowed = getMaxAccountsForPlatformTier(tier, app);
+  } else {
+    maxAllowed = getAccountLimit(app);
+    console.warn(`[multi-accounts] ⚠️ addFantasyAccount called WITHOUT tier — gate BYPASSED (max=${maxAllowed}). Caller should pass the current license tier.`);
+  }
+
+  if (accounts.length >= maxAllowed) {
+    console.warn(`[multi-accounts] ❌ BLOCKED — ${app} max ${maxAllowed} accounts for tier=${tier || "unknown"} (current: ${accounts.length})`);
     return null;
   }
 
@@ -247,8 +275,29 @@ export function addFantasyAccount(
 
   all[app] = [...accounts, newAccount];
   writeAllAccounts(all);
-  console.log(`[multi-accounts] Added ${app} account #${accountNum} (${newAccount.id}) — mobile: ${newAccount.mobile || "unknown"}`);
+  console.log(`[multi-accounts] Added ${app} account #${accountNum} (${newAccount.id}) — mobile: ${newAccount.mobile || "unknown"} — tier: ${tier || "unknown"}`);
   return newAccount;
+}
+
+/**
+ * Tier-aware max accounts per platform.
+ * Mirrors subscription.ts getMaxAccountsForPlatform — duplicated here to avoid
+ * a circular import (subscription.ts imports types from api.ts indirectly).
+ *
+ *   - dream11/my11circle: 5 if tier has multiAccount feature, else 1
+ *   - other platforms: 1 (single account for all tiers — for now)
+ */
+function getMaxAccountsForPlatformTier(tier: string | null, app: string): number {
+  if (!tier) return 1;
+  const t = tier.toLowerCase();
+  // Tiers that unlock multi-account: monthly, half_yearly, elite, lifetime
+  const multiAccountTiers = ["monthly", "half_yearly", "elite", "lifetime"];
+  const hasMultiAccount = multiAccountTiers.includes(t);
+  if (app === "dream11" || app === "my11circle") {
+    return hasMultiAccount ? 5 : 1;
+  }
+  // Other platforms (jumbo, myteam11, vision11) — single account only for now
+  return 1;
 }
 
 /**
@@ -516,4 +565,70 @@ export function migrateAccountStatuses(): number {
     console.log(`[multi-accounts] Migrated ${migrated} accounts to new status format`);
   }
   return migrated;
+}
+
+/**
+ * ENFORCE TIER LIMITS on existing accounts (one-time cleanup).
+ *
+ * Per user spec: "chek all subscription are propper loked  any loop fix"
+ * If a trial/weekly/etc. user somehow has MORE than 1 account saved for a
+ * platform (e.g. from before the tier gate was added), this function prunes
+ * them down to the allowed limit. The FIRST account (default) is kept;
+ * extras are removed.
+ *
+ * Call this on app load (page.tsx) AFTER the license is verified.
+ *
+ * Returns the number of accounts pruned.
+ */
+export function enforceTierAccountLimits(tier: string | null): number {
+  if (typeof window === "undefined") return 0;
+  if (!tier) return 0;
+
+  const all = readAllAccounts();
+  let pruned = 0;
+  let changed = false;
+
+  for (const app of Object.keys(all) as FantasyApp[]) {
+    const accounts = all[app] || [];
+    const maxAllowed = getMaxAccountsForPlatformTier(tier, app);
+
+    if (accounts.length > maxAllowed) {
+      // Keep the first `maxAllowed` accounts (default first, then by linkedAt)
+      const sorted = [...accounts].sort((a, b) => {
+        // Default account always first
+        if (a.isDefault && !b.isDefault) return -1;
+        if (!a.isDefault && b.isDefault) return 1;
+        // Then by linkedAt (oldest first)
+        return (a.linkedAt || 0) - (b.linkedAt || 0);
+      });
+      const kept = sorted.slice(0, maxAllowed);
+      const removed = sorted.slice(maxAllowed);
+
+      console.warn(
+        `[multi-accounts] ⚠️ TIER ENFORCEMENT — pruning ${removed.length} ${app} account(s) ` +
+        `for tier=${tier} (max=${maxAllowed}, had=${accounts.length}). ` +
+        `Removed: ${removed.map(a => `${a.label}(${a.mobile || "no mobile"})`).join(", ")}`
+      );
+
+      // Invalidate cache for removed accounts
+      for (const r of removed) {
+        try {
+          const { invalidateAccountCache } = require("./account-session");
+          invalidateAccountCache(r.id);
+        } catch {
+          // ignore
+        }
+      }
+
+      all[app] = kept;
+      pruned += removed.length;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    writeAllAccounts(all);
+    console.log(`[multi-accounts] Pruned ${pruned} excess account(s) for tier=${tier}`);
+  }
+  return pruned;
 }

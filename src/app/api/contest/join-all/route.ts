@@ -152,6 +152,65 @@ export async function POST(request: Request) {
       }, { status: 200 });
     }
 
+    // === SUBSCRIPTION GATE (per user spec: "chek all subscription are propper loked") ===
+    // Multi-account contest join is a Pro/Elite/Lifetime-only feature.
+    // Single-account join (accounts.length === 1) is allowed for any tier that
+    // has contestJoin=true (match_basic and above).
+    //
+    // This is the SERVER-SIDE check — even if someone bypasses the frontend
+    // gate (e.g. by calling fetch() directly from devtools), this route will
+    // reject the request if the user's license tier doesn't allow it.
+    //
+    // We read the license key + deviceId from request headers (set by the
+    // frontend api-license-guard). If they're missing, we BLOCK the request
+    // (fail-closed) — better to block a legitimate user than allow a bypass.
+    if (accounts.length > 1) {
+      const licenseKey = request.headers.get("x-license-key") || "";
+      const deviceId = request.headers.get("x-device-id") || "";
+      const feature = fantasyApp === "dream11" ? "multi_account_dream11" : "multi_account_my11circle";
+
+      if (!licenseKey || !deviceId) {
+        console.warn(`[Contest][JoinAll] BLOCKED — missing license headers for multi-account join (${accounts.length} accounts)`);
+        return NextResponse.json({
+          status: "fail",
+          message: "🔒 Multi-account join requires Pro (₹299), Elite (₹999), or Lifetime subscription. License verification failed — missing credentials.",
+          summary: { successCount: 0, failedCount: 0, accountsProcessed: 0 },
+          accountResults: [],
+          code: "FEATURE_LOCKED",
+        }, { status: 403 });
+      }
+
+      try {
+        const verifyRes = await fetch(`${new URL(request.url).origin}/api/license/verify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ licenseKey, deviceId, feature }),
+        });
+        const verifyData = await verifyRes.json();
+        if (!verifyData.valid) {
+          console.warn(`[Contest][JoinAll] BLOCKED — license verify failed for ${feature}: ${verifyData.message}`);
+          return NextResponse.json({
+            status: "fail",
+            message: verifyData.message || `🔒 Multi-account ${fantasyApp} requires Pro (₹299), Elite (₹999), or Lifetime subscription.`,
+            summary: { successCount: 0, failedCount: 0, accountsProcessed: 0 },
+            accountResults: [],
+            code: "FEATURE_LOCKED",
+          }, { status: 403 });
+        }
+        console.log(`[Contest][JoinAll] ✅ License verified for ${feature} (tier: ${verifyData.tier})`);
+      } catch (err) {
+        console.error(`[Contest][JoinAll] License verify error:`, err);
+        // Network error talking to our own license endpoint — fail-closed
+        return NextResponse.json({
+          status: "fail",
+          message: "Could not verify subscription. Please try again.",
+          summary: { successCount: 0, failedCount: 0, accountsProcessed: 0 },
+          accountResults: [],
+          code: "VERIFY_ERROR",
+        }, { status: 500 });
+      }
+    }
+
     // Normalize team IDs
     const allTeamIds: number[] = Array.isArray(teamIds)
       ? teamIds

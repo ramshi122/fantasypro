@@ -1832,8 +1832,19 @@ export function saveFantasyToken(
   //      (re-login scenario — same phone number, new OTP, new token)
   //   2. If NO existing account has this mobile → ADD as a NEW account (unique ID)
   //   3. If max accounts reached → log warning (don't overwrite existing)
+  //   4. TIER ENFORCEMENT: read current license tier from Zustand store and pass
+  //      to addFantasyAccount so multi-account gate is enforced even when this
+  //      function is called from the OTP login modal (bypassing MultiAccountManager).
   try {
     const { addFantasyAccount, updateFantasyAccount, listAccountsForApp } = require("./multi-accounts");
+    // Read current license tier from Zustand admin store (no React import needed)
+    let currentTier: string | null = null;
+    try {
+      const { getLicenseState } = require("./admin-store");
+      currentTier = getLicenseState().keyType;
+    } catch {
+      // admin-store not yet initialized — treat as null (single-account only)
+    }
     const existing = listAccountsForApp(app);
 
     // Check if this mobile is already linked → update that account (re-login)
@@ -1861,14 +1872,25 @@ export function saveFantasyToken(
       invalidateAccountCache(existingForMobile.id);
     } else {
       // New account — add to array (unique ID auto-generated)
-      const newAccount = addFantasyAccount(app, token, extras);
+      // Pass currentTier so addFantasyAccount can enforce the multi-account
+      // subscription gate. If user is on trial/weekly/etc., the 2nd account
+      // will be REJECTED here (returns null) — protecting the subscription wall.
+      const newAccount = addFantasyAccount(app, token, extras, currentTier);
       if (newAccount) {
-        console.log(`[saveFantasyToken] ✅ Added NEW ${app} account (${newAccount.id}) — mobile: ${newAccount.mobile || "unknown"}`);
+        console.log(`[saveFantasyToken] ✅ Added NEW ${app} account (${newAccount.id}) — mobile: ${newAccount.mobile || "unknown"} — tier: ${currentTier || "unknown"}`);
         // Invalidate any cache for this new account (it's brand new, but be safe)
         invalidateAccountCache(newAccount.id);
       } else {
-        // Max accounts reached — do NOT overwrite, just log warning
-        console.warn(`[saveFantasyToken] ⚠️ Max accounts reached for ${app} — account NOT saved (would overwrite). Remove an account first.`);
+        // Max accounts reached for this tier — do NOT overwrite, just log warning.
+        // The user will see a toast in the OTP login modal explaining the limit.
+        console.warn(`[saveFantasyToken] ⚠️ Account NOT saved — multi-account limit reached for ${app} (tier: ${currentTier || "unknown"}). Upgrade to Pro/Elite/Lifetime to add more accounts.`);
+        // Show a user-visible toast (best-effort — toast may not be loaded yet)
+        try {
+          const { toast } = require("sonner");
+          toast.error(`🔒 Multi-account requires Pro (₹299), Elite (₹999), or Lifetime. Your tier (${currentTier || "trial"}) allows only 1 ${app} account.`);
+        } catch {
+          // sonner not loaded — fail silently (caller will see the empty result)
+        }
       }
     }
   } catch (err) {
@@ -2433,6 +2455,23 @@ export async function joinAllAccountsContest(params: {
     const userToken = typeof window !== "undefined" ? localStorage.getItem("user_token") : null;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (userToken) headers.Authorization = `Bearer ${userToken}`;
+
+    // === SUBSCRIPTION GATE (per user spec: "chek all subscription are propper loked") ===
+    // Pass license key + deviceId to /api/contest/join-all so the server can
+    // verify the user's tier allows multi-account join. Without these headers,
+    // the server BLOCKS the request (fail-closed).
+    if (typeof window !== "undefined") {
+      try {
+        const { getLicenseState, getDeviceId } = require("./admin-store");
+        const ls = getLicenseState();
+        if (ls.verified && ls.key) {
+          headers["x-license-key"] = ls.key;
+          headers["x-device-id"] = getDeviceId();
+        }
+      } catch {
+        // admin-store not initialized — skip (server will block if multi-account)
+      }
+    }
 
     const proxyRes = await fetch(`/api/contest/join-all`, {
       method: "POST",

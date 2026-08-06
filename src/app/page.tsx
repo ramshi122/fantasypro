@@ -51,7 +51,30 @@ export default function Home() {
       // Cleanup on unmount
       return cleanup;
     });
+    // Migrate old account records to new status format
+    import("@/lib/multi-accounts").then(({ migrateAccountStatuses }) => {
+      migrateAccountStatuses();
+    });
   }, []);
+
+  // === ENFORCE TIER LIMITS ON ACCOUNTS ===
+  // Per user spec: "chek all subscription are propper loked  any loop fix"
+  // When the license is verified (or changes), prune any excess accounts
+  // that the user's tier doesn't allow. This catches:
+  //   1. Accounts saved BEFORE the tier gate was added (legacy data)
+  //   2. Accounts a trial user somehow added via a bypass path
+  //   3. Accounts left over after a paid subscription DOWNGRADED to trial
+  useEffect(() => {
+    if (!license.isLicensed) return;
+    if (!license.licenseKeyType) return;
+    const tier: string = String(license.licenseKeyType);
+    import("@/lib/multi-accounts").then(({ enforceTierAccountLimits }) => {
+      const pruned = enforceTierAccountLimits(tier);
+      if (pruned > 0) {
+        console.warn(`[page] ⚠️ Pruned ${pruned} excess account(s) — tier ${tier} doesn't allow them`);
+      }
+    });
+  }, [license.isLicensed, license.licenseKeyType]);
 
   // Show splash on first load of each session (not on every navigation)
   useEffect(() => {

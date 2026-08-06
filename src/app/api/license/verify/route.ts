@@ -53,6 +53,12 @@ async function updateKeyInFirestore(keyStr: string, fields: Record<string, any>)
  */
 
 // Feature matrix — server-side source of truth
+// MUST stay in sync with src/lib/subscription.ts getTierFeatures()
+//
+// CRITICAL: This matrix is the SERVER-SIDE source of truth. Client-side
+// checks in subscription.ts are for UI ONLY — never trust them for security.
+// Any feature added here gets enforced for EVERY API call that passes
+// the feature name to /api/license/verify.
 const TIER_FEATURES: Record<string, {
   teamGenLimit: number;
   dream11: "locked" | "3/day" | "unlimited";
@@ -62,6 +68,24 @@ const TIER_FEATURES: Record<string, {
   primeTeams: boolean;
   eliteAI: boolean;
   multiPlatform: boolean;
+  // === MULTI-ACCOUNT (per user spec: "chek all subscription are propper loked") ===
+  multiAccountDream11: boolean;
+  multiAccountMy11Circle: boolean;
+  bulkCopyPaste: boolean;
+  // === OTHER PREMIUM FEATURES ===
+  autoJoinContest: boolean;
+  autoTransferScheduler: boolean;
+  contestTracker: boolean;
+  multiMatchGenerator: boolean;
+  pushNotifications: boolean;
+  whatsappShare: boolean;
+  multiLanguage: boolean;
+  playerFormDashboard: boolean;
+  captainRotation: boolean;
+  teamBackup: boolean;
+  cricketLivePage: boolean;
+  serverSideAutoJoin: boolean;
+  referralProgram: boolean;
 }> = {
   trial: {
     teamGenLimit: 10,
@@ -72,6 +96,22 @@ const TIER_FEATURES: Record<string, {
     primeTeams: false,
     eliteAI: false,
     multiPlatform: false,
+    multiAccountDream11: false,
+    multiAccountMy11Circle: false,
+    bulkCopyPaste: false,
+    autoJoinContest: false,
+    autoTransferScheduler: false,
+    contestTracker: false,
+    multiMatchGenerator: false,
+    pushNotifications: false,
+    whatsappShare: false,
+    multiLanguage: false,
+    playerFormDashboard: false,
+    captainRotation: false,
+    teamBackup: false,
+    cricketLivePage: false,
+    serverSideAutoJoin: false,
+    referralProgram: true,
   },
   match_basic: {
     teamGenLimit: 20,
@@ -82,6 +122,22 @@ const TIER_FEATURES: Record<string, {
     primeTeams: false,
     eliteAI: false,
     multiPlatform: false,
+    multiAccountDream11: false,
+    multiAccountMy11Circle: false,
+    bulkCopyPaste: true,
+    autoJoinContest: true,
+    autoTransferScheduler: false,
+    contestTracker: false,
+    multiMatchGenerator: false,
+    pushNotifications: false,
+    whatsappShare: false,
+    multiLanguage: false,
+    playerFormDashboard: false,
+    captainRotation: false,
+    teamBackup: true,
+    cricketLivePage: true,
+    serverSideAutoJoin: false,
+    referralProgram: true,
   },
   match_full: {
     teamGenLimit: 40,
@@ -92,6 +148,22 @@ const TIER_FEATURES: Record<string, {
     primeTeams: false,
     eliteAI: false,
     multiPlatform: false,
+    multiAccountDream11: false,
+    multiAccountMy11Circle: false,
+    bulkCopyPaste: true,
+    autoJoinContest: true,
+    autoTransferScheduler: false,
+    contestTracker: true,
+    multiMatchGenerator: false,
+    pushNotifications: false,
+    whatsappShare: true,
+    multiLanguage: false,
+    playerFormDashboard: false,
+    captainRotation: false,
+    teamBackup: true,
+    cricketLivePage: true,
+    serverSideAutoJoin: false,
+    referralProgram: true,
   },
   weekly: {
     teamGenLimit: 40,
@@ -102,6 +174,22 @@ const TIER_FEATURES: Record<string, {
     primeTeams: false,
     eliteAI: false,
     multiPlatform: false,
+    multiAccountDream11: false,
+    multiAccountMy11Circle: false,
+    bulkCopyPaste: true,
+    autoJoinContest: true,
+    autoTransferScheduler: false,
+    contestTracker: true,
+    multiMatchGenerator: false,
+    pushNotifications: true,
+    whatsappShare: true,
+    multiLanguage: true,
+    playerFormDashboard: false,
+    captainRotation: false,
+    teamBackup: true,
+    cricketLivePage: true,
+    serverSideAutoJoin: false,
+    referralProgram: true,
   },
   monthly: {
     teamGenLimit: 40,
@@ -112,6 +200,22 @@ const TIER_FEATURES: Record<string, {
     primeTeams: false,
     eliteAI: false,
     multiPlatform: false,
+    multiAccountDream11: true,
+    multiAccountMy11Circle: true,
+    bulkCopyPaste: true,
+    autoJoinContest: true,
+    autoTransferScheduler: true,
+    contestTracker: true,
+    multiMatchGenerator: true,
+    pushNotifications: true,
+    whatsappShare: true,
+    multiLanguage: true,
+    playerFormDashboard: true,
+    captainRotation: true,
+    teamBackup: true,
+    cricketLivePage: true,
+    serverSideAutoJoin: false,
+    referralProgram: true,
   },
   half_yearly: {
     teamGenLimit: 100,
@@ -122,6 +226,22 @@ const TIER_FEATURES: Record<string, {
     primeTeams: true,
     eliteAI: false,
     multiPlatform: true,
+    multiAccountDream11: true,
+    multiAccountMy11Circle: true,
+    bulkCopyPaste: true,
+    autoJoinContest: true,
+    autoTransferScheduler: true,
+    contestTracker: true,
+    multiMatchGenerator: true,
+    pushNotifications: true,
+    whatsappShare: true,
+    multiLanguage: true,
+    playerFormDashboard: true,
+    captainRotation: true,
+    teamBackup: true,
+    cricketLivePage: true,
+    serverSideAutoJoin: false,
+    referralProgram: true,
   },
   elite: {
     teamGenLimit: 500,
@@ -132,6 +252,22 @@ const TIER_FEATURES: Record<string, {
     primeTeams: true,
     eliteAI: true,
     multiPlatform: true,
+    multiAccountDream11: true,
+    multiAccountMy11Circle: true,
+    bulkCopyPaste: true,
+    autoJoinContest: true,
+    autoTransferScheduler: true,
+    contestTracker: true,
+    multiMatchGenerator: true,
+    pushNotifications: true,
+    whatsappShare: true,
+    multiLanguage: true,
+    playerFormDashboard: true,
+    captainRotation: true,
+    teamBackup: true,
+    cricketLivePage: true,
+    serverSideAutoJoin: true,
+    referralProgram: true,
   },
   lifetime: {
     teamGenLimit: 500,
@@ -142,6 +278,22 @@ const TIER_FEATURES: Record<string, {
     primeTeams: true,
     eliteAI: true,
     multiPlatform: true,
+    multiAccountDream11: true,
+    multiAccountMy11Circle: true,
+    bulkCopyPaste: true,
+    autoJoinContest: true,
+    autoTransferScheduler: true,
+    contestTracker: true,
+    multiMatchGenerator: true,
+    pushNotifications: true,
+    whatsappShare: true,
+    multiLanguage: true,
+    playerFormDashboard: true,
+    captainRotation: true,
+    teamBackup: true,
+    cricketLivePage: true,
+    serverSideAutoJoin: true,
+    referralProgram: true,
   },
 };
 
@@ -383,6 +535,146 @@ export async function POST(request: Request) {
           if (!features.multiPlatform) {
             return NextResponse.json(
               { valid: false, message: "Multi-platform transfer requires Elite (₹999) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        // === MULTI-ACCOUNT FEATURES (per user spec: "chek all subscription are propper loked") ===
+        // These gate the multi-account transfer/join endpoints. Without them,
+        // a trial user could call /api/contest/join-all directly and bypass
+        // the subscription wall.
+        case "multi_account_dream11":
+          if (!features.multiAccountDream11) {
+            return NextResponse.json(
+              { valid: false, message: "Multi-account Dream11 requires Pro (₹299), Elite (₹999), or Lifetime subscription", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "multi_account_my11circle":
+          if (!features.multiAccountMy11Circle) {
+            return NextResponse.json(
+              { valid: false, message: "Multi-account My11Circle requires Pro (₹299), Elite (₹999), or Lifetime subscription", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "bulk_copy_paste":
+          if (!features.bulkCopyPaste) {
+            return NextResponse.json(
+              { valid: false, message: "Bulk copy-paste requires 1 Match pass (₹49) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        // === OTHER PREMIUM FEATURES ===
+        case "auto_join_contest":
+          if (!features.autoJoinContest) {
+            return NextResponse.json(
+              { valid: false, message: "Auto-Join Contest requires 1 Match pass (₹49) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "auto_transfer_scheduler":
+          if (!features.autoTransferScheduler) {
+            return NextResponse.json(
+              { valid: false, message: "Auto-Transfer Scheduler requires Pro (₹299) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "contest_tracker":
+          if (!features.contestTracker) {
+            return NextResponse.json(
+              { valid: false, message: "Contest Tracker requires 24 Hour pass (₹99) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "multi_match_generator":
+          if (!features.multiMatchGenerator) {
+            return NextResponse.json(
+              { valid: false, message: "Multi-Match Generator requires Pro (₹299) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "push_notifications":
+          if (!features.pushNotifications) {
+            return NextResponse.json(
+              { valid: false, message: "Push Notifications require Weekly pass (₹149) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "whatsapp_share":
+          if (!features.whatsappShare) {
+            return NextResponse.json(
+              { valid: false, message: "WhatsApp Share requires 24 Hour pass (₹99) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "multi_language":
+          if (!features.multiLanguage) {
+            return NextResponse.json(
+              { valid: false, message: "Multi-Language requires Weekly pass (₹149) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "player_form_dashboard":
+          if (!features.playerFormDashboard) {
+            return NextResponse.json(
+              { valid: false, message: "Player Form Dashboard requires Pro (₹299) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "captain_rotation":
+          if (!features.captainRotation) {
+            return NextResponse.json(
+              { valid: false, message: "Smart Captain Rotation requires Pro (₹299) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "team_backup":
+          if (!features.teamBackup) {
+            return NextResponse.json(
+              { valid: false, message: "Team Backup requires 1 Match pass (₹49) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "cricket_live_page":
+          if (!features.cricketLivePage) {
+            return NextResponse.json(
+              { valid: false, message: "Cricket Live page requires 1 Match pass (₹49) or higher", code: "FEATURE_LOCKED" },
+              { status: 403 }
+            );
+          }
+          break;
+
+        case "server_side_auto_join":
+          if (!features.serverSideAutoJoin) {
+            return NextResponse.json(
+              { valid: false, message: "Server-side Auto-Join requires Elite (₹999) or higher", code: "FEATURE_LOCKED" },
               { status: 403 }
             );
           }

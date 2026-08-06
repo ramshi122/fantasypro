@@ -397,9 +397,17 @@ export function useLicense() {
   }, [licenseState.verified, licenseState.keyType, checkExpiry]);
 
   // Derived flags — use isCurrentlyValid for accurate expiry check
+  // TIER TAXONOMY:
+  //   - isElite: elite, lifetime (top-tier — full access incl. Elite AI)
+  //   - isPro: monthly, half_yearly, elite, lifetime (multi-account + premium features)
+  //   - isTrial: trial, weekly, match_basic, match_full (single-account, basic features)
+  //
+  // CRITICAL FIX: 'half_yearly' was missing from isPro — ₹499 subscribers
+  // were incorrectly blocked from multi-account features even though their
+  // tier has multiAccountDream11/multiAccountMy11Circle=true in subscription.ts.
   const isLicensed = isCurrentlyValid();
   const isElite = isCurrentlyValid() && (licenseState.keyType === "elite" || licenseState.keyType === "lifetime");
-  const isPro = isLicensed && (isElite || licenseState.keyType === "monthly");
+  const isPro = isLicensed && (isElite || licenseState.keyType === "monthly" || licenseState.keyType === "half_yearly");
   const isTrial = isLicensed && (licenseState.keyType === "trial" || licenseState.keyType === "weekly" || licenseState.keyType === "match_basic" || licenseState.keyType === "match_full");
 
   return {
