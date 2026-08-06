@@ -315,55 +315,33 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
     });
   }
 
-  // Smart 7 Core info box (shared JSX — rendered when lockedPlayers has 5+ entries)
+  // Smart 7 Core info box — shows locked players (auto-fixed during generation)
+  // Per user spec: "locked plyer list need to show propper"
   function Smart7CoreInfoBox() {
-    if (!lockedPlayers || lockedPlayers.split(",").filter(Boolean).length < 5) return null;
+    if (!lockedPlayers || lockedPlayers.split(",").filter(Boolean).length < 3) return null;
+    const count = lockedPlayers.split(",").filter(Boolean).length;
     return (
-      <div className="mt-2 p-2 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700">
-        <p className="text-[9px] font-bold text-emerald-700 dark:text-emerald-400 mb-1">
-          ✅ {lockedPlayers.split(",").filter(Boolean).length} Core Players Locked:
+      <div className="mt-2 p-2.5 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700">
+        <p className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 mb-1">
+          🔒 {count} Core Players Fixed (Auto):
         </p>
-        <p className="text-[9px] text-emerald-600 dark:text-emerald-500 leading-relaxed">
-          {lockedPlayers}
-        </p>
-        <p className="text-[8px] text-muted-foreground mt-1">
-          All generated teams will include these players. AI optimizes remaining 4 + C/VC.
-        </p>
-      </div>
-    );
-  }
-
-  // Smart 7 Core button (shared JSX — same formula, same look in every section)
-  function Smart7CoreButton() {
-    return (
-      <button
-        onClick={handleSmart7Core}
-        className="w-full h-10 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-[11px] font-bold hover:from-emerald-600 hover:to-teal-700 transition-all active:scale-95 shadow-md"
-      >
-        🧠 Select Smart 7 Core (AI)
-      </button>
-    );
-  }
-
-  // Smart 7 Core section wrapper (shared — used in all 4 generation modes)
-  function Smart7CoreSection() {
-    return (
-      <div className="p-3 rounded-xl border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20">
-        <div className="flex items-center justify-between mb-2">
-          <div>
-            <p className="text-[11px] font-black text-emerald-700 dark:text-emerald-400 uppercase">
-              🧠 Smart 7 Core (AI)
-            </p>
-            <p className="text-[9px] text-muted-foreground mt-0.5">
-              AI selects best 7 Core Players. Works before &amp; after lineup. All teams include these 7.
-            </p>
-          </div>
+        <div className="flex flex-wrap gap-1">
+          {lockedPlayers.split(",").filter(Boolean).map((name, i) => (
+            <span key={i} className="text-[9px] font-semibold bg-emerald-200 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200 px-1.5 py-0.5 rounded">
+              {name.trim()}
+            </span>
+          ))}
         </div>
-        <Smart7CoreButton />
-        <Smart7CoreInfoBox />
+        <p className="text-[8px] text-muted-foreground mt-1">
+          All generated teams include these players. AI optimizes remaining 3 + C/VC.
+        </p>
       </div>
     );
   }
+
+  // Removed Smart7CoreButton and Smart7CoreSection — per user spec:
+  // "Select7core buttun remove" — auto-fix happens during generation, no button needed.
+  // Only the InfoBox is kept to show locked players.
 
   async function handleGenerate() {
     setGenerating(true);
@@ -673,7 +651,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
             </div>
 
             {/* === SMART 7 CORE (shared component — same formula in all sections) === */}
-            <Smart7CoreSection />
+            <Smart7CoreInfoBox />
           </div>
         )}
 
@@ -702,7 +680,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
             </div>
 
             {/* === SMART 7 CORE (same formula — works in GL too) === */}
-            <Smart7CoreSection />
+            <Smart7CoreInfoBox />
           </div>
         )}
 
@@ -730,7 +708,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
             </div>
 
             {/* === SMART 7 CORE (same formula — works in Advanced too) === */}
-            <Smart7CoreSection />
+            <Smart7CoreInfoBox />
           </div>
         )}
 
@@ -758,7 +736,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
             </div>
 
             {/* === SMART 7 CORE (same formula — works in Combination too) === */}
-            <Smart7CoreSection />
+            <Smart7CoreInfoBox />
           </div>
         )}
 

@@ -1078,6 +1078,34 @@ export async function generateSweep(
       } : undefined;
       const candidate = buildStrategicTeam(byRole, strategy, team1Name, team2Name, rotationOffset, lookups, customCfg, mode);
       if (!candidate) continue;
+
+      // === FORCE-INCLUDE LOCKED PLAYERS ===
+      // Per user spec: "team generete thanne fix cheyyanam"
+      // If locked players are set, ensure they are IN the team.
+      // If a locked player is missing, swap them in (replacing a non-locked player of same role).
+      if (lockedPlayerIds.size > 0) {
+        const candidateIds = new Set(candidate.map(p => String(p.player_fixed_id ?? p.pid ?? p.name)));
+        const missingLocked = [...lockedPlayerIds].filter(id => !candidateIds.has(id));
+
+        for (const missingId of missingLocked) {
+          // Find the locked player in the pool
+          const lockedPlayer = cleaned.find(p => {
+            const id = String(p.player_fixed_id ?? p.pid ?? p.name);
+            return id === missingId;
+          });
+          if (!lockedPlayer) continue;
+
+          // Find a non-locked player in the candidate to swap out
+          const swapIdx = candidate.findIndex(p => {
+            const id = String(p.player_fixed_id ?? p.pid ?? p.name);
+            return !lockedPlayerIds.has(id);
+          });
+          if (swapIdx >= 0) {
+            candidate[swapIdx] = lockedPlayer;
+          }
+        }
+      }
+
       if (!isValidRoleBalance(candidate)) continue;
       if (!isValidCredits(candidate)) continue;
 
