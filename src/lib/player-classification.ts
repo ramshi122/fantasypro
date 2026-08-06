@@ -372,6 +372,14 @@ export function classifyPlayer(
   }
 
   // === Classify by confidence score ===
+  // NOTE: Before lineup, we DON'T have enough data to confidently mark a
+  // player as AVOID. The backend marks all players as playing=0 and may
+  // not provide points/selected_by. So before lineup, the minimum category
+  // is RISKY (not AVOID). This prevents auto-excluding players that we
+  // simply don't have enough data for yet.
+  //
+  // AFTER lineup: full classification applies — AVOID is valid because we
+  // have confirmed Playing XI + form data.
   let category: PlayerCategory;
   let reason: string;
 
@@ -388,8 +396,18 @@ export function classifyPlayer(
     category = "RISKY";
     reason = "High risk/high reward — Grand League only";
   } else {
-    category = "AVOID";
-    reason = "Poor form/weak matchup/low fantasy expectation";
+    // Confidence < 40
+    if (lineupAnnounced) {
+      // After lineup: enough data to confidently say AVOID
+      category = "AVOID";
+      reason = "Poor form/weak matchup/low fantasy expectation (confirmed data)";
+    } else {
+      // Before lineup: NOT enough data to mark as AVOID — use RISKY instead
+      // This ensures we don't auto-exclude players before lineup when we
+      // simply don't have enough data yet. Team generation must work before lineup.
+      category = "RISKY";
+      reason = "Low confidence (limited pre-lineup data) — use with caution";
+    }
   }
 
   return {

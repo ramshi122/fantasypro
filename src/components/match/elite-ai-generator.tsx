@@ -307,11 +307,12 @@ export function EliteAIGenerator({
     // === COLOR-BASED AUTO-EXCLUSION (per user spec) ===
     // "Players marked ⚫ NOT PLAYING or 🔴 AVOID must NEVER be selected in any
     //  generated team."
-    // Even if the user didn't manually exclude them, auto-filter them out here
-    // so the engine never sees them. This is a SAFETY NET — the UI buttons make
-    // it easy to exclude manually, but this guarantees it.
+    //
+    // IMPORTANT: Before lineup, there are NO NOT_PLAYING or AVOID players
+    // (the classifier uses RISKY instead of AVOID before lineup because we
+    // don't have enough data). So auto-exclusion only kicks in AFTER lineup.
+    // This ensures team generation WORKS before lineup.
     let pool = [...safePlayers];
-    // Auto-exclude AVOID + NOT_PLAYING players (color-based)
     const autoExcluded: string[] = [];
     pool = pool.filter((p: any) => {
       const id = getPlayerId(p);
@@ -337,11 +338,26 @@ export function EliteAIGenerator({
       else { toast.info(`🧠 AI Mode — ${pool.length} players selected`); }
     }
     if (pool.length < 11) {
-      toast.error(
-        `Need at least 11 players in pool (currently ${pool.length}). ` +
-        `${autoExcluded.length} players were auto-excluded (AVOID/NOT_PLAYING). ` +
-        `Use AI Smart Selection or manually select more players.`
-      );
+      if (!lineupAnnounced && manualExclude.size > 0) {
+        // Before lineup + user manually excluded too many players
+        toast.error(
+          `Only ${pool.length} players available after exclusions. ` +
+          `Before lineup, avoid excluding too many players — clear some exclusions or use AI Smart Selection.`
+        );
+      } else if (lineupAnnounced && autoExcluded.length > 0) {
+        // After lineup + auto-excluded too many players (not enough in Playing XI)
+        toast.error(
+          `Only ${pool.length} players in confirmed Playing XI. ` +
+          `${autoExcluded.length} players were auto-excluded (AVOID/NOT_PLAYING). ` +
+          `Wait for full lineup announcement or select more players manually.`
+        );
+      } else {
+        toast.error(
+          `Need at least 11 players in pool (currently ${pool.length}). ` +
+          `${autoExcluded.length} players were auto-excluded. ` +
+          `Use AI Smart Selection or manually select more players.`
+        );
+      }
       return;
     }
     setRunning(true);
