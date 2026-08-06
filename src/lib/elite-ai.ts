@@ -50,6 +50,10 @@ import {
   validateTeamForPostLineup,
   scorePlayerForCaptaincy,
 } from "./post-lineup-filter";
+import {
+  classifyAllPlayers,
+  validateTeamComprehensive,
+} from "./player-classification";
 
 /* ============== Types ============== */
 
@@ -2522,6 +2526,23 @@ export function generateEliteTeams(
       if (!validation.valid) {
         console.warn(`[EliteAI] 🚫 Team ${i + 1} REJECTED (post-lineup validation failed): ${validation.reason}`);
         continue; // skip this team — don't add to rankedTeams
+      }
+    }
+
+    // === COMPREHENSIVE TEAM VALIDATION (per user spec rule 12 & 13) ===
+    // "Team Generate ചെയ്യുന്നതിന് മുമ്പ് എല്ലാ ടീമുകളും Validate ചെയ്യണം."
+    // Checks: exactly 11 players, no duplicates, no AVOID/NOT_PLAYING, no
+    // bench/injured/doubtful (after lineup), credits ≤ 100, role distribution
+    // (1+ WK, ≤8 per role), ≤7 players from one team.
+    {
+      const classifications = classifyAllPlayers(effectivePool, lineupAnnounced);
+      const validation = validateTeamComprehensive(team, classifications, lineupAnnounced);
+      if (!validation.valid) {
+        console.warn(`[EliteAI] 🚫 Team ${i + 1} REJECTED (comprehensive validation failed): ${validation.errors.join("; ")}`);
+        continue; // skip this team — regenerate
+      }
+      if (validation.warnings.length > 0) {
+        console.log(`[EliteAI] ⚠️ Team ${i + 1} warnings: ${validation.warnings.join("; ")}`);
       }
     }
 

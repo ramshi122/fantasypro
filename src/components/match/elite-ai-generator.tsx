@@ -115,9 +115,65 @@ export function EliteAIGenerator({
   // Persist custom combos across sessions
   useEffect(() => { localStorage.setItem("apna-elite-custom-combos", JSON.stringify(customCombos)); }, [customCombos]);
 
-  function toggleXI(pid: string) { setManualPlayingXI(p => { const n = new Set(p); n.has(pid) ? n.delete(pid) : n.add(pid); return n; }); }
+  // === AUTO-DEFAULT-EXCLUDE AVOID PLAYERS (per user spec rule 10) ===
+  // "🔴 AVOID കളിക്കാർ Default ആയി Excluded ആയിരിക്കണം."
+  // When classifications are computed (or change), auto-add all AVOID +
+  // NOT_PLAYING players to the manualExclude set. This runs once per
+  // classification change — doesn't override user's manual un-exclude.
+  useEffect(() => {
+    if (playerClassifications.size === 0) return;
+    setManualExclude(prev => {
+      const updated = new Set(prev);
+      let added = 0;
+      for (const [pid, c] of playerClassifications) {
+        if (shouldExcludePlayer(c) && !updated.has(pid)) {
+          updated.add(pid);
+          added++;
+        }
+      }
+      if (added > 0) {
+        console.log(`[EliteAI] 🔴 Auto-excluded ${added} AVOID/NOT_PLAYING players (default exclusion)`);
+      }
+      return updated;
+    });
+    // Also remove any AVOID/NOT_PLAYING players from manualPlayingXI (safety)
+    setManualPlayingXI(prev => {
+      const updated = new Set(prev);
+      let removed = 0;
+      for (const [pid, c] of playerClassifications) {
+        if (shouldExcludePlayer(c) && updated.has(pid)) {
+          updated.delete(pid);
+          removed++;
+        }
+      }
+      if (removed > 0) {
+        console.log(`[EliteAI] 🚫 Removed ${removed} AVOID/NOT_PLAYING players from selection`);
+      }
+      return updated;
+    });
+  }, [playerClassifications]);
+
+  function toggleXI(pid: string) {
+    // === BLOCK FORCE-SELECTION OF NOT_PLAYING/AVOID PLAYERS (per user spec rule 11) ===
+    // "Manual Selection നടത്തിയാലും ⚫ NOT_PLAYING, 🔴 AVOID കളിക്കാരെ
+    //  Force Select ചെയ്യാൻ അനുവദിക്കരുത്."
+    const classification = playerClassifications.get(pid);
+    if (classification && shouldExcludePlayer(classification)) {
+      toast.error(`❌ Cannot select ${classification.label} player — excluded by AI classification`);
+      return;
+    }
+    setManualPlayingXI(p => { const n = new Set(p); n.has(pid) ? n.delete(pid) : n.add(pid); return n; });
+  }
   function toggleEx(pid: string) { setManualExclude(p => { const n = new Set(p); n.has(pid) ? n.delete(pid) : n.add(pid); return n; }); }
-  function selectAllXI() { setManualPlayingXI(new Set(safePlayers.map((p: any) => String(p.player_fixed_id ?? p.pid ?? p.name)))); }
+  function selectAllXI() {
+    // Only select players that are NOT NOT_PLAYING/AVOID
+    const selectable = safePlayers.filter((p: any) => {
+      const id = getPlayerId(p);
+      const c = playerClassifications.get(id);
+      return !c || !shouldExcludePlayer(c);
+    });
+    setManualPlayingXI(new Set(selectable.map((p: any) => String(p.player_fixed_id ?? p.pid ?? p.name))));
+  }
 
   // === COLOR-BASED QUICK ACTIONS (per user spec) ===
   // ✅ Select Best Picks — select all 🟢 BEST_PICK players
@@ -840,16 +896,32 @@ export function EliteAIGenerator({
                       const sel = manualPlayingXI.has(pid);
                       const classification = playerClassifications.get(pid);
                       const rowBg = classification?.rowBgClass || "bg-white dark:bg-slate-800 border-slate-200";
+                      // === DISABLE NOT_PLAYING & AVOID players (per user spec rule 9 & 11) ===
+                      // "⚫ NOT PLAYING കളിക്കാർ UI-യിൽ Disable ചെയ്യണം."
+                      // "Manual Selection നടത്തിയാലും ⚫ NOT PLAYING, 🔴 AVOID കളിക്കാരെ
+                      //  Force Select ചെയ്യാൻ അനുവദിക്കരുത്."
+                      const isForceDisabled = classification
+                        ? (classification.category === "NOT_PLAYING" || classification.category === "AVOID")
+                        : false;
                       return (
                         <label
                           key={i}
                           className={cn(
-                            "flex items-center gap-1 text-[8px] px-1 py-0.5 rounded border cursor-pointer",
+                            "flex items-center gap-1 text-[8px] px-1 py-0.5 rounded border",
+                            isForceDisabled
+                              ? "cursor-not-allowed opacity-60"
+                              : "cursor-pointer",
                             sel ? "bg-emerald-100 dark:bg-emerald-950/40 border-emerald-400 text-emerald-700" : rowBg
                           )}
                           title={classification?.reason || "No classification"}
                         >
-                          <input type="checkbox" checked={sel} onChange={() => toggleXI(pid)} className="w-2.5 h-2.5 accent-emerald-500 flex-shrink-0" />
+                          <input
+                            type="checkbox"
+                            checked={sel}
+                            onChange={() => toggleXI(pid)}
+                            disabled={isForceDisabled}
+                            className="w-2.5 h-2.5 accent-emerald-500 flex-shrink-0"
+                          />
                           {classification && (
                             <span className={cn("text-[7px] font-bold px-1 py-0 rounded flex-shrink-0", classification.colorClass)}>
                               {classification.emoji}
