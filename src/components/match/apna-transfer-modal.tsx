@@ -28,6 +28,7 @@ import {
   type MatchInfo,
   type TeamRow,
 } from "@/lib/api";
+import { listAccountsForApp, type FantasyAccount } from "@/lib/multi-accounts";
 import { decrypt } from "@/lib/crypto";
 import { cn } from "@/lib/utils";
 
@@ -64,6 +65,25 @@ export function ApnaTransferModal({
   const [linkedMobile, setLinkedMobile] = useState("");
   const [transferMode, setTransferMode] = useState<"classic" | "otp">("classic");
   const [lastTransferType, setLastTransferType] = useState<"classic" | "otp">("classic");
+
+  // === MULTI-ACCOUNT SELECTOR ===
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
+  const [, setAccountsRefreshTick] = useState(0);
+  const availableAccounts: FantasyAccount[] = selectedApp ? listAccountsForApp(selectedApp) : [];
+  const selectedAccounts = availableAccounts.filter(a => selectedAccountIds.includes(a.id));
+
+  // Refresh accounts periodically
+  useEffect(() => {
+    if (!open) return;
+    setAccountsRefreshTick(t => t + 1);
+    const interval = setInterval(() => setAccountsRefreshTick(t => t + 1), 500);
+    return () => clearInterval(interval);
+  }, [open, selectedApp]);
+
+  // Reset selection when app changes
+  useEffect(() => {
+    setSelectedAccountIds([]);
+  }, [selectedApp]);
 
   const validTeams = teams.filter((t) => (t.players?.length || 0) >= 1);
   // Per-platform team limit — matches the ORIGINAL teamgeneration.in APK:
@@ -420,6 +440,40 @@ export function ApnaTransferModal({
                             <p className="text-[10px] text-muted-foreground">Token active · One-time OTP login</p>
                           </div>
                         </div>
+
+                        {/* === MULTI-ACCOUNT SELECTOR === */}
+                        {availableAccounts.length > 0 && (
+                          <div className="p-3 rounded-xl border border-violet-200 dark:border-violet-900/30 bg-violet-50/30 dark:bg-violet-950/20">
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="text-[11px] font-bold text-foreground">
+                                Select Accounts ({availableAccounts.length} linked):
+                              </label>
+                              <div className="flex gap-2">
+                                <button onClick={() => setSelectedAccountIds(availableAccounts.map(a => a.id))} className="text-[10px] font-bold text-violet-600 dark:text-violet-400 hover:underline">Select All</button>
+                                <button onClick={() => setSelectedAccountIds([])} className="text-[10px] font-bold text-slate-500 hover:underline">Deselect All</button>
+                              </div>
+                            </div>
+                            <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                              {availableAccounts.map((acc, i) => {
+                                const isSelected = selectedAccountIds.includes(acc.id);
+                                return (
+                                  <label key={acc.id} className={cn("flex items-center gap-2.5 p-2 rounded-lg border cursor-pointer transition-all", isSelected ? "border-violet-500 bg-violet-100 dark:bg-violet-900/40" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-card hover:border-violet-300")}>
+                                    <input type="checkbox" checked={isSelected} onChange={(e) => { if (e.target.checked) setSelectedAccountIds(prev => [...prev, acc.id]); else setSelectedAccountIds(prev => prev.filter(id => id !== acc.id)); }} className="w-4 h-4 accent-violet-600" />
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-xs font-bold text-foreground truncate">{acc.label || `Account ${i + 1}`}</p>
+                                      <p className="text-[10px] text-muted-foreground">{acc.mobile ? `📱 ${acc.mobile}` : "No mobile"}{acc.isDefault ? " · ⭐ Default" : ""}</p>
+                                    </div>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            {selectedAccountIds.length > 1 && (
+                              <div className="mt-2 p-2 rounded-lg bg-emerald-100 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800">
+                                <p className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">⚡ Multi Transfer: {selectedAccountIds.length} accounts selected</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
                         {/* Stats */}
                         <div className="grid grid-cols-3 gap-2">

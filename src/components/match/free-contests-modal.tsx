@@ -67,6 +67,15 @@ export function FreeContestsModal({
   const [joinMode, setJoinMode] = useState<"spread-repeat" | "spread-no-repeat" | "same-teams" | "random">("random");
   const [showJoinMode, setShowJoinMode] = useState(false);
 
+  // === MULTI-ACCOUNT SELECTOR for Join Contest ===
+  const [selectedJoinAccountIds, setSelectedJoinAccountIds] = useState<string[]>([]);
+  const availableJoinAccounts = selectedApp ? getActiveAccountsForApp(selectedApp) : [];
+
+  // Reset account selection when app changes
+  useEffect(() => {
+    setSelectedJoinAccountIds([]);
+  }, [selectedApp]);
+
   // CRITICAL: useLicense MUST be called before any conditional return.
   // Previously it was after `if (!open) return null;` which violated
   // React's Rules of Hooks and caused "Join contest button click error".
@@ -558,6 +567,39 @@ export function FreeContestsModal({
                 {/* Contests list */}
                 {phase !== "loading" && contests.length > 0 && (
                   <div className="space-y-3">
+                    {/* === MULTI-ACCOUNT SELECTOR for Join Contest === */}
+                    {availableJoinAccounts.length > 1 && (
+                      <div className="p-3 rounded-xl border border-violet-200 dark:border-violet-900/30 bg-violet-50/30 dark:bg-violet-950/20">
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-[11px] font-bold text-foreground">
+                            Select Accounts ({availableJoinAccounts.length} linked):
+                          </label>
+                          <div className="flex gap-2">
+                            <button onClick={() => setSelectedJoinAccountIds(availableJoinAccounts.map(a => a.id))} className="text-[10px] font-bold text-violet-600 dark:text-violet-400 hover:underline">Select All</button>
+                            <button onClick={() => setSelectedJoinAccountIds([])} className="text-[10px] font-bold text-slate-500 hover:underline">Deselect All</button>
+                          </div>
+                        </div>
+                        <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                          {availableJoinAccounts.map((acc, i) => {
+                            const isSelected = selectedJoinAccountIds.includes(acc.id);
+                            return (
+                              <label key={acc.id} className={cn("flex items-center gap-2.5 p-2 rounded-lg border cursor-pointer transition-all", isSelected ? "border-violet-500 bg-violet-100 dark:bg-violet-900/40" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-card hover:border-violet-300")}>
+                                <input type="checkbox" checked={isSelected} onChange={(e) => { if (e.target.checked) setSelectedJoinAccountIds(prev => [...prev, acc.id]); else setSelectedJoinAccountIds(prev => prev.filter(id => id !== acc.id)); }} className="w-4 h-4 accent-violet-600" />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-bold text-foreground truncate">{acc.label || `Account ${i + 1}`}</p>
+                                  <p className="text-[10px] text-muted-foreground">{acc.mobile ? `📱 ${acc.mobile}` : "No mobile"}{acc.isDefault ? " · ⭐" : ""}</p>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        {selectedJoinAccountIds.length > 1 && (
+                          <div className="mt-2 p-2 rounded-lg bg-emerald-100 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800">
+                            <p className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">⚡ {selectedJoinAccountIds.length} accounts selected — each will join independently</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {/* Join All button — auto-join all available contests */}
                     {phase === "ready" && contests.some(c => c.canJoinMore && (c.availableSlots || 0) > 0) && (
                       <Button
