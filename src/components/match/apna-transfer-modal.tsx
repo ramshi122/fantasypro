@@ -602,6 +602,14 @@ export function ApnaTransferModal({
                           </div>
                         )}
 
+                        {/* Link Another Account button — lets user link 2nd/3rd account without leaving */}
+                        <button
+                          onClick={onOpenOtpLogin}
+                          className="w-full text-center text-[10px] font-bold text-violet-600 dark:text-violet-400 hover:underline py-1"
+                        >
+                          + Link Another {APP_LABELS[selectedApp]?.label || ""} Account
+                        </button>
+
                         <Button className="w-full h-12 brand-gradient text-white font-bold" onClick={handleOtpTransfer}
                           disabled={selectedTeamIds.size > 0 ? replaceCount === 0 : bulkCount === 0}>
                           <Send className="w-4 h-4 mr-2" />

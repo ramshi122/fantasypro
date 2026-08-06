@@ -1045,6 +1045,11 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
           setLinkedApp(app);
           setShowOtpLogin(false);
           toast.success(`${app} linked via OTP (${mobile})`);
+          // Reopen transfer modal so user can see the new account
+          setRefreshKey((k) => k + 1);
+          setTimeout(() => {
+            setShowBulkTransfer(true);
+          }, 500);
         }}
       />
 
