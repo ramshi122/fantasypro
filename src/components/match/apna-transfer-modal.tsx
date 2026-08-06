@@ -163,13 +163,69 @@ export function ApnaTransferModal({
 
   if (!open) return null;
 
+  // COMMON TRANSFER PAYLOAD BUILDER — identical to BulkTransferModal.buildTransferItems
+  // Per user spec: "There must be only ONE transfer payload builder in the project"
+  // This is the SAME logic used by Elite AI transfer flow.
   function buildItems(): BulkTransferItem[] {
-    return validTeams.map((t) => ({
-      teamNo: t.teamNo ?? 0,
-      playerIds: (t.players || []).map((p) => { const fid = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? ""); return playerIdMap[`${fid}|${selectedApp}`] || fid; }).filter(Boolean),
-      captainId: (() => { const c = String(t.captain ?? t.c ?? ""); return playerIdMap[`${c}|${selectedApp}`] || c; })(),
-      viceCaptainId: (() => { const v = String(t.viceCaptain ?? t.vc ?? t.vicecaptain ?? ""); return playerIdMap[`${v}|${selectedApp}`] || v; })(),
-    }));
+    return validTeams.map((t) => {
+      // Step 1: Player IDs — playerIdMap first, fallback to fixedId (same as Elite AI)
+      let playerIds = (t.players || [])
+        .map((p) => {
+          const fixedId = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "");
+          if (!fixedId) return "";
+          const mapped = playerIdMap[`${fixedId}|${selectedApp}`];
+          return mapped || fixedId;
+        })
+        .filter(Boolean);
+
+      // Fix: If < 11 after mapping, try raw IDs
+      if (playerIds.length < 11) {
+        const rawIds = (t.players || [])
+          .map(p => String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? ""))
+          .filter(Boolean);
+        if (rawIds.length === 11) playerIds = rawIds;
+      }
+
+      // Step 2: Captain — playerIdMap, fallback to raw, fallback to first player
+      const capRaw = String(t.captain ?? t.c ?? "");
+      let captainId = capRaw ? (playerIdMap[`${capRaw}|${selectedApp}`] || capRaw) : "";
+      if (!captainId || !playerIds.includes(captainId)) {
+        const capPlayer = (t.players || []).find(p =>
+          String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "") === capRaw
+        );
+        if (capPlayer) {
+          const fid = String(capPlayer.player_fixed_id ?? capPlayer.pl_id ?? capPlayer.pid ?? "");
+          captainId = playerIdMap[`${fid}|${selectedApp}`] || fid;
+        }
+      }
+      if (!captainId || !playerIds.includes(captainId)) captainId = playerIds[0] || "";
+
+      // Step 3: VC — playerIdMap, fallback to raw, fallback to different player
+      const vcRaw = String(t.viceCaptain ?? t.vc ?? t.vicecaptain ?? "");
+      let viceCaptainId = vcRaw ? (playerIdMap[`${vcRaw}|${selectedApp}`] || vcRaw) : "";
+      if (!viceCaptainId || !playerIds.includes(viceCaptainId)) {
+        const vcPlayer = (t.players || []).find(p =>
+          String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "") === vcRaw
+        );
+        if (vcPlayer) {
+          const fid = String(vcPlayer.player_fixed_id ?? vcPlayer.pl_id ?? vcPlayer.pid ?? "");
+          viceCaptainId = playerIdMap[`${fid}|${selectedApp}`] || fid;
+        }
+      }
+      if (!viceCaptainId || !playerIds.includes(viceCaptainId) || viceCaptainId === captainId) {
+        for (let i = 0; i < playerIds.length; i++) {
+          if (playerIds[i] !== captainId) { viceCaptainId = playerIds[i]; break; }
+        }
+        if (!viceCaptainId) viceCaptainId = playerIds[0] || "";
+      }
+
+      return { teamNo: t.teamNo ?? 0, playerIds, captainId, viceCaptainId };
+    }).filter(item =>
+      item.playerIds.length === 11 &&
+      item.captainId &&
+      item.viceCaptainId &&
+      item.captainId !== item.viceCaptainId
+    );
   }
 
   // CLASSIC transfer: try /api/classic/dream11/addteam (NO OTP)
