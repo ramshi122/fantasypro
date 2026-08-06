@@ -23,6 +23,7 @@ interface Props {
   token: string | null;
   onClose: () => void;
   onGenerated: (teams: TeamRow[]) => void;
+  onTransfer?: (teams: TeamRow[]) => void;
 }
 
 const MODE_INFO: Record<GenMode, { label: string; icon: typeof Zap; color: string; desc: string }> = {
@@ -32,7 +33,7 @@ const MODE_INFO: Record<GenMode, { label: string; icon: typeof Zap; color: strin
   combination: { label: "Combination Auto", icon: Layers, color: "from-emerald-500 to-teal-600", desc: "Rotate C/VC through all locked candidate pairs. Maximal team diversity." },
 };
 
-export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, token, onClose, onGenerated }: Props) {
+export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, token, onClose, onGenerated, onTransfer }: Props) {
   const [generating, setGenerating] = useState(false);
   const [teamCount, setTeamCount] = useState<SweepCount>(20);
   const [progress, setProgress] = useState<string>("");
@@ -578,9 +579,12 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
   // Transfer — call onGenerated which saves + opens transfer flow
   function handleTransfer() {
     if (generatedTeams.length === 0) { toast.error("Generate teams first"); return; }
-    // onGenerated → handleBulkAddTeams saves teams + refreshes + closes modal
-    // Parent will then open transfer modal
+    // Save teams first via onGenerated, then trigger transfer via onTransfer
     onGenerated(generatedTeams);
+    // If parent provides onTransfer callback, call it to open BulkTransferModal
+    if (onTransfer) {
+      onTransfer(generatedTeams);
+    }
   }
 
   return (

@@ -162,6 +162,20 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
     loadAll();
   }, [loadAll, refreshKey]);
 
+  // === LISTEN FOR TRANSFER REQUESTS FROM MODE SETTINGS PAGE ===
+  // Per user spec: "Elite ai geam generete transfering, another any option
+  // team generate not transfring, issu team genereting section"
+  // Smart/GL/Advanced/Combination modes generate teams but don't open
+  // the transfer modal. This listener catches the "open-transfer-modal"
+  // event dispatched by auto-generator.tsx when user clicks Transfer.
+  useEffect(() => {
+    const handleOpenTransfer = () => {
+      setShowBulkTransfer(true);
+    };
+    window.addEventListener("open-transfer-modal", handleOpenTransfer);
+    return () => window.removeEventListener("open-transfer-modal", handleOpenTransfer);
+  }, []);
+
   // ===== 30-SECOND AUTO-REFRESH for lineup detection =====
   // Checks every 30s if lineup has been announced. If lineup status changes,
   // auto-reloads match data + shows toast + auto-replaces non-playing players.

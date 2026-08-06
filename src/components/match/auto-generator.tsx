@@ -239,6 +239,16 @@ export function AutoGenerator({ match, onGenerated, onClose, onEliteAI }: AutoGe
           onGenerated(teams);
           setOpenModePage(null);
         }}
+        onTransfer={(teams) => {
+          onGenerated(teams);
+          setOpenModePage(null);
+          // Trigger transfer — parent will open BulkTransferModal
+          // Use a small delay to let the modal close first
+          setTimeout(() => {
+            const event = new CustomEvent("open-transfer-modal", { detail: { teams } });
+            window.dispatchEvent(event);
+          }, 300);
+        }}
       />
     );
   }
