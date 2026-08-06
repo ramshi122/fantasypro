@@ -428,7 +428,8 @@ function buildStrategicTeam(
   team2Name: string,
   rotationOffset: number,
   lookups?: CachedLookups,
-  customCfg?: { WK: number; BAT: number; AR: number; BOWL: number }
+  customCfg?: { WK: number; BAT: number; AR: number; BOWL: number },
+  mode?: "smart" | "gl" | "advanced" | "combination"
 ): MatchPlayer[] | null {
   const availWK = byRole.WK.length;
   const availBAT = byRole.BAT.length;
@@ -530,6 +531,54 @@ function buildStrategicTeam(
       const lowSelPool = shuffled.slice(topCount).sort((a, b) => a.selNum - b.selNum);
       const diff = lowSelPool.slice(0, diffCount);
       chosen = [...top, ...diff];
+    }
+
+    // ============================================================
+    // MODE-SPECIFIC PLAYER ADJUSTMENT
+    // ============================================================
+    // Per user spec: "ഓരോ മോഡിനും വ്യത്യസ്ത AI ലോജിക് വേണം"
+    // Each mode adjusts the selected players differently:
+    //
+    // Smart Auto → prioritize HIGH sel% (safe, proven performers)
+    // Grand League → prioritize LOW sel% (differential, contrarian)
+    // Advanced Auto → prioritize HIGH credits (form-based, best players)
+    // Combination Auto → keep first N picks stable, rotate rest
+    if (mode === "smart" && type !== "differential") {
+      // Smart Auto: sort chosen by sel% descending — safest picks first
+      chosen.sort((a, b) => b.selNum - a.selNum);
+      // But keep some variety — only sort top half
+      const halfIdx = Math.ceil(chosen.length / 2);
+      const topHalf = chosen.slice(0, halfIdx).sort((a, b) => b.selNum - a.selNum);
+      const bottomHalf = chosen.slice(halfIdx);
+      chosen = [...topHalf, ...bottomHalf];
+    } else if (mode === "gl" && type === "differential") {
+      // Grand League: sort chosen by sel% ascending — most differential first
+      chosen.sort((a, b) => a.selNum - b.selNum);
+      // Keep 1-2 safe picks (highest sel%) for stability
+      const safePicks = chosen.filter(p => p.selNum >= 50).slice(0, 2);
+      const diffPicks = chosen.filter(p => p.selNum < 50);
+      chosen = [...safePicks, ...diffPicks];
+    } else if (mode === "advanced") {
+      // Advanced Auto: sort by EFV (credits × sel% factor) — form-focused
+      chosen.sort((a, b) => b.efv - a.efv);
+      // Rotate top picks for variety
+      const rotateIdx = rotationOffset % Math.max(1, chosen.length);
+      if (rotateIdx > 0 && chosen.length > 2) {
+        const rotated = [...chosen.slice(rotateIdx), ...chosen.slice(0, rotateIdx)];
+        chosen = rotated;
+      }
+    } else if (mode === "combination") {
+      // Combination Auto: keep first picks stable, shuffle the rest
+      // First ~60% of picks stay stable (core), last ~40% rotate
+      const stableCount = Math.ceil(chosen.length * 0.6);
+      const stable = chosen.slice(0, stableCount);
+      const rotating = chosen.slice(stableCount);
+      // Rotate the rotating part based on rotationOffset
+      if (rotating.length > 1) {
+        const rotIdx = rotationOffset % rotating.length;
+        const rotated = [...rotating.slice(rotIdx), ...rotating.slice(0, rotIdx)];
+        chosen = [...stable, ...rotated];
+      }
     }
 
     // Deduplicate within role
@@ -1027,7 +1076,7 @@ export async function generateSweep(
         AR: customCombos![i % customCombos!.length].ar,
         BOWL: customCombos![i % customCombos!.length].bowl,
       } : undefined;
-      const candidate = buildStrategicTeam(byRole, strategy, team1Name, team2Name, rotationOffset, lookups, customCfg);
+      const candidate = buildStrategicTeam(byRole, strategy, team1Name, team2Name, rotationOffset, lookups, customCfg, mode);
       if (!candidate) continue;
       if (!isValidRoleBalance(candidate)) continue;
       if (!isValidCredits(candidate)) continue;
@@ -1483,6 +1532,15 @@ export async function generateSweep(
           const _top = _sh.slice(0, _tc);
           const _contra = _sh.slice(_tc).sort((a, b) => Number(a.selected_by ?? a.sel ?? 0) - Number(b.selected_by ?? b.sel ?? 0));
           _team.push(..._top, ..._contra.slice(0, _need - _tc));
+        }
+
+        // MODE-SPECIFIC: Apply same mode adjustment as main loop
+        if (mode === "smart") {
+          _team.sort((a, b) => Number(b.selected_by ?? b.sel ?? 0) - Number(a.selected_by ?? a.sel ?? 0));
+        } else if (mode === "gl") {
+          _team.sort((a, b) => Number(a.selected_by ?? a.sel ?? 0) - Number(b.selected_by ?? b.sel ?? 0));
+        } else if (mode === "advanced") {
+          _team.sort((a, b) => Number(b.credits || 0) - Number(a.credits || 0));
         }
       }
 
