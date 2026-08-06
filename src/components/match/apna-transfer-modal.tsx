@@ -72,11 +72,20 @@ export function ApnaTransferModal({
   const availableAccounts: FantasyAccount[] = selectedApp ? listAccountsForApp(selectedApp) : [];
   const selectedAccounts = availableAccounts.filter(a => selectedAccountIds.includes(a.id));
 
-  // Refresh accounts periodically
+  // Refresh accounts + isLinked periodically while modal is open
   useEffect(() => {
     if (!open) return;
+    // Update isLinked based on current selectedApp
+    const acct = getLinkedAccount(selectedApp);
+    setIsLinked(!!acct);
+    setLinkedMobile(acct?.mobile || "");
     setAccountsRefreshTick(t => t + 1);
-    const interval = setInterval(() => setAccountsRefreshTick(t => t + 1), 500);
+    const interval = setInterval(() => {
+      const a = getLinkedAccount(selectedApp);
+      setIsLinked(!!a);
+      setLinkedMobile(a?.mobile || "");
+      setAccountsRefreshTick(t => t + 1);
+    }, 500);
     return () => clearInterval(interval);
   }, [open, selectedApp]);
 
@@ -445,6 +454,21 @@ export function ApnaTransferModal({
 
             {phase === "ready" && (
               <>
+                {/* Platform selector — switch between Dream11 and My11Circle */}
+                <div className="flex gap-2">
+                  {(["dream11", "my11circle"] as FantasyApp[]).map(app => {
+                    const isLinkedApp = !!getLinkedAccount(app);
+                    const acctCount = listAccountsForApp(app).length;
+                    return (
+                      <button key={app} onClick={() => setSelectedApp(app)}
+                        className={cn("flex-1 h-10 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
+                          selectedApp === app ? "bg-gradient-to-r text-white " + (APP_LABELS[app]?.color || "from-violet-500 to-purple-600") : "bg-slate-100 dark:bg-slate-800 text-muted-foreground")}>
+                        {APP_LABELS[app]?.emoji} {APP_LABELS[app]?.label}
+                        {isLinkedApp && <span className="text-[8px] bg-emerald-500 text-white px-1 rounded-full">{acctCount}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
                 {/* Mode selector */}
                 <div className="flex bg-violet-50 dark:bg-violet-900/20 rounded-xl p-1">
                   <button onClick={() => setTransferMode("classic")}
