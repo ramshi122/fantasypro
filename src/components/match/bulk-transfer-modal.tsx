@@ -291,26 +291,15 @@ export function BulkTransferModal({
 
     // === PLAYER ID MISMATCH CHECK ===
     // Per user spec: "Plyer id mismatch transferfail chek fix"
-    // If the selected app doesn't have proper fantasy_id_list entries,
-    // player IDs will be wrong → transfer fails.
-    // Warn user BEFORE attempting transfer.
-    if (mode === "linked" && !appsWithProperIds.has(selectedApp)) {
-      const hasSupported = supportedApps.includes(selectedApp);
-      if (!hasSupported) {
-        toast.error(
-          `⚠️ ${APP_LABELS[selectedApp]?.label || selectedApp} is NOT supported for this match. ` +
-          `This match only supports: ${supportedApps.join(", ")}. ` +
-          `Player IDs will mismatch — transfer will fail. ` +
-          `Please select a supported platform.`
-        );
-        return;
-      } else {
-        toast.warning(
-          `⚠️ ${APP_LABELS[selectedApp]?.label || selectedApp} player IDs may be incorrect ` +
-          `(no fantasy_id_list found). Transfer might fail. Proceeding anyway...`
-        );
-        console.warn(`[Transfer] ⚠️ Player ID mismatch risk: ${selectedApp} has no fantasy_id_list entries`);
-      }
+    // Only BLOCK transfer if the selected app is NOT supported by this match.
+    // If the app IS supported but has no fantasy_id_list, still proceed (use fixed_id fallback).
+    if (mode === "linked" && supportedApps.length > 0 && !supportedApps.includes(selectedApp)) {
+      toast.error(
+        `⚠️ ${APP_LABELS[selectedApp]?.label || selectedApp} is NOT supported for this match. ` +
+        `This match only supports: ${supportedApps.join(", ")}. ` +
+        `Please select a supported platform.`
+      );
+      return;
     }
 
     // === MULTI-ACCOUNT TRANSFER ===
