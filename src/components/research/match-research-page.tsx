@@ -80,7 +80,11 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
     setPlayers([]);
     try {
       // Fetch match details, best teams, and players in parallel
-      const [detailsRes, bestRes] = await Promise.all([
+      // NOTE: These are STANDALONE API calls via research-proxy — completely
+      // separate from the existing app's API, transfer system, or team IDs.
+      // Research data is READ-ONLY and never modifies player IDs, team IDs,
+      // or transfer mapping.
+      const [detailsRes, bestRes, playersRes] = await Promise.all([
         getResearchMatchDetails(match.id),
         fetch("/api/research-proxy", {
           method: "POST",

@@ -2,15 +2,29 @@
  * APNA CRICKET — Standalone Research API Service
  * ================================================
  *
- * Completely independent module. Does NOT use, modify, or connect to any
- * existing data, state, API calls, database, cache, or hooks.
+ * ISOLATION GUARANTEE (per user spec):
+ * This module is READ-ONLY. It provides additional intelligence (pitch report,
+ * weather, player form, C/VC ratings, injury updates, etc.) to improve player
+ * scoring and team selection.
  *
- * Uses its own API integration with a separate backend.
- * All state, services, types, and error handling are self-contained.
+ * This module must NEVER:
+ *   - Modify Dream11 Team IDs
+ *   - Modify Player IDs
+ *   - Modify Transfer IDs
+ *   - Change the generated team's player mapping
+ *   - Regenerate or replace IDs from the Research module
+ *   - Connect to the transfer logic in any way
  *
- * Per user spec: "This page must NOT use, modify, or connect to any existing
- * data, state, API calls, database collections, caches, stores, contexts,
- * hooks, or business logic used anywhere else in the application."
+ * The Team Generator may READ research data to improve player scoring/weight,
+ * but the final generated team preserves original player IDs, team IDs, and
+ * transfer mapping exactly as before.
+ *
+ * Research data = Read Only.
+ * Transfer system = Completely independent.
+ * Dream11 ID mapping = Never modify.
+ *
+ * This module does NOT use, modify, or connect to any existing data, state,
+ * API calls, database, cache, stores, contexts, hooks, or business logic.
  */
 
 // ============================================================
