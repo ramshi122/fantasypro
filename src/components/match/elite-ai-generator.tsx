@@ -85,11 +85,10 @@ export function EliteAIGenerator({
   const [customCombos, setCustomCombos] = useState<Combo[]>([]);
   const [newCombo, setNewCombo] = useState<Combo>({ wk: 1, bat: 4, ar: 3, bowl: 3 });
 
-  // === SWIPE COMBINATION SELECTOR (per user spec) ===
-  // Selected combo from the TeamCombinationSelector — used as the FIRST
-  // custom combo when generating teams. This ensures every generated team
-  // strictly follows the selected combination.
-  const [selectorCombo, setSelectorCombo] = useState<RoleCombo | null>(null);
+  // === MULTI-SELECT COMBINATION SELECTOR (per user spec) ===
+  // Array of selected combos — multiple can be selected simultaneously.
+  // Persists in localStorage, survives settings changes.
+  const [selectedCombos, setSelectedCombos] = useState<RoleCombo[]>([]);
 
   const matchId = (match?.matchId ?? match?.id ?? "") as string;
   const safePlayers = Array.isArray(players) ? players : [];
@@ -372,29 +371,21 @@ export function EliteAIGenerator({
     setProgress({ check: 0, total: 173, message: "Initializing Elite AI — 150+ Data Point Analysis..." });
 
     try {
-      // === COMBINATION SELECTOR + CUSTOM COMBOS (per user spec) ===
-      // The selectorCombo (from the swipeable TeamCombinationSelector) is the
-      // PRIMARY combination — it goes FIRST in the list so the engine uses it
-      // for the majority of teams. Custom combos (manually added) go after.
-      //
-      // Per user spec rule 6: "Every generated team MUST strictly follow the
-      // selected combination. No exceptions."
+      // === MULTI-SELECT COMBINATION SELECTOR (per user spec) ===
+      // All selected combos from the swipeable selector are passed to the engine.
+      // The engine distributes teams evenly across all selected combos.
+      // Per user spec: "Every generated team MUST follow one of the selected combinations."
       let combosToPass: RoleCombo[] | undefined = undefined;
 
-      if (selectorCombo) {
-        // Start with the selector combo (AI-recommended or user-selected)
-        combosToPass = [selectorCombo];
-        // Append any manually-added custom combos
-        if (customCombos.length > 0) {
-          combosToPass = [...combosToPass, ...customCombos];
-        }
-      } else if (customCombos.length > 0) {
-        // No selector combo, but user has custom combos
-        combosToPass = customCombos;
+      if (selectedCombos.length > 0) {
+        combosToPass = [...selectedCombos];
+      }
+      if (customCombos.length > 0) {
+        combosToPass = [...(combosToPass || []), ...customCombos];
       }
 
       if (combosToPass) {
-        console.log(`[EliteAI] Passing ${combosToPass.length} combos to engine (mode: ${eliteMode}) — selector combo first: WK=${selectorCombo?.wk} BAT=${selectorCombo?.bat} AR=${selectorCombo?.ar} BOWL=${selectorCombo?.bowl}`);
+        console.log(`[EliteAI] Passing ${combosToPass.length} combos to engine (mode: ${eliteMode})`);
       }
 
       const res = await runEliteAI(
@@ -681,15 +672,14 @@ export function EliteAIGenerator({
                   </div>
                 </div>
 
-                {/* === TEAM COMBINATION SELECTOR (swipeable — per user spec) === */}
-                {/* Works in ALL modes — selected combo is passed to the engine */}
+                {/* === TEAM COMBINATION SELECTOR (multi-select — per user spec) === */}
                 <TeamCombinationSelector
                   match={match}
                   players={safePlayers}
                   lineupAnnounced={lineupAnnounced}
-                  onComboSelect={setSelectorCombo}
-                  selectedCombo={selectorCombo}
+                  onCombosChange={setSelectedCombos}
                   compact
+                  storageKey="apna-elite-selected-combos"
                 />
 
                 {/* === Mode-specific Settings (NEW) === */}
