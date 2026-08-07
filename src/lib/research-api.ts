@@ -18,21 +18,26 @@
 // ============================================================
 
 export interface ResearchMatch {
-  MID: string;
-  title: string;
-  team1: string;
-  team2: string;
-  team1Short: string;
-  team2Short: string;
-  team1Logo: string;
-  team2Logo: string;
-  series: string;
-  venue: string;
-  matchTime: string;
-  matchType: string;
+  // API actual field names (from possible11 API)
+  id: string;
+  date: string;
+  name: string;
+  tour: string;
+  sid: string;
+  tid: string;
+  c1: string;
+  c2: string;
+  type: string;
+  prize: string;
   status: string;
-  sport: string;
-  lineup_status?: number;
+  status_msg: string;
+  active: string;
+  cod1: string;  // team1 short code
+  cnm1: string;  // team1 full name
+  fl1: string;   // team1 flag/logo
+  cod2: string;  // team2 short code
+  cnm2: string;  // team2 full name
+  fl2: string;   // team2 flag/logo
   [k: string]: unknown;
 }
 

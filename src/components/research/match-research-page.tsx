@@ -70,8 +70,8 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
     setBestPlayers([]);
     try {
       const [detailsRes, bestRes] = await Promise.all([
-        getResearchMatchDetails(match.MID),
-        getResearchBestPlayers(match.MID),
+        getResearchMatchDetails(match.id),
+        getResearchBestPlayers(match.id),
       ]);
       if (detailsRes.details) setMatchDetails(detailsRes.details);
       if (bestRes.best) setBestPlayers(bestRes.best);
@@ -86,10 +86,10 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
-      String(m.title || "").toLowerCase().includes(q) ||
-      String(m.team1 || "").toLowerCase().includes(q) ||
-      String(m.team2 || "").toLowerCase().includes(q) ||
-      String(m.series || "").toLowerCase().includes(q)
+      String(m.name || "").toLowerCase().includes(q) ||
+      String(m.cnm1 || "").toLowerCase().includes(q) ||
+      String(m.cnm2 || "").toLowerCase().includes(q) ||
+      String(m.tour || "").toLowerCase().includes(q)
     );
   });
 
@@ -161,7 +161,7 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
             <div className="space-y-3">
               {filteredMatches.map((match, i) => (
                 <motion.div
-                  key={match.MID || i}
+                  key={match.id || i}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.05 }}
@@ -170,26 +170,27 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
                 >
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-[10px] font-bold text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-950/40 px-2 py-0.5 rounded-full">
-                      {match.series || match.matchType || "Cricket"}
+                      {match.tour || match.type || "Cricket"}
                     </span>
-                    <span className="text-[10px] text-muted-foreground">{match.matchTime || "TBA"}</span>
+                    <span className="text-[10px] text-muted-foreground">{match.date || "TBA"}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      {match.team1Logo && <img src={match.team1Logo} alt="" className="w-8 h-8 rounded-full" />}
-                      <span className="text-sm font-bold">{match.team1 || match.team1Short || "T1"}</span>
+                      {match.fl1 && <img src={match.fl1} alt="" className="w-8 h-8 rounded-full" />}
+                      <div>
+                        <span className="text-sm font-bold block">{match.cnm1 || match.cod1 || "T1"}</span>
+                        {match.cod1 && <span className="text-[8px] text-muted-foreground">{match.cod1}</span>}
+                      </div>
                     </div>
                     <span className="text-[10px] font-bold text-muted-foreground px-2">VS</span>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold">{match.team2 || match.team2Short || "T2"}</span>
-                      {match.team2Logo && <img src={match.team2Logo} alt="" className="w-8 h-8 rounded-full" />}
+                      <div className="text-right">
+                        <span className="text-sm font-bold block">{match.cnm2 || match.cod2 || "T2"}</span>
+                        {match.cod2 && <span className="text-[8px] text-muted-foreground">{match.cod2}</span>}
+                      </div>
+                      {match.fl2 && <img src={match.fl2} alt="" className="w-8 h-8 rounded-full" />}
                     </div>
                   </div>
-                  {match.venue && (
-                    <div className="flex items-center gap-1 mt-2 text-[10px] text-muted-foreground">
-                      <MapPin className="w-3 h-3" /> {match.venue}
-                    </div>
-                  )}
                   <div className="flex items-center justify-end mt-2">
                     <span className="text-[10px] font-bold text-violet-600 dark:text-violet-400 flex items-center gap-0.5">
                       View Research <ChevronRight className="w-3 h-3" />
@@ -215,8 +216,8 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
             <ChevronRight className="w-4 h-4 rotate-180" />
           </button>
           <div className="flex-1">
-            <h1 className="text-sm font-black">{selectedMatch?.team1 || "T1"} vs {selectedMatch?.team2 || "T2"}</h1>
-            <p className="text-[10px] text-white/80">{selectedMatch?.series || "Match Research"}</p>
+            <h1 className="text-sm font-black">{selectedMatch?.cnm1 || selectedMatch?.cod1 || "T1"} vs {selectedMatch?.cnm2 || selectedMatch?.cod2 || "T2"}</h1>
+            <p className="text-[10px] text-white/80">{selectedMatch?.tour || "Match Research"}</p>
           </div>
           {onClose && (
             <button onClick={onClose} className="p-2 rounded-lg bg-white/20 hover:bg-white/30">
@@ -227,25 +228,27 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
       </div>
 
       <div className="max-w-3xl mx-auto p-4 space-y-4">
-        {detailsLoading && (
-          <div className="flex flex-col items-center justify-center py-20">
-            <Loader2 className="w-12 h-12 text-violet-500 animate-spin mb-3" />
-            <p className="text-sm font-bold text-muted-foreground">Loading match research...</p>
-          </div>
-        )}
-
-        {!detailsLoading && (
-          <>
-            {selectedMatch?.venue && (
-              <ResearchCard icon={Trophy} title="Match Overview" color="from-violet-500 to-purple-600">
-                <div className="space-y-1.5 text-xs">
-                  <ResearchRow label="Venue" value={String(selectedMatch.venue)} />
-                  {selectedMatch?.matchTime && <ResearchRow label="Match Time" value={String(selectedMatch.matchTime)} />}
-                  {selectedMatch?.matchType && <ResearchRow label="Format" value={String(selectedMatch.matchType)} />}
-                  {details.match_info && <ResearchRow label="Info" value={String(details.match_info)} />}
-                </div>
-              </ResearchCard>
+            {detailsLoading && (
+              <div className="flex flex-col items-center justify-center py-20">
+                <Loader2 className="w-12 h-12 text-violet-500 animate-spin mb-3" />
+                <p className="text-sm font-bold text-muted-foreground">Loading match research...</p>
+              </div>
             )}
+
+            {!detailsLoading && (
+              <>
+                {/* Match Overview */}
+                <ResearchCard icon={Trophy} title="Match Overview" color="from-violet-500 to-purple-600">
+                  <div className="space-y-1.5 text-xs">
+                    {selectedMatch?.name && <ResearchRow label="Match" value={String(selectedMatch.name)} />}
+                    {selectedMatch?.tour && <ResearchRow label="Series" value={String(selectedMatch.tour)} />}
+                    {selectedMatch?.date && <ResearchRow label="Date" value={String(selectedMatch.date)} />}
+                    {selectedMatch?.type && <ResearchRow label="Format" value={String(selectedMatch.type.toUpperCase())} />}
+                    {selectedMatch?.cnm1 && <ResearchRow label="Team 1" value={String(selectedMatch.cnm1)} />}
+                    {selectedMatch?.cnm2 && <ResearchRow label="Team 2" value={String(selectedMatch.cnm2)} />}
+                    {details.match_info && <ResearchRow label="Info" value={String(details.match_info)} />}
+                  </div>
+                </ResearchCard>
 
             {details.pitch_report && (
               <ResearchCard icon={Target} title="Pitch Report" color="from-amber-500 to-orange-600">
