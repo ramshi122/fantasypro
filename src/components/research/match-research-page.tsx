@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import {
   Search, Calendar, MapPin, Cloud, Activity, Users, Crown,
   TrendingUp, AlertCircle, Loader2, ChevronRight, RefreshCw,
-  Trophy, Target, Zap, Shield, X, Sparkles, Star, Info,
+  Trophy, Target, Zap, Shield, X, Sparkles, Star, Info, Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -39,15 +39,28 @@ interface BestTeam {
 interface ResearchPlayer {
   id: string;
   name: string;
-  type: string;     // role type
+  type: string;     // role type: 1=WK, 2=BAT, 3=AR, 4=BOWL (varies by sport)
   credits: string;
   points: string;
   cap: string;      // captain %
   cvc: string;      // vc %
   icon: string;
   active: string;
+  cod?: string;     // team code (e.g. "BPH-W")
+  cnam?: string;    // team name (e.g. "Birmingham Phoenix Women")
   [k: string]: unknown;
 }
+
+// Role type mapping (from possible11 API)
+const ROLE_MAP: Record<string, string> = {
+  "1": "WK",     // Wicket Keeper
+  "2": "BAT",    // Batsman
+  "3": "AR",     // All-Rounder
+  "4": "BOWL",   // Bowler
+  "6": "BOWL",   // Bowler (alt)
+  "7": "BOWL",   // Bowler (alt)
+  "9": "WK",     // WK (alt)
+};
 
 export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
   const [matches, setMatches] = useState<ResearchMatch[]>([]);
@@ -60,6 +73,7 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
   const [voteData, setVoteData] = useState<any>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [viewingTeam, setViewingTeam] = useState<BestTeam | null>(null);
 
   const loadMatches = useCallback(async () => {
     setLoading(true);
@@ -109,6 +123,71 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
       if (Array.isArray(bestRes)) setBestTeams(bestRes);
       if (Array.isArray(playersRes)) setPlayers(playersRes);
       if (voteRes && !voteRes.error) setVoteData(voteRes);
+
+      // === RESOLVE SUGGESTED TEAM PLAYER IDSs TO NAMES + IMAGES ===
+      // The getBest API returns comma-separated player IDs (e.g. "1355,65972,...")
+      // but NOT names. We need to call getBestPlayers with those IDs to get
+      // real player names, images, credits, and roles.
+      // Per user spec: "Display the actual player names returned by the API."
+      if (Array.isArray(bestRes) && bestRes.length > 0) {
+        // Collect ALL unique player IDs from ALL suggested teams
+        const allPlayerIds = new Set<string>();
+        for (const team of bestRes) {
+          const ids = String(team.players || "").split(",").filter(Boolean);
+          ids.forEach(id => allPlayerIds.add(id));
+        }
+        const idsParam = Array.from(allPlayerIds).join(",");
+
+        if (idsParam) {
+          try {
+            const bestPlayersRes = await fetch("/api/research-proxy", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "getBestPlayers",
+                uid: "web-research",
+                ids: idsParam,
+                uuid: "web-research",
+                device: "web",
+              }),
+            }).then(r => r.json()).catch(() => []);
+
+            if (Array.isArray(bestPlayersRes) && bestPlayersRes.length > 0) {
+              // Build a comprehensive player map: id → {name, icon, credits, role, team}
+              const resolvedMap = new Map<string, ResearchPlayer>();
+              for (const p of bestPlayersRes) {
+                resolvedMap.set(String(p.id), {
+                  id: String(p.id),
+                  name: String(p.name || "Unknown"),
+                  type: String(p.type || ""),
+                  credits: String(p.credits || "0"),
+                  points: String(p.points || "0"),
+                  cap: String(p.cap || "0"),
+                  cvc: String(p.cvc || "0"),
+                  icon: String(p.icon || ""),
+                  active: String(p.active || "1"),
+                  cod: String(p.cod || ""),
+                  cnam: String(p.cnam || ""),
+                });
+              }
+              // Merge: use resolved players as the primary source, add any from getPlayers
+              setPlayers(prev => {
+                const merged = new Map<string, ResearchPlayer>();
+                // Add resolved players first (they have real names)
+                for (const [id, p] of resolvedMap) merged.set(id, p);
+                // Add any from getPlayers that aren't already in the map
+                for (const p of prev) {
+                  if (!merged.has(p.id)) merged.set(p.id, p);
+                }
+                return Array.from(merged.values());
+              });
+              console.log(`[Research] Resolved ${resolvedMap.size} player names/images from getBestPlayers`);
+            }
+          } catch (err) {
+            console.warn("[Research] Failed to resolve player names:", err);
+          }
+        }
+      }
     } catch (e: any) {
       console.error("[Research] Failed to load details:", e);
     } finally {
@@ -506,28 +585,20 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
               <ResearchCard icon={Star} title={`Suggested Teams (${bestTeams.length})`} color="from-amber-500 to-orange-600">
                 <div className="space-y-2 max-h-[60vh] overflow-y-auto">
                   {bestTeams.map((team, i) => {
-                    // Categorize team
                     const isOfficial = team.admin === "9";
                     const category = isOfficial ? "Certified Team" : "Expert Team";
                     const categoryColor = isOfficial ? "bg-amber-500" : "bg-slate-600";
-
-                    // Parse player IDs
                     const playerIds = String(team.players || "").split(",").filter(Boolean);
                     const teamPlayers = playerIds.map(pid => {
                       const p = players.find(pl => String(pl.id) === pid);
-                      return p ? { name: p.name, role: p.type, credits: p.credits, icon: p.icon } : null;
+                      return p ? { name: p.name, role: ROLE_MAP[p.type] || "BAT", credits: p.credits, icon: p.icon, team: p.cnam || p.cod } : null;
                     }).filter(Boolean);
-
-                    // C/VC names
                     const capName = playerMap.get(team.cap) || `#${team.cap}`;
                     const vcapName = playerMap.get(team.vcap) || `#${team.vcap}`;
-
-                    // Total credits
                     const totalCredits = teamPlayers.reduce((s, p) => s + Number(p?.credits || 0), 0);
 
                     return (
                       <div key={team.id || i} className="bg-slate-800/70 rounded-xl border border-slate-700 p-2.5">
-                        {/* Team header */}
                         <div className="flex items-center gap-2 mb-2">
                           {team.icon && team.icon !== "assets/icon/default-male.png" && (
                             <img src={team.icon} alt="" className="w-6 h-6 rounded-full flex-shrink-0" />
@@ -538,26 +609,29 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
                               {category}
                             </span>
                           </div>
-                          <div className="text-right flex-shrink-0">
-                            <span className="text-[8px] text-slate-400">❤ {team.likes}</span>
-                          </div>
+                          <span className="text-[8px] text-slate-400 flex-shrink-0">❤ {team.likes}</span>
+                          <button
+                            onClick={() => setViewingTeam(team)}
+                            className="text-[8px] font-bold text-violet-300 bg-violet-600/30 hover:bg-violet-600/50 px-2 py-1 rounded-lg transition-colors flex items-center gap-0.5 flex-shrink-0"
+                          >
+                            <Eye className="w-2.5 h-2.5" /> View
+                          </button>
                         </div>
 
-                        {/* Player formation */}
+                        {/* Player chips with photos */}
                         {teamPlayers.length > 0 && (
                           <div className="flex flex-wrap gap-1 mb-2">
                             {teamPlayers.map((p, j) => (
                               <div key={j} className="flex items-center gap-0.5 bg-slate-700/50 rounded px-1 py-0.5">
-                                {p?.icon && <img src={p.icon} alt="" className="w-4 h-4 rounded-full" />}
-                                <span className="text-[7px] font-bold text-slate-200">{String(p?.name || "").slice(0, 8)}</span>
-                                {String(playerIds[j]) === team.cap && <Crown className="w-2.5 h-2.5 text-amber-400" />}
-                                {String(playerIds[j]) === team.vcap && <Zap className="w-2.5 h-2.5 text-sky-400" />}
+                                {p?.icon && <img src={p.icon} alt="" className="w-4 h-4 rounded-full flex-shrink-0" />}
+                                <span className="text-[7px] font-bold text-slate-200">{String(p?.name || "").slice(0, 10)}</span>
+                                {String(playerIds[j]) === team.cap && <Crown className="w-2.5 h-2.5 text-amber-400 flex-shrink-0" />}
+                                {String(playerIds[j]) === team.vcap && <Zap className="w-2.5 h-2.5 text-sky-400 flex-shrink-0" />}
                               </div>
                             ))}
                           </div>
                         )}
 
-                        {/* C/VC + Credits */}
                         <div className="flex items-center gap-2 text-[9px]">
                           <span className="bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5">
                             <Crown className="w-2.5 h-2.5" /> {capName}
@@ -574,6 +648,17 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
               </ResearchCard>
             )}
 
+            {/* === VIEW TEAM MODAL — full 11-player fantasy layout === */}
+            {viewingTeam && (
+              <TeamViewModal
+                team={viewingTeam}
+                players={players}
+                playerMap={playerMap}
+                match={selectedMatch}
+                onClose={() => setViewingTeam(null)}
+              />
+            )}
+
             {/* === NO DATA FALLBACK === */}
             {activeSections.length === 0 && !detailsLoading && bestTeams.length === 0 && !voteData && (
               <div className="flex flex-col items-center justify-center py-20">
@@ -584,6 +669,140 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
             )}
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// TEAM VIEW MODAL — full 11-player fantasy layout (read-only)
+// ============================================================
+
+function TeamViewModal({
+  team, players, playerMap, match, onClose,
+}: {
+  team: BestTeam;
+  players: ResearchPlayer[];
+  playerMap: Map<string, string>;
+  match: ResearchMatch | null;
+  onClose: () => void;
+}) {
+  const playerIds = String(team.players || "").split(",").filter(Boolean);
+  const teamPlayers = playerIds.map(pid => {
+    const p = players.find(pl => String(pl.id) === pid);
+    return p ? {
+      id: pid,
+      name: p.name,
+      role: ROLE_MAP[p.type] || "BAT",
+      credits: p.credits,
+      icon: p.icon,
+      team: p.cnam || p.cod || "",
+      isCap: pid === team.cap,
+      isVC: pid === team.vcap,
+    } : { id: pid, name: `#${pid}`, role: "BAT", credits: "0", icon: "", team: "", isCap: pid === team.cap, isVC: pid === team.vcap };
+  });
+
+  // Group by role
+  const wk = teamPlayers.filter(p => p.role === "WK");
+  const bat = teamPlayers.filter(p => p.role === "BAT");
+  const ar = teamPlayers.filter(p => p.role === "AR");
+  const bowl = teamPlayers.filter(p => p.role === "BOWL");
+  const totalCredits = teamPlayers.reduce((s, p) => s + Number(p.credits || 0), 0);
+  const isOfficial = team.admin === "9";
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+      <motion.div
+        initial={{ y: 40, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: 40, opacity: 0 }}
+        className="bg-slate-900 w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[95vh] overflow-y-auto border border-slate-700"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="bg-gradient-to-r from-amber-600 to-orange-600 p-4 flex items-center justify-between sticky top-0 z-10">
+          <div className="flex items-center gap-2">
+            {team.icon && team.icon !== "assets/icon/default-male.png" && (
+              <img src={team.icon} alt="" className="w-8 h-8 rounded-full" />
+            )}
+            <div>
+              <h3 className="text-sm font-black text-white">{team.fname} {team.lname}</h3>
+              <div className="flex items-center gap-1.5">
+                <span className={cn("text-[8px] font-bold text-white px-1.5 py-0.5 rounded-full", isOfficial ? "bg-amber-800" : "bg-slate-700")}>
+                  {isOfficial ? "CERTIFIED" : "EXPERT"}
+                </span>
+                <span className="text-[8px] text-white/80">❤ {team.likes} · Cr {totalCredits.toFixed(1)}</span>
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg bg-white/20 hover:bg-white/30">
+            <X className="w-4 h-4 text-white" />
+          </button>
+        </div>
+
+        {/* C/VC banner */}
+        <div className="flex gap-2 p-3 bg-slate-800">
+          <div className="flex-1 bg-amber-500/15 border border-amber-500/40 rounded-xl p-2 text-center">
+            <Crown className="w-4 h-4 text-amber-400 mx-auto mb-0.5" />
+            <p className="text-[8px] font-bold text-amber-400">CAPTAIN</p>
+            <p className="text-[11px] font-black text-white truncate">{playerMap.get(team.cap) || `#${team.cap}`}</p>
+          </div>
+          <div className="flex-1 bg-sky-500/15 border border-sky-500/40 rounded-xl p-2 text-center">
+            <Zap className="w-4 h-4 text-sky-400 mx-auto mb-0.5" />
+            <p className="text-[8px] font-bold text-sky-400">VICE-CAPTAIN</p>
+            <p className="text-[11px] font-black text-white truncate">{playerMap.get(team.vcap) || `#${team.vcap}`}</p>
+          </div>
+        </div>
+
+        {/* Players by role */}
+        <div className="p-3 space-y-3">
+          {/* WK */}
+          {wk.length > 0 && (
+            <RoleGroup label="WICKET KEEPERS" color="text-red-400" players={wk} />
+          )}
+          {/* BAT */}
+          {bat.length > 0 && (
+            <RoleGroup label="BATTERS" color="text-blue-400" players={bat} />
+          )}
+          {/* AR */}
+          {ar.length > 0 && (
+            <RoleGroup label="ALL-ROUNDERS" color="text-emerald-400" players={ar} />
+          )}
+          {/* BOWL */}
+          {bowl.length > 0 && (
+            <RoleGroup label="BOWLERS" color="text-purple-400" players={bowl} />
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function RoleGroup({ label, color, players }: { label: string; color: string; players: Array<{name: string; icon: string; credits: string; team: string; isCap: boolean; isVC: boolean}> }) {
+  return (
+    <div>
+      <p className={cn("text-[9px] font-black mb-1.5 tracking-wide", color)}>{label} ({players.length})</p>
+      <div className="grid grid-cols-2 gap-1.5">
+        {players.map((p, i) => (
+          <div key={i} className={cn(
+            "flex items-center gap-1.5 rounded-lg p-1.5 border",
+            p.isCap ? "bg-amber-500/10 border-amber-500/40" : p.isVC ? "bg-sky-500/10 border-sky-500/40" : "bg-slate-800 border-slate-700"
+          )}>
+            {p.icon ? (
+              <img src={p.icon} alt="" className="w-8 h-8 rounded-full flex-shrink-0" />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-[8px] font-bold text-slate-400 flex-shrink-0">?</div>
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-0.5">
+                <p className="text-[10px] font-black text-white truncate">{p.name}</p>
+                {p.isCap && <Crown className="w-2.5 h-2.5 text-amber-400 flex-shrink-0" />}
+                {p.isVC && <Zap className="w-2.5 h-2.5 text-sky-400 flex-shrink-0" />}
+              </div>
+              <p className="text-[7px] text-slate-400">{p.team} · Cr {p.credits}</p>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
