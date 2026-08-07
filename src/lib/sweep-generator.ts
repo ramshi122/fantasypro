@@ -347,7 +347,7 @@ export function finalValidation(
   }
 
   console.log(`[FinalValidation] ✅ ${validTeams.length} valid, ${rejected} rejected, ${totalReplaced} players replaced`);
-  return { validTeams, rejected, totalReplaced };
+  return { validTeams, rejected, replaced: totalReplaced };
 }
 
 /* ============== Strategic Team Builder (DETERMINISTIC) ============== */
@@ -440,17 +440,19 @@ function buildStrategicTeam(
 
   // Determine role counts
   let wk: number, bat: number, ar: number, bowl: number;
+  let remaining: number; // declared at function scope so clamp/fallback can use it
   if (customCfg) {
     // CUSTOM COMBINATION: use user-specified role counts
     wk = customCfg.WK;
     ar = customCfg.AR;
     bat = customCfg.BAT;
     bowl = customCfg.BOWL;
+    remaining = 11 - wk - ar - bat - bowl; // will be 0 for valid combos
   } else {
     // AUTO: Strategic for GL Rank 1
     wk = 1;
     ar = Math.min(availAR, Math.max(1, (rotationOffset % 3) + 1));
-    const remaining = 11 - wk - ar;
+    remaining = 11 - wk - ar;
     bat = Math.min(availBAT, Math.max(2, Math.floor(remaining / 2) + ((rotationOffset % 2) - 1)));
     bowl = remaining - bat;
   }
@@ -458,8 +460,8 @@ function buildStrategicTeam(
   // Clamp to available
   if (bat > availBAT) { bowl += bat - availBAT; bat = availBAT; }
   if (bowl > availBOWL) { bat += bowl - availBOWL; bowl = availBOWL; }
-  if (bat < 1) { bat = 1; bowl = remaining - 1; }
-  if (bowl < 1) { bowl = 1; bat = remaining - 1; }
+  if (bat < 1) { bat = 1; bowl = Math.max(0, 11 - wk - ar - 1); }
+  if (bowl < 1) { bowl = 1; bat = Math.max(0, 11 - wk - ar - 1); }
 
   // Fallback: WK=2 if needed
   if (wk + bat + ar + bowl !== 11 && availWK >= 2) {
