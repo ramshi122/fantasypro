@@ -1,6 +1,6 @@
 "use client";
 
-import { Bookmark, Clock } from "lucide-react";
+import { Bookmark, Clock, Bell, CheckCircle2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { useApp } from "@/lib/store";
 import { formatCountdown, isMatchLive, shortName, teamColor } from "@/lib/format";
@@ -8,6 +8,43 @@ import { getSupportedFantasyApps } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { MatchInfo } from "@/lib/api";
 import { useEffect, useState } from "react";
+
+/**
+ * Match Card Lineup Status Helper
+ *
+ * Per user spec:
+ *   🟢 Upcoming → Lineup Pending
+ *   🟠 Lineup Out → ✅ Lineup Out (green highlight + notification dot)
+ *   🔴 Live → Live
+ *   ⚫ Completed → Completed
+ */
+function getMatchStatus(match: MatchInfo | any): {
+  label: string;
+  emoji: string;
+  color: string;
+  bgColor: string;
+  isLineupOut: boolean;
+} {
+  const lineupStatus = Number((match as any).lineup_status ?? 0);
+  const live = isMatchLive(match.startTime);
+  const now = Date.now();
+  const endTime = (match as any).endTime ? Number((match as any).endTime) : null;
+
+  // Completed
+  if (endTime && endTime < now) {
+    return { label: "Completed", emoji: "⚫", color: "text-slate-400", bgColor: "bg-slate-700", isLineupOut: false };
+  }
+  // Live
+  if (live) {
+    return { label: "Live", emoji: "🔴", color: "text-red-400", bgColor: "bg-red-950/40 border-red-500/30", isLineupOut: false };
+  }
+  // Lineup Out
+  if (lineupStatus === 1) {
+    return { label: "Lineup Out", emoji: "✅", color: "text-emerald-400", bgColor: "bg-emerald-950/40 border-emerald-500/30", isLineupOut: true };
+  }
+  // Upcoming — Lineup Pending
+  return { label: "Upcoming", emoji: "🟢", color: "text-amber-400", bgColor: "bg-amber-950/40 border-amber-500/30", isLineupOut: false };
+}
 
 interface MatchCardProps {
   match: MatchInfo;
@@ -49,6 +86,7 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
   // fantasy_list + fantasy_version + explicit URL fields.
   // This drives both the badge display AND the match card visibility rule.
   const supportedApps = getSupportedFantasyApps(match);
+  const matchStatus = getMatchStatus(match);
 
   function onCardClick() {
     openMatch(match);
@@ -73,19 +111,33 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
           onCardClick();
         }
       }}
-      className="w-full text-left premium-card rounded-2xl overflow-hidden group cursor-pointer"
+      className={cn(
+        "w-full text-left premium-card rounded-2xl overflow-hidden group cursor-pointer transition-all",
+        matchStatus.isLineupOut && "ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-900/20"
+      )}
     >
-      {/* Series name / match title strip */}
+      {/* Series name / match title strip + status badge */}
       <div className="px-4 pt-3 pb-2 flex items-center justify-between">
         <p className="text-[11px] font-medium text-muted-foreground truncate flex-1">
           {match.series || match.title || match.subTitle || "Match"}
         </p>
-        {live && (
-          <span className="ml-2 flex-shrink-0 inline-flex items-center gap-1 text-[9px] font-bold text-red-400 bg-red-950/40 border border-red-500/30 px-2 py-0.5 rounded-full premium-live-pulse tracking-wider">
-            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
-            LIVE
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Lineup Out notification dot */}
+          {matchStatus.isLineupOut && (
+            <span className="relative flex items-center gap-0.5 text-[9px] font-bold text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+              <Bell className="w-2.5 h-2.5" />
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+            </span>
+          )}
+          {/* Status badge */}
+          <span className={cn(
+            "inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full border tracking-wider",
+            matchStatus.bgColor,
+            matchStatus.color
+          )}>
+            {matchStatus.emoji} {matchStatus.label}
           </span>
-        )}
+        </div>
       </div>
 
       {/* Teams + countdown */}
