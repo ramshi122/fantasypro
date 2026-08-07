@@ -10,6 +10,8 @@ import { toast } from "sonner";
 import { useAuth } from "@/lib/store";
 import { generateSweep, type SweepCount, type SweepResult } from "@/lib/sweep-generator";
 import { getMatchDetail, type MatchInfo, type MatchPlayer, type TeamRow } from "@/lib/api";
+import { TeamCombinationSelector } from "./team-combination-selector";
+import type { RoleCombo } from "@/lib/team-combos";
 import { cn } from "@/lib/utils";
 
 type GenMode = "smart" | "gl" | "advanced" | "combination";
@@ -89,6 +91,9 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
   interface Combo { wk: number; bat: number; ar: number; bowl: number; }
   const [customCombos, setCustomCombos] = useState<Combo[]>([]);
   const [newCombo, setNewCombo] = useState<Combo>({ wk: 1, bat: 4, ar: 3, bowl: 3 });
+
+  // === SWIPE COMBINATION SELECTOR (per user spec) ===
+  const [selectorCombo, setSelectorCombo] = useState<RoleCombo | null>(null);
 
   // === ALL SETTINGS STATE (wired to generator) ===
   const [lockedPlayers, setLockedPlayers] = useState<string>("");
@@ -523,10 +528,24 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
       // Small delay to show status
       await new Promise(r => setTimeout(r, 500));
 
-      setProgress(`Generating ${teamCount} teams — ${info.label}${customCombos.length > 0 ? ` + ${customCombos.length} custom combos` : ""}...`);
+      // === MERGE SELECTOR COMBO + CUSTOM COMBOS ===
+      // Per user spec: "Every generated team MUST strictly follow the selected combination."
+      // The selectorCombo (from the swipeable selector) goes FIRST so the engine
+      // uses it for the majority of teams.
+      let combosForGen: Combo[] | undefined = undefined;
+      if (selectorCombo) {
+        combosForGen = [selectorCombo as Combo];
+        if (customCombos.length > 0) {
+          combosForGen = [...combosForGen, ...customCombos];
+        }
+      } else if (customCombos.length > 0) {
+        combosForGen = customCombos;
+      }
+
+      setProgress(`Generating ${teamCount} teams — ${info.label}${combosForGen ? ` + ${combosForGen.length} combos` : ""}...`);
       const res = await generateSweep(allPlayers, teamCount, team1Name, team2Name, (p) => {
         setProgress(`${p.phase}: ${p.message}`);
-      }, mode, customCombos.length > 0 ? customCombos : undefined, {
+      }, mode, combosForGen, {
         lockedPlayers: lockList,
         excludedPlayers: excludeList,
         captainLock: captainLock.trim().toLowerCase(),
@@ -787,6 +806,16 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
             <Smart7CoreInfoBox />
           </div>
         )}
+
+        {/* === TEAM COMBINATION SELECTOR (swipeable — per user spec) === */}
+        <TeamCombinationSelector
+          match={match}
+          players={[]}
+          lineupAnnounced={lineupAnnounced}
+          onComboSelect={setSelectorCombo}
+          selectedCombo={selectorCombo}
+          compact
+        />
 
         {/* === Team Count Selector === */}
         <div>

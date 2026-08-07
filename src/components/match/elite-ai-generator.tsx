@@ -34,6 +34,7 @@ import {
 } from "@/lib/elite-ai";
 import type { MatchInfo, MatchPlayer, TeamRow } from "@/lib/api";
 import { getAllStandardCombos, validateCombo, type RoleCombo } from "@/lib/team-combos";
+import { TeamCombinationSelector } from "./team-combination-selector";
 import {
   classifyAllPlayers,
   classifyPlayer,
@@ -83,6 +84,12 @@ export function EliteAIGenerator({
   interface Combo { wk: number; bat: number; ar: number; bowl: number; }
   const [customCombos, setCustomCombos] = useState<Combo[]>([]);
   const [newCombo, setNewCombo] = useState<Combo>({ wk: 1, bat: 4, ar: 3, bowl: 3 });
+
+  // === SWIPE COMBINATION SELECTOR (per user spec) ===
+  // Selected combo from the TeamCombinationSelector — used as the FIRST
+  // custom combo when generating teams. This ensures every generated team
+  // strictly follows the selected combination.
+  const [selectorCombo, setSelectorCombo] = useState<RoleCombo | null>(null);
 
   const matchId = (match?.matchId ?? match?.id ?? "") as string;
   const safePlayers = Array.isArray(players) ? players : [];
@@ -365,19 +372,29 @@ export function EliteAIGenerator({
     setProgress({ check: 0, total: 173, message: "Initializing Elite AI — 150+ Data Point Analysis..." });
 
     try {
-      // === CUSTOM COMBOS WORK IN ALL MODES ===
-      // Per user spec: "same combination system add smart section and all others"
-      // Custom combos are now passed to the engine in EVERY mode (smart/gl/
-      // advanced/combination). The engine uses them as the role distribution
-      // source of truth whenever they're provided. The selected mode only
-      // affects player picking style + C/VC rotation.
+      // === COMBINATION SELECTOR + CUSTOM COMBOS (per user spec) ===
+      // The selectorCombo (from the swipeable TeamCombinationSelector) is the
+      // PRIMARY combination — it goes FIRST in the list so the engine uses it
+      // for the majority of teams. Custom combos (manually added) go after.
       //
-      // If no custom combos are added, the engine falls back to built-in
-      // strategy templates (preserves original behavior).
-      const combosToPass = customCombos.length > 0 ? customCombos : undefined;
+      // Per user spec rule 6: "Every generated team MUST strictly follow the
+      // selected combination. No exceptions."
+      let combosToPass: RoleCombo[] | undefined = undefined;
+
+      if (selectorCombo) {
+        // Start with the selector combo (AI-recommended or user-selected)
+        combosToPass = [selectorCombo];
+        // Append any manually-added custom combos
+        if (customCombos.length > 0) {
+          combosToPass = [...combosToPass, ...customCombos];
+        }
+      } else if (customCombos.length > 0) {
+        // No selector combo, but user has custom combos
+        combosToPass = customCombos;
+      }
 
       if (combosToPass) {
-        console.log(`[EliteAI] Passing ${combosToPass.length} custom combos to engine (mode: ${eliteMode})`);
+        console.log(`[EliteAI] Passing ${combosToPass.length} combos to engine (mode: ${eliteMode}) — selector combo first: WK=${selectorCombo?.wk} BAT=${selectorCombo?.bat} AR=${selectorCombo?.ar} BOWL=${selectorCombo?.bowl}`);
       }
 
       const res = await runEliteAI(
@@ -663,6 +680,17 @@ export function EliteAIGenerator({
                     })}
                   </div>
                 </div>
+
+                {/* === TEAM COMBINATION SELECTOR (swipeable — per user spec) === */}
+                {/* Works in ALL modes — selected combo is passed to the engine */}
+                <TeamCombinationSelector
+                  match={match}
+                  players={safePlayers}
+                  lineupAnnounced={lineupAnnounced}
+                  onComboSelect={setSelectorCombo}
+                  selectedCombo={selectorCombo}
+                  compact
+                />
 
                 {/* === Mode-specific Settings (NEW) === */}
                 <div className="mb-4 bg-white/60 dark:bg-card/60 rounded-xl p-3 border border-amber-200 dark:border-amber-900/30 text-left">
