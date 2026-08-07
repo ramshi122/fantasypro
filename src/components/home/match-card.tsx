@@ -8,6 +8,7 @@ import { getSupportedFantasyApps } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { MatchInfo } from "@/lib/api";
 import { useEffect, useState } from "react";
+import { MatchLiveScore } from "./match-live-score";
 
 /**
  * Match Card Lineup Status Helper
@@ -203,6 +204,9 @@ export function MatchCard({ match, index = 0 }: MatchCardProps) {
           </span>
         </div>
       </div>
+
+      {/* === LIVE SCORE (per user spec: "Match save cheydal live score kanikanam") === */}
+      <MatchLiveScore match={match} />
 
       {/* Fantasy app support badges — shows ONLY platforms this match actually supports */}
       {supportedApps.length > 0 && (
