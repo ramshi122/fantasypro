@@ -17,6 +17,14 @@ import { useEffect, useState } from "react";
  *   🟠 Lineup Out → ✅ Lineup Out (green highlight + notification dot)
  *   🔴 Live → Live
  *   ⚫ Completed → Completed
+ *
+ * NOTE: The matches list API does NOT return lineup_status directly.
+ * It's only available from the match detail API. So we check multiple
+ * indicators:
+ *   1. match.lineup_status === 1 (from detail API, if available)
+ *   2. match.lineup_status_text contains "announced" or "out"
+ *   3. match.toss field is present (toss happens after lineup)
+ *   4. Check localStorage for cached lineup status from detail fetches
  */
 function getMatchStatus(match: MatchInfo | any): {
   label: string;
@@ -25,23 +33,44 @@ function getMatchStatus(match: MatchInfo | any): {
   bgColor: string;
   isLineupOut: boolean;
 } {
-  const lineupStatus = Number((match as any).lineup_status ?? 0);
   const live = isMatchLive(match.startTime);
   const now = Date.now();
   const endTime = (match as any).endTime ? Number((match as any).endTime) : null;
 
   // Completed
   if (endTime && endTime < now) {
-    return { label: "Completed", emoji: "⚫", color: "text-slate-400", bgColor: "bg-slate-700", isLineupOut: false };
+    return { label: "Completed", emoji: "⚫", color: "text-slate-400", bgColor: "bg-slate-700 border-slate-500/30", isLineupOut: false };
   }
   // Live
   if (live) {
     return { label: "Live", emoji: "🔴", color: "text-red-400", bgColor: "bg-red-950/40 border-red-500/30", isLineupOut: false };
   }
-  // Lineup Out
-  if (lineupStatus === 1) {
+
+  // === LINEUP DETECTION — check multiple sources ===
+  // 1. lineup_status field (from match detail API)
+  const lineupStatus = Number((match as any).lineup_status ?? 0);
+  // 2. lineup_status_text field
+  const lineupText = String((match as any).lineup_status_text || (match as any).lineupStatusText || "").toLowerCase();
+  // 3. toss field (toss happens after lineup announcement)
+  const hasToss = !!(match as any).toss;
+  // 4. Check localStorage for cached lineup status (set by transfer-flow when it fetches detail)
+  const matchId = String(match.matchId ?? match.id ?? "");
+  let cachedLineupOut = false;
+  if (matchId && typeof window !== "undefined") {
+    try {
+      cachedLineupOut = localStorage.getItem(`apna-lineup-out-${matchId}`) === "1";
+    } catch {}
+  }
+
+  const isLineupOut = lineupStatus === 1 ||
+    lineupText.includes("announced") || lineupText.includes("out") || lineupText.includes("confirmed") ||
+    hasToss ||
+    cachedLineupOut;
+
+  if (isLineupOut) {
     return { label: "Lineup Out", emoji: "✅", color: "text-emerald-400", bgColor: "bg-emerald-950/40 border-emerald-500/30", isLineupOut: true };
   }
+
   // Upcoming — Lineup Pending
   return { label: "Upcoming", emoji: "🟢", color: "text-amber-400", bgColor: "bg-amber-950/40 border-amber-500/30", isLineupOut: false };
 }

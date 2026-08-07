@@ -124,6 +124,13 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         const announced = Number(lineupStatus) === 1 || playingCount >= 11;
         setLineupAnnounced(announced);
 
+        // === CACHE LINEUP STATUS for Match Card (per user spec) ===
+        // Store in localStorage so the home screen match card can show
+        // "✅ Lineup Out" badge without needing to fetch match detail.
+        if (announced && matchId) {
+          try { localStorage.setItem(`apna-lineup-out-${matchId}`, "1"); } catch {}
+        }
+
         // Build set of confirmed playing player IDs
         const playingSet = buildPlayingPlayerSet(allPlayers, announced);
         setPlayingPlayerIds(playingSet);
@@ -194,6 +201,8 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
         // Lineup just changed from pre-toss → announced
         if (newAnnounced && !prevLineupAnnounced) {
           toast.success("📢 Official Playing XI announced! Auto-refreshing...");
+          // Cache for match card
+          try { localStorage.setItem(`apna-lineup-out-${matchId}`, "1"); } catch {}
           setRefreshKey((k) => k + 1);
         }
 

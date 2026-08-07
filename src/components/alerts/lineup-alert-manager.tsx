@@ -78,6 +78,9 @@ export function LineupAlertManager() {
         prevLineupStatus.current.set(matchId, currentStatus);
 
         if (currentStatus === 1 && prevStatus === 0) {
+          // === CACHE for Match Card (per user spec) ===
+          try { localStorage.setItem(`apna-lineup-out-${matchId}`, "1"); } catch {}
+
           const alertId = `lineup-${matchId}`;
           if (!dismissedAlerts.has(alertId) && !alertedMatches.current.has(alertId)) {
             alertedMatches.current.add(alertId);
