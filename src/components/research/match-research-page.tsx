@@ -57,6 +57,7 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
   const [matchDetails, setMatchDetails] = useState<ResearchMatchDetails | null>(null);
   const [bestTeams, setBestTeams] = useState<BestTeam[]>([]);
   const [players, setPlayers] = useState<ResearchPlayer[]>([]);
+  const [voteData, setVoteData] = useState<any>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -78,13 +79,14 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
     setMatchDetails(null);
     setBestTeams([]);
     setPlayers([]);
+    setVoteData(null);
     try {
-      // Fetch match details, best teams, and players in parallel
+      // Fetch match details, best teams, players, and vote data in parallel
       // NOTE: These are STANDALONE API calls via research-proxy — completely
       // separate from the existing app's API, transfer system, or team IDs.
       // Research data is READ-ONLY and never modifies player IDs, team IDs,
       // or transfer mapping.
-      const [detailsRes, bestRes, playersRes] = await Promise.all([
+      const [detailsRes, bestRes, playersRes, voteRes] = await Promise.all([
         getResearchMatchDetails(match.id),
         fetch("/api/research-proxy", {
           method: "POST",
@@ -96,11 +98,17 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "getPlayers", mid: match.id, uuid: "web-research", device: "web" }),
         }).then(r => r.json()).catch(() => []),
+        fetch("/api/research-proxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "getVote", mid: match.id, uuid: "web-research", device: "web" }),
+        }).then(r => r.json()).catch(() => null),
       ]);
 
       if (detailsRes.details) setMatchDetails(detailsRes.details);
       if (Array.isArray(bestRes)) setBestTeams(bestRes);
       if (Array.isArray(playersRes)) setPlayers(playersRes);
+      if (voteRes && !voteRes.error) setVoteData(voteRes);
     } catch (e: any) {
       console.error("[Research] Failed to load details:", e);
     } finally {
@@ -400,35 +408,7 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
               </ResearchCard>
             )}
 
-            {/* === DREAM TEAM / USER TEAMS (getBest) === */}
-            {bestTeams.length > 0 && (
-              <ResearchCard icon={Star} title="Dream Team Suggestions" color="from-amber-600 to-yellow-700">
-                <div className="space-y-2">
-                  {bestTeams.slice(0, 5).map((team, i) => {
-                    const tCapName = playerMap.get(team.cap) || `#${team.cap}`;
-                    const tVcapName = playerMap.get(team.vcap) || `#${team.vcap}`;
-                    return (
-                      <div key={team.id || i} className="bg-slate-800/50 rounded-lg p-2 border border-slate-700">
-                        <div className="flex items-center gap-2 mb-1.5">
-                          {team.icon && team.icon !== "assets/icon/default-male.png" && (
-                            <img src={team.icon} alt="" className="w-5 h-5 rounded-full" />
-                          )}
-                          <span className="text-[10px] font-bold text-white">{team.fname} {team.lname}</span>
-                          {team.admin === "9" && (
-                            <span className="text-[8px] bg-amber-500 text-white px-1 rounded-full font-bold">OFFICIAL</span>
-                          )}
-                          <span className="text-[8px] text-slate-500 ml-auto">❤ {team.likes}</span>
-                        </div>
-                        <div className="flex gap-2 text-[10px]">
-                          <span className="bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded font-bold">C: {tCapName}</span>
-                          <span className="bg-sky-500/20 text-sky-300 px-2 py-0.5 rounded font-bold">VC: {tVcapName}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </ResearchCard>
-            )}
+            {/* (Old Dream Team section removed — replaced by detailed Suggested Teams section below) */}
 
             {/* === PLAYERS LIST (if available) === */}
             {players.length > 0 && (
@@ -447,8 +427,155 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
               </ResearchCard>
             )}
 
+            {/* === WINNING POSSIBILITY & PLAYER VOTING (per user spec) === */}
+            {voteData && (voteData.count1 || voteData.count2) && (
+              <ResearchCard icon={TrendingUp} title="Winning Possibility & Player Voting" color="from-indigo-600 to-violet-700">
+                {/* Win probability bar */}
+                {voteData.count1 && voteData.count2 && (
+                  <div className="mb-3">
+                    <p className="text-[10px] font-bold text-slate-300 mb-1.5">Win Probability</p>
+                    {(() => {
+                      const total = Number(voteData.count1) + Number(voteData.count2);
+                      const pct1 = total > 0 ? Math.round((Number(voteData.count1) / total) * 100) : 50;
+                      const pct2 = 100 - pct1;
+                      const name1 = selectedMatch?.cnm1 || "Team 1";
+                      const name2 = selectedMatch?.cnm2 || "Team 2";
+                      return (
+                        <>
+                          <div className="flex items-center justify-between text-[10px] font-bold mb-1">
+                            <span className="text-emerald-400">{name1}: {pct1}%</span>
+                            <span className="text-rose-400">{name2}: {pct2}%</span>
+                          </div>
+                          <div className="h-4 rounded-full overflow-hidden flex bg-slate-700">
+                            <div className="bg-gradient-to-r from-emerald-500 to-green-500 flex items-center justify-center text-[8px] font-black text-white" style={{ width: `${pct1}%` }}>
+                              {pct1 > 15 ? `${pct1}%` : ""}
+                            </div>
+                            <div className="bg-gradient-to-r from-rose-500 to-red-500 flex items-center justify-center text-[8px] font-black text-white" style={{ width: `${pct2}%` }}>
+                              {pct2 > 15 ? `${pct2}%` : ""}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between text-[9px] text-slate-500 mt-1">
+                            <span>❤ {voteData.count1} votes</span>
+                            <span>❤ {voteData.count2} votes</span>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* Voted players — Captain, VC, Keeper */}
+                <div className="grid grid-cols-3 gap-2">
+                  {voteData.cap && (
+                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-2 text-center">
+                      <Crown className="w-4 h-4 text-amber-400 mx-auto mb-1" />
+                      <p className="text-[8px] font-bold text-amber-400 uppercase">Captain</p>
+                      <p className="text-[10px] font-black text-white mt-0.5 truncate">{playerMap.get(String(voteData.cap)) || `#${voteData.cap}`}</p>
+                    </div>
+                  )}
+                  {voteData.vcap && (
+                    <div className="bg-sky-500/10 border border-sky-500/30 rounded-lg p-2 text-center">
+                      <Zap className="w-4 h-4 text-sky-400 mx-auto mb-1" />
+                      <p className="text-[8px] font-bold text-sky-400 uppercase">Vice-Captain</p>
+                      <p className="text-[10px] font-black text-white mt-0.5 truncate">{playerMap.get(String(voteData.vcap)) || `#${voteData.vcap}`}</p>
+                    </div>
+                  )}
+                  {voteData.keeper && (
+                    <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-2 text-center">
+                      <Shield className="w-4 h-4 text-purple-400 mx-auto mb-1" />
+                      <p className="text-[8px] font-bold text-purple-400 uppercase">Keeper</p>
+                      <p className="text-[10px] font-black text-white mt-0.5 truncate">{playerMap.get(String(voteData.keeper)) || `#${voteData.keeper}`}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Render any additional vote fields dynamically */}
+                {Object.entries(voteData)
+                  .filter(([k]) => !["cap", "vcap", "keeper", "winner1", "winner2", "count1", "count2"].includes(k))
+                  .map(([key, val]) => (
+                    <div key={key} className="mt-2 text-[10px] text-slate-400">
+                      <span className="font-bold text-slate-300">{key}:</span> {String(val)}
+                    </div>
+                  ))
+                }
+              </ResearchCard>
+            )}
+
+            {/* === SUGGESTED TEAMS (per user spec — all categories) === */}
+            {bestTeams.length > 0 && (
+              <ResearchCard icon={Star} title={`Suggested Teams (${bestTeams.length})`} color="from-amber-500 to-orange-600">
+                <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                  {bestTeams.map((team, i) => {
+                    // Categorize team
+                    const isOfficial = team.admin === "9";
+                    const category = isOfficial ? "Certified Team" : "Expert Team";
+                    const categoryColor = isOfficial ? "bg-amber-500" : "bg-slate-600";
+
+                    // Parse player IDs
+                    const playerIds = String(team.players || "").split(",").filter(Boolean);
+                    const teamPlayers = playerIds.map(pid => {
+                      const p = players.find(pl => String(pl.id) === pid);
+                      return p ? { name: p.name, role: p.type, credits: p.credits, icon: p.icon } : null;
+                    }).filter(Boolean);
+
+                    // C/VC names
+                    const capName = playerMap.get(team.cap) || `#${team.cap}`;
+                    const vcapName = playerMap.get(team.vcap) || `#${team.vcap}`;
+
+                    // Total credits
+                    const totalCredits = teamPlayers.reduce((s, p) => s + Number(p?.credits || 0), 0);
+
+                    return (
+                      <div key={team.id || i} className="bg-slate-800/70 rounded-xl border border-slate-700 p-2.5">
+                        {/* Team header */}
+                        <div className="flex items-center gap-2 mb-2">
+                          {team.icon && team.icon !== "assets/icon/default-male.png" && (
+                            <img src={team.icon} alt="" className="w-6 h-6 rounded-full flex-shrink-0" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[11px] font-black text-white truncate">{team.fname} {team.lname}</p>
+                            <span className={cn("text-[7px] font-bold text-white px-1.5 py-0.5 rounded-full", categoryColor)}>
+                              {category}
+                            </span>
+                          </div>
+                          <div className="text-right flex-shrink-0">
+                            <span className="text-[8px] text-slate-400">❤ {team.likes}</span>
+                          </div>
+                        </div>
+
+                        {/* Player formation */}
+                        {teamPlayers.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mb-2">
+                            {teamPlayers.map((p, j) => (
+                              <div key={j} className="flex items-center gap-0.5 bg-slate-700/50 rounded px-1 py-0.5">
+                                {p?.icon && <img src={p.icon} alt="" className="w-4 h-4 rounded-full" />}
+                                <span className="text-[7px] font-bold text-slate-200">{String(p?.name || "").slice(0, 8)}</span>
+                                {String(playerIds[j]) === team.cap && <Crown className="w-2.5 h-2.5 text-amber-400" />}
+                                {String(playerIds[j]) === team.vcap && <Zap className="w-2.5 h-2.5 text-sky-400" />}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* C/VC + Credits */}
+                        <div className="flex items-center gap-2 text-[9px]">
+                          <span className="bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5">
+                            <Crown className="w-2.5 h-2.5" /> {capName}
+                          </span>
+                          <span className="bg-sky-500/20 text-sky-300 px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5">
+                            <Zap className="w-2.5 h-2.5" /> {vcapName}
+                          </span>
+                          <span className="text-slate-400 ml-auto">Cr: {totalCredits.toFixed(1)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </ResearchCard>
+            )}
+
             {/* === NO DATA FALLBACK === */}
-            {activeSections.length === 0 && !detailsLoading && (
+            {activeSections.length === 0 && !detailsLoading && bestTeams.length === 0 && !voteData && (
               <div className="flex flex-col items-center justify-center py-20">
                 <AlertCircle className="w-12 h-12 text-slate-600 mb-3" />
                 <p className="text-sm font-bold text-slate-400">No research data available for this match yet</p>
