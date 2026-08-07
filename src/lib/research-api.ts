@@ -42,25 +42,21 @@ export interface ResearchMatch {
 }
 
 export interface ResearchMatchDetails {
-  latest: string;
-  details: {
-    venue?: string;
-    pitch_report?: string;
-    weather?: string;
-    avg_score?: string;
-    toss?: string;
-    head_to_head?: string;
-    ground_stats?: string;
-    match_info?: string;
-    probable_xi?: string;
-    playing_xi?: string;
-    injury?: string;
-    captain_picks?: string;
-    vc_picks?: string;
-    fantasy_tips?: string;
-    win_probability?: string;
-    [k: string]: unknown;
-  };
+  // API actual field names (from possible11 API getMatchDetails response)
+  tour?: string;
+  sid?: string;
+  tid?: string;
+  latest?: string;      // HTML — match preview summary
+  detail?: string;      // HTML — full match preview (team updates, probable XI, etc.)
+  fantasy?: string;     // HTML — fantasy tips
+  report?: string;      // HTML — pitch report + weather + venue
+  squads?: string;      // HTML — playing XI / squads (null before lineup)
+  injured?: string;     // HTML — injury updates
+  dtime?: string;       // match datetime
+  crickid?: string;     // cricket match ID
+  mstatus?: string;     // match status (0 = upcoming)
+  uptime?: string;      // last updated time
+  points?: string;      // JSON string — team points table
   [k: string]: unknown;
 }
 

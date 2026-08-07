@@ -206,7 +206,26 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
   }
 
   // === MATCH DETAILS VIEW ===
-  const details = matchDetails?.details || {};
+  const d = matchDetails || {};
+
+  // Helper to strip HTML tags for plain text display
+  const stripHtml = (html: string) => {
+    return String(html || "")
+      .replace(/<h[1-6][^>]*>/gi, "\n\n■ ")
+      .replace(/<\/h[1-6]>/gi, "\n")
+      .replace(/<li[^>]*>/gi, "\n• ")
+      .replace(/<\/li>/gi, "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<p[^>]*>/gi, "\n")
+      .replace(/<\/p>/gi, "")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-violet-50 via-white to-amber-50 dark:from-violet-950/30 dark:via-background dark:to-amber-950/20">
@@ -228,104 +247,71 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
       </div>
 
       <div className="max-w-3xl mx-auto p-4 space-y-4">
-            {detailsLoading && (
-              <div className="flex flex-col items-center justify-center py-20">
-                <Loader2 className="w-12 h-12 text-violet-500 animate-spin mb-3" />
-                <p className="text-sm font-bold text-muted-foreground">Loading match research...</p>
+        {detailsLoading && (
+          <div className="flex flex-col items-center justify-center py-20">
+            <Loader2 className="w-12 h-12 text-violet-500 animate-spin mb-3" />
+            <p className="text-sm font-bold text-muted-foreground">Loading match research...</p>
+          </div>
+        )}
+
+        {!detailsLoading && (
+          <>
+            {/* Match Overview */}
+            <ResearchCard icon={Trophy} title="Match Overview" color="from-violet-500 to-purple-600">
+              <div className="space-y-1.5 text-xs">
+                {selectedMatch?.name && <ResearchRow label="Match" value={String(selectedMatch.name)} />}
+                {selectedMatch?.tour && <ResearchRow label="Series" value={String(selectedMatch.tour)} />}
+                {selectedMatch?.date && <ResearchRow label="Date" value={String(selectedMatch.date)} />}
+                {selectedMatch?.type && <ResearchRow label="Format" value={String(selectedMatch.type.toUpperCase())} />}
+                {selectedMatch?.cnm1 && <ResearchRow label="Team 1" value={String(selectedMatch.cnm1)} />}
+                {selectedMatch?.cnm2 && <ResearchRow label="Team 2" value={String(selectedMatch.cnm2)} />}
+                {d.uptime && <ResearchRow label="Updated" value={String(d.uptime)} />}
               </div>
-            )}
+            </ResearchCard>
 
-            {!detailsLoading && (
-              <>
-                {/* Match Overview */}
-                <ResearchCard icon={Trophy} title="Match Overview" color="from-violet-500 to-purple-600">
-                  <div className="space-y-1.5 text-xs">
-                    {selectedMatch?.name && <ResearchRow label="Match" value={String(selectedMatch.name)} />}
-                    {selectedMatch?.tour && <ResearchRow label="Series" value={String(selectedMatch.tour)} />}
-                    {selectedMatch?.date && <ResearchRow label="Date" value={String(selectedMatch.date)} />}
-                    {selectedMatch?.type && <ResearchRow label="Format" value={String(selectedMatch.type.toUpperCase())} />}
-                    {selectedMatch?.cnm1 && <ResearchRow label="Team 1" value={String(selectedMatch.cnm1)} />}
-                    {selectedMatch?.cnm2 && <ResearchRow label="Team 2" value={String(selectedMatch.cnm2)} />}
-                    {details.match_info && <ResearchRow label="Info" value={String(details.match_info)} />}
-                  </div>
-                </ResearchCard>
-
-            {details.pitch_report && (
-              <ResearchCard icon={Target} title="Pitch Report" color="from-amber-500 to-orange-600">
-                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{String(details.pitch_report)}</p>
+            {/* Latest Update */}
+            {d.latest && (
+              <ResearchCard icon={Activity} title="Latest Update" color="from-sky-500 to-blue-600">
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{stripHtml(d.latest)}</p>
               </ResearchCard>
             )}
 
-            {details.weather && (
-              <ResearchCard icon={Cloud} title="Weather Report" color="from-sky-500 to-blue-600">
-                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{String(details.weather)}</p>
+            {/* Pitch Report + Weather + Venue */}
+            {d.report && (
+              <ResearchCard icon={Target} title="Pitch Report & Weather" color="from-amber-500 to-orange-600">
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{stripHtml(d.report)}</p>
               </ResearchCard>
             )}
 
-            {(details.venue || details.ground_stats || details.avg_score) && (
-              <ResearchCard icon={MapPin} title="Venue & Ground Stats" color="from-emerald-500 to-green-600">
-                <div className="space-y-1.5 text-xs">
-                  {details.venue && <ResearchRow label="Venue" value={String(details.venue)} />}
-                  {details.avg_score && <ResearchRow label="Average Score" value={String(details.avg_score)} />}
-                  {details.ground_stats && <ResearchRow label="Ground Stats" value={String(details.ground_stats)} />}
-                </div>
+            {/* Match Preview (team updates, probable XI) */}
+            {d.detail && (
+              <ResearchCard icon={Users} title="Match Preview & Probable XI" color="from-emerald-500 to-green-600">
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{stripHtml(d.detail)}</p>
               </ResearchCard>
             )}
 
-            {details.head_to_head && (
-              <ResearchCard icon={Shield} title="Head-to-Head" color="from-rose-500 to-pink-600">
-                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{String(details.head_to_head)}</p>
+            {/* Playing XI / Squads */}
+            {d.squads && (
+              <ResearchCard icon={Users} title="Playing XI / Squads" color="from-emerald-600 to-teal-600">
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{stripHtml(d.squads)}</p>
               </ResearchCard>
             )}
 
-            {details.toss && (
-              <ResearchCard icon={Activity} title="Toss Analysis" color="from-indigo-500 to-violet-600">
-                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{String(details.toss)}</p>
-              </ResearchCard>
-            )}
-
-            {details.playing_xi && (
-              <ResearchCard icon={Users} title="Playing XI (Confirmed)" color="from-emerald-600 to-teal-600">
-                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{String(details.playing_xi)}</p>
-              </ResearchCard>
-            )}
-
-            {details.probable_xi && (
-              <ResearchCard icon={Users} title="Probable XI" color="from-amber-600 to-yellow-600">
-                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{String(details.probable_xi)}</p>
-              </ResearchCard>
-            )}
-
-            {details.injury && (
+            {/* Injury Updates */}
+            {d.injured && (
               <ResearchCard icon={AlertCircle} title="Injury Updates" color="from-red-500 to-rose-600">
-                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{String(details.injury)}</p>
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{stripHtml(d.injured)}</p>
               </ResearchCard>
             )}
 
-            {details.captain_picks && (
-              <ResearchCard icon={Crown} title="Captain Picks" color="from-amber-500 to-yellow-600">
-                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{String(details.captain_picks)}</p>
+            {/* Fantasy Tips */}
+            {d.fantasy && (
+              <ResearchCard icon={Sparkles} title="Fantasy Insights & Tips" color="from-pink-500 to-rose-600">
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{stripHtml(d.fantasy)}</p>
               </ResearchCard>
             )}
 
-            {details.vc_picks && (
-              <ResearchCard icon={Zap} title="Vice-Captain Picks" color="from-sky-500 to-cyan-600">
-                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{String(details.vc_picks)}</p>
-              </ResearchCard>
-            )}
-
-            {details.win_probability && (
-              <ResearchCard icon={TrendingUp} title="Win Probability" color="from-violet-500 to-purple-600">
-                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{String(details.win_probability)}</p>
-              </ResearchCard>
-            )}
-
-            {details.fantasy_tips && (
-              <ResearchCard icon={Sparkles} title="Fantasy Insights" color="from-pink-500 to-rose-600">
-                <p className="text-xs text-muted-foreground whitespace-pre-wrap">{String(details.fantasy_tips)}</p>
-              </ResearchCard>
-            )}
-
+            {/* Best Players (C/VC from API) */}
             {bestPlayers.length > 0 && (
               <ResearchCard icon={Crown} title="AI Captain & VC Suggestions" color="from-amber-500 to-orange-600">
                 <div className="space-y-2">
@@ -347,7 +333,8 @@ export function MatchResearchPage({ onClose }: MatchResearchPageProps) {
               </ResearchCard>
             )}
 
-            {!matchDetails && !detailsLoading && (
+            {/* No data fallback */}
+            {!d.latest && !d.detail && !d.report && !d.fantasy && !d.injured && !detailsLoading && (
               <div className="flex flex-col items-center justify-center py-20">
                 <AlertCircle className="w-12 h-12 text-muted-foreground mb-3" />
                 <p className="text-sm font-bold text-muted-foreground">No research data available for this match yet</p>
