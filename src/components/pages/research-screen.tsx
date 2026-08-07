@@ -11,8 +11,10 @@ import {
   X,
   Zap,
   Shield,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { ShopVideoAd } from "@/components/ads/shop-video-ad";
@@ -86,6 +88,26 @@ export function ResearchScreen() {
 
       {/* My Shop Video Ad Banner — always visible (it's an ad) */}
       <ShopVideoAd />
+
+      {/* === STANDALONE MATCH RESEARCH BUTTON (per user spec) === */}
+      {/* Completely independent module — separate API, separate data */}
+      <button
+        onClick={() => useApp.getState().setView("match-research")}
+        className="w-full rounded-2xl p-4 flex items-center gap-3 transition-all hover:scale-[1.01]"
+        style={{
+          background: "linear-gradient(135deg, #7C3AED, #EC4899)",
+          boxShadow: "0 4px 15px rgba(124, 58, 237, 0.3)",
+        }}
+      >
+        <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center">
+          <Telescope className="w-5 h-5 text-white" />
+        </div>
+        <div className="flex-1 text-left">
+          <p className="text-sm font-bold text-white">Match Research Center</p>
+          <p className="text-[10px] text-white/80">Pitch · Weather · H2H · Playing XI · C/VC Picks</p>
+        </div>
+        <ChevronRight className="w-5 h-5 text-white/80" />
+      </button>
 
       {/* Research — LOCKED for non-subscribers */}
       {license.isLicensed ? (

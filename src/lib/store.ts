@@ -71,7 +71,8 @@ export type AppView =
   | "contest-tracker"
   | "player-form"
   | "whatsapp-share"
-  | "ocr-generator";
+  | "ocr-generator"
+  | "match-research"; // Standalone research module — completely independent
 
 interface AppState {
   view: AppView;

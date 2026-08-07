@@ -18,6 +18,7 @@ import { ProfileScreen } from "@/components/pages/profile-screen";
 import { PromotionsScreen } from "@/components/pages/promotions-screen";
 import { TeamListScreen } from "@/components/pages/team-list-screen";
 import { ContactScreen } from "@/components/pages/contact-screen";
+import { MatchResearchPage } from "@/components/research/match-research-page";
 import { LineupAlertManager } from "@/components/alerts/lineup-alert-manager";
 import { SplashScreen } from "@/components/splash-screen";
 import { AdminPanel } from "@/components/admin/admin-panel";
@@ -145,6 +146,9 @@ export default function Home() {
             {view === "expert-teams" && <TeamListScreen variant="expert" />}
             {view === "prime-teams" && <TeamListScreen variant="prime" />}
             {view === "contact" && <ContactScreen />}
+            {view === "match-research" && (
+              <MatchResearchPage onClose={() => setView("home")} />
+            )}
           </motion.div>
         </AnimatePresence>
       </main>
