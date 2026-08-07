@@ -65,6 +65,11 @@ function normalizeId(id: string): string {
  * So before lineup, we return ALL players regardless of playing field.
  *
  * After lineup: ONLY playing===1 (confirmed Playing XI).
+ *
+ * FALLBACK: If lineup is announced (lineup_status===1) but NO players have
+ * playing===1 (backend may not have updated the field yet), return ALL players
+ * instead of 0. This prevents the "all players locked" issue where the user
+ * can't generate teams after lineup because the backend hasn't set playing=1.
  */
 export function filterPlayingPlayers(
   players: MatchPlayer[],
@@ -75,8 +80,36 @@ export function filterPlayingPlayers(
     // (playing field is unreliable — API may set all to 0 before lineup)
     return players;
   }
-  // After lineup: ONLY playing === 1 — NO EXCEPTIONS
-  return players.filter((p) => Number(p.playing) === 1);
+  // After lineup: try to filter to ONLY playing === 1
+  const playingXI = players.filter((p) => Number(p.playing) === 1);
+
+  // FALLBACK: If lineup is announced but 0 players have playing===1,
+  // the backend hasn't updated the playing field yet. Return ALL players
+  // rather than 0 — the user can still generate teams.
+  if (playingXI.length === 0 && players.length > 0) {
+    console.warn(
+      `[lineup] ⚠️ Lineup announced but 0 players have playing===1 — ` +
+      `backend may not have updated. Returning all ${players.length} players as fallback.`
+    );
+    return players;
+  }
+
+  // If we have very few playing XI players (< 11), also include undefined/null
+  // playing field players (they might be playing but the field wasn't set)
+  if (playingXI.length < 11) {
+    const undefinedPlayers = players.filter(
+      (p) => p.playing === undefined || p.playing === null
+    );
+    if (undefinedPlayers.length > 0) {
+      console.warn(
+        `[lineup] ⚠️ Only ${playingXI.length} players with playing===1 — ` +
+        `including ${undefinedPlayers.length} players with undefined playing field.`
+      );
+      return [...playingXI, ...undefinedPlayers];
+    }
+  }
+
+  return playingXI;
 }
 
 /**

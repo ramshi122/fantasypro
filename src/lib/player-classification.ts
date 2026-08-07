@@ -144,9 +144,15 @@ export function calculatePlayerConfidence(
   let hasData = false;
 
   // === FACTOR 1: Official Playing XI (after lineup) ===
-  // +15 if confirmed in Playing XI
+  // +35 if confirmed in Playing XI — this is a LARGE bonus because being in
+  // the confirmed Playing XI is the single most important factor. Even a
+  // player with no other data (no points, no selected_by) should be at least
+  // MID_RISK (55+) just from being confirmed to play.
+  // 35 (lineup) + 8 (credits) + 5 (role) = 48 → RISKY minimum
+  // 35 (lineup) + 8 (credits) + 5 (role) + 10 (sel%) = 58 → MID_RISK
+  // 35 (lineup) + 8 (credits) + 5 (role) + 10 (sel%) + 8 (cap%) = 66 → SAFE
   if (lineupAnnounced && isPlayerSafeForPostLineup(p)) {
-    score += 15;
+    score += 35;
     hasData = true;
   }
 

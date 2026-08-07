@@ -1856,10 +1856,21 @@ export function generateEliteTeams(
   let effectivePool: MatchPlayer[];
   if (lineupAnnounced) {
     // Lineup confirmed — apply STRICT post-lineup filter
-    // This checks multiple field names (playing, playing_status, chance,
-    // impact_sub, bench, reserve, injured, doubtful, unconfirmed, status, etc.)
     effectivePool = filterPlayersForPostLineup(pool, true);
-    console.log(`[EliteAI] ✅ Post-Lineup STRICT mode — filtered to ${effectivePool.length}/${pool.length} confirmed Playing XI players (excluded Low Chance, Bench, Injured, Doubtful, Impact Sub, Reserve, Unconfirmed)`);
+
+    // === FALLBACK: If the filter removed ALL players (backend hasn't set
+    // playing=1 for anyone yet), use ALL players from the pool. This prevents
+    // the "all players locked, no teams generated" issue.
+    // Per user spec: "After linup all plyer are loked avoid plyer team not genereting"
+    if (effectivePool.length < 11 && pool.length >= 11) {
+      console.warn(
+        `[EliteAI] ⚠️ Post-lineup filter left only ${effectivePool.length} players (need 11). ` +
+        `Backend may not have set playing=1 yet — using all ${pool.length} players as fallback.`
+      );
+      effectivePool = pool;
+    }
+
+    console.log(`[EliteAI] ✅ Post-Lineup STRICT mode — filtered to ${effectivePool.length}/${pool.length} confirmed Playing XI players`);
   } else {
     // Lineup pending — use ALL players (backend marks all as playing=0)
     effectivePool = pool;

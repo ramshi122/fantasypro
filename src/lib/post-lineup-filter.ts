@@ -191,6 +191,10 @@ const EXCLUDE_CHANCE_KEYWORDS = [
  * ഉണ്ടെങ്കിൽ, ആ കളിക്കാരനെ എല്ലാ ടീമുകളിൽ നിന്നും ഒഴിവാക്കുക."
  * (If there's even small doubt about a player after lineup, exclude from all teams.)
  *
+ * FALLBACK: If filtering leaves fewer than 11 players (backend hasn't set
+ * playing=1 for the Playing XI yet), return ALL players. This prevents the
+ * "all players locked, no teams generated" issue.
+ *
  * @param players - All players from the match data
  * @param lineupAnnounced - Whether the official Playing XI has been announced
  * @returns Filtered array of only safe players
@@ -214,6 +218,18 @@ export function filterPlayersForPostLineup(
     console.log(
       `[PostLineupFilter] 🚫 Excluded ${excluded}/${players.length} players (Low Chance, Bench, Injured, Doubtful, Impact Sub, etc.) — ${safe.length} safe players remaining`
     );
+  }
+
+  // === FALLBACK: If fewer than 11 safe players, the backend may not have
+  // updated the playing field yet. Return ALL players rather than blocking
+  // team generation entirely.
+  // Per user spec: "After linup all plyer are loked avoid plyer team not genereting"
+  if (safe.length < 11 && players.length >= 11) {
+    console.warn(
+      `[PostLineupFilter] ⚠️ Only ${safe.length} safe players (need 11) — ` +
+      `backend may not have set playing=1 yet. Returning all ${players.length} players as fallback.`
+    );
+    return players;
   }
 
   return safe;
