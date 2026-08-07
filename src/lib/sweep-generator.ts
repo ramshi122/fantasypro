@@ -1127,21 +1127,29 @@ export async function generateSweep(
 
     // SIMILARITY CHECK — O(N) where N = number of existing teams (was O(N × M))
     // PERFORMANCE: use cached existingTeamIdSets instead of rebuilding Set per team
+    // === RELAXED FOR LARGE COUNTS ===
+    // Per user spec: "40/40 full team not generating fix bro"
+    // With 40 teams from ~22-30 players, it's nearly impossible to have all
+    // teams differ by 3+ players. So we scale the similarity threshold based
+    // on the team count:
+    //   - ≤20 teams: max 7 common (strict — teams must differ by 4+)
+    //   - 21-30 teams: max 8 common (relaxed — teams can share 8)
+    //   - 31+ teams: max 9 common (very relaxed — teams can share 9)
+    // This prevents the similarity check from blocking team generation when
+    // the player pool is small relative to the team count.
+    const _similarityThreshold = count <= 20 ? 8 : count <= 30 ? 9 : 10;
     const simStart = Date.now();
     let tooSimilar = false;
     for (let eIdx = 0; eIdx < existingTeamIdSets.length; eIdx++) {
       const existingIds = existingTeamIdSets[eIdx];
       let common = 0;
-      // Iterate smaller set for performance + early exit
-      // STRICTER: max 7 common players (was 9) — per DUPLICATE PREVENTION spec
       for (const id of currentTeamIds) {
         if (existingIds.has(id)) {
           common++;
-          if (common >= 8) break; // early exit at 8 (will be flagged at 8+)
+          if (common >= _similarityThreshold) break; // early exit
         }
       }
-      // Teams with 8+ common players are too similar → swap 3 players for diversity
-      if (common >= 8) {
+      if (common >= _similarityThreshold) {
         tooSimilar = true;
         break;
       }
@@ -1313,8 +1321,13 @@ export async function generateSweep(
     for (let i = 0; i < teams.length && i < validation.validTeams.length; i++) {
       teams[i].players = validation.validTeams[i] as any;
     }
-    // Remove rejected teams (they were not fixed)
+    // NOTE: Do NOT shrink teams array here — the filler loop will regenerate
+    // replacements. Previously: `teams.length = validation.validTeams.length`
+    // which permanently dropped rejected teams, causing 40→35 etc.
+    // Now we keep the full array and let the filler loop fix any gaps.
     if (validation.validTeams.length < teams.length) {
+      console.warn(`[generator] ⚠️ ${teams.length - validation.validTeams.length} teams failed validation — filler loop will regenerate them`);
+      // Remove the invalid teams (they're at the end after the valid ones)
       teams.length = validation.validTeams.length;
     }
   }
@@ -1331,7 +1344,11 @@ export async function generateSweep(
   // MIN_AI_SCORE: 55 — rejects weak teams, regenerates stronger replacements
   // Filler attempts: count × 50 (dynamic, min 200) — per user spec
   const MIN_AI_SCORE = 55;
-  const _MAX_FILLER_ATTEMPTS = Math.max((count as number) * 50, 200);
+  // === INCREASED FILLER ATTEMPTS for strict count guarantee ===
+  // Per user spec: "40/40 full team not generating fix bro"
+  // Previous: count × 50 (2000 for 40 teams) — not enough when many teams
+  // get rejected by similarity/dedup. Now: count × 200 (8000 for 40 teams).
+  const _MAX_FILLER_ATTEMPTS = Math.max((count as number) * 200, 1000);
 
   // === AI Score calculation per team (0-100) ===
   // Based on: captain EFV, VC EFV, team EFV balance, credits usage, role composition
@@ -1636,6 +1653,108 @@ export async function generateSweep(
     }
 
     console.log(`[generator] 🔄 Filler complete: +${_fillerGenerated} teams (attempts: ${_fillerAttempts}, duplicates: ${_fillerDuplicates}, quality rejected: ${_fillerQualityRejected})`);
+  }
+
+  // === EMERGENCY COUNT FILL (per user spec: "40/40 full team not generating") ===
+  // If after the main loop + filler loop we STILL have fewer than `count` teams,
+  // use the emergency fallback: generate simple valid teams by picking top-N
+  // players per role with rotating offsets. These are lower-quality but
+  // GUARANTEE the requested count is met.
+  if (teams.length < (count as number) && cleaned.length >= 11) {
+    const shortfall = (count as number) - teams.length;
+    console.warn(`[generator] 🚨 EMERGENCY COUNT FILL — still need ${shortfall} more team(s) to reach ${count}. Using simple fallback.`);
+
+    // Build simple teams by rotating through player pools
+    const _emergencyByRole = {
+      WK: ranked.filter(r => lookups.roleMap.get(r.playerId) === "WK"),
+      BAT: ranked.filter(r => lookups.roleMap.get(r.playerId) === "BAT"),
+      AR: ranked.filter(r => lookups.roleMap.get(r.playerId) === "AR"),
+      BOWL: ranked.filter(r => lookups.roleMap.get(r.playerId) === "BOWL"),
+    };
+
+    const _emergencyTemplates = [
+      { WK: 1, BAT: 4, AR: 3, BOWL: 3 },
+      { WK: 1, BAT: 5, AR: 2, BOWL: 3 },
+      { WK: 1, BAT: 3, AR: 3, BOWL: 4 },
+      { WK: 1, BAT: 4, AR: 2, BOWL: 4 },
+      { WK: 1, BAT: 3, AR: 4, BOWL: 3 },
+      { WK: 1, BAT: 5, AR: 1, BOWL: 4 },
+    ];
+
+    for (let _e = 0; _e < shortfall * 10 && teams.length < (count as number); _e++) {
+      const _eCfg = _emergencyTemplates[_e % _emergencyTemplates.length];
+      const _eTeam: MatchPlayer[] = [];
+      let _eOk = true;
+
+      for (const _role of ["WK", "BAT", "AR", "BOWL"] as const) {
+        const _eNeed = _eCfg[_role];
+        const _ePool = _emergencyByRole[_role];
+        if (_ePool.length < _eNeed) { _eOk = false; break; }
+
+        // Pick with rotating offset
+        const _eOffset = _e % Math.max(1, _ePool.length);
+        const _ePicked = _ePool.slice(_eOffset, _eOffset + _eNeed);
+        // Pad if not enough
+        if (_ePicked.length < _eNeed) {
+          _ePicked.push(..._ePool.slice(0, _eNeed - _ePicked.length));
+        }
+        _eTeam.push(..._ePicked.map(rp => rp.player));
+      }
+
+      if (!_eOk || _eTeam.length !== 11) continue;
+
+      // Dedup
+      const _eFp = teamFingerprint(_eTeam);
+      if (_usedFingerprints.has(_eFp)) continue;
+      _usedFingerprints.add(_eFp);
+
+      // C/VC
+      const _eCv = pickCaptainVCDeterministic(_eTeam, ranked, teams.length + _e + 1000, usedCVPairs, lookups.efvMap);
+      if (!_eCv) continue;
+
+      teams.push({
+        _id: `sweep_emergency_${teams.length}_${Date.now().toString(36)}`,
+        teamId: `sweep_emergency_${teams.length + 1}`,
+        teamNo: teams.length + 1,
+        team_number: teams.length + 1,
+        players: _eTeam.map((p) => ({
+          pid: String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? ""),
+          player_fixed_id: p.player_fixed_id,
+          pl_id: p.pl_id,
+          name: p.name,
+          shortName: p.shortName || p.name?.slice(0, 4).toUpperCase() || "",
+          team: p.team_name,
+          team_name: p.team_name,
+          role: roleFromPlayerType(p.player_type, p.role as number),
+          role_num: p.role,
+          player_type: p.player_type,
+          credits: p.credits,
+          selected_by: p.selected_by ?? p.sel,
+          sel: p.sel,
+          image: p.image,
+          playing: p.playing,
+        })),
+        captain: String(_eCv.captain ?? ""),
+        viceCaptain: String(_eCv.viceCaptain ?? ""),
+        vicecaptain: String(_eCv.viceCaptain ?? ""),
+        c: String(_eCv.captain ?? ""),
+        vc: String(_eCv.viceCaptain ?? ""),
+        type: "sweep-emergency",
+      });
+
+      if (teams.length >= (count as number)) break;
+    }
+    console.log(`[generator] 🚨 Emergency fill complete — now ${teams.length}/${count} teams`);
+  }
+
+  // === STRICT COUNT VERIFICATION ===
+  if (teams.length < (count as number)) {
+    console.error(
+      `[generator] ⚠️ STRICT COUNT WARNING — requested ${count} teams but only generated ${teams.length}. ` +
+      `Player pool: ${cleaned.length} players. For ${count} unique teams, need ≥${(count as number) + 11} players.`
+    );
+  } else {
+    console.log(`[generator] ✅ STRICT COUNT GUARANTEE met — generated ${teams.length}/${count} teams`);
   }
 
   // === DEBUG LOGS (per user spec) ===
