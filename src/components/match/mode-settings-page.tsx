@@ -12,6 +12,7 @@ import { generateSweep, type SweepCount, type SweepResult } from "@/lib/sweep-ge
 import { getMatchDetail, type MatchInfo, type MatchPlayer, type TeamRow } from "@/lib/api";
 import { TeamCombinationSelector } from "./team-combination-selector";
 import type { RoleCombo } from "@/lib/team-combos";
+import { getFinalEligiblePlayers, validateFinalTeam, invalidateStaleLineupCache } from "@/lib/hard-exclusion";
 import { cn } from "@/lib/utils";
 
 type GenMode = "smart" | "gl" | "advanced" | "combination";
@@ -416,38 +417,26 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
       if (allPlayers.length < 11) { toast.error(`Only ${allPlayers.length} players available`); setGenerating(false); return; }
 
       // === LINEUP DETECTION + PLAYER FILTERING ===
-      // Per user spec: "before linup plyr not working after linup make proppr plying 11 update
-      // no any low plyer and bench exetra"
-      //
-      // BEFORE lineup (lineup_status=0): ALL players have playing=0 — use ALL players.
-      // Backend marks ALL as playing=0 before lineup is announced (means "not confirmed yet").
-      // Filtering playing===1 before lineup gives 0 players → generation fails.
-      //
-      // AFTER lineup (lineup_status=1): backend sets playing=1 for Playing XI,
-      // playing=0 for benched. Filter to playing===1 ONLY (remove bench).
+      // Per user spec: "LINEUP OUT / BENCH / NOT PLAYING = HARD BLOCK"
+      // Use centralized getFinalEligiblePlayers() — the SINGLE source of truth.
+      // NO FALLBACKS after lineup — only playing===1 players are eligible.
       const playingCount = allPlayers.filter((p: any) => Number(p.playing) === 1).length;
       const lineupActive = announced || playingCount >= 11;
 
+      // Invalidate stale cache when lineup changes
       if (lineupActive) {
-        // AFTER LINEUP: ONLY playing === 1 players — remove bench
-        const playingOnly = allPlayers.filter((p: any) => Number(p.playing) === 1);
-        console.log(`[generator] 🟢 AFTER LINEUP: ${playingOnly.length} playing players out of ${allPlayers.length} total`);
-
-        if (playingOnly.length >= 11) {
-          allPlayers = playingOnly;
-          setProgress(`🟢 After Lineup — using ${allPlayers.length} confirmed Playing XI players ONLY (bench removed)`);
-        } else if (playingOnly.length > 0) {
-          allPlayers = playingOnly;
-          setProgress(`⚠️ After Lineup — only ${playingOnly.length} confirmed playing (need 11, some teams may fail)`);
-        } else {
-          setProgress(`🟡 Lineup status=1 but no playing=1 players — using all ${allPlayers.length} players`);
-        }
-      } else {
-        // BEFORE LINEUP: ALL players have playing=0 (means "not confirmed yet" NOT "benched")
-        // Use ALL players — don't filter by playing field
-        console.log(`[generator] 🟡 BEFORE LINEUP — using all ${allPlayers.length} players (lineup not announced yet)`);
-        setProgress(`🟡 Before Lineup — using all ${allPlayers.length} players (lineup pending, will refine after toss)`);
+        invalidateStaleLineupCache(matchId);
       }
+
+      // === CENTRALIZED HARD EXCLUSION ===
+      // This is the ONLY place player filtering happens. No other code path
+      // should filter players differently.
+      allPlayers = getFinalEligiblePlayers(allPlayers, lineupActive);
+      console.log(`[generator] ${lineupActive ? "🟢 AFTER LINEUP" : "🟡 BEFORE LINEUP"} — ${allPlayers.length} eligible players (HARD EXCLUSION applied)`);
+      setProgress(lineupActive
+        ? `🟢 After Lineup — ${allPlayers.length} confirmed Playing XI players ONLY (bench removed, HARD EXCLUSION)`
+        : `🟡 Before Lineup — using all ${allPlayers.length} players (lineup pending)`
+      );
 
       // === APPLY USER SETTINGS: Exclude players (text input) ===
       const excludeList = parsePlayers(excludedPlayers);
@@ -566,6 +555,38 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
       });
 
       if (res.teams.length === 0) { toast.error("Failed to generate teams — try smaller count"); setGenerating(false); return; }
+
+      // === FINAL TEAM VALIDATION GATE (per user spec rule 7) ===
+      // "ഓരോ generated team save ചെയ്യുന്നതിന് മുമ്പ് validateFinalTeam(team) run ചെയ്യണം."
+      // Filter out any team that contains ineligible players (LINEUP OUT / BENCH).
+      // Per user spec: "DO NOT SAVE TEAM, DO NOT SHOW TEAM AS VALID, DO NOT TRANSFER TEAM"
+      if (lineupActive) {
+        const validTeams = res.teams.filter(team => {
+          const players = (team.players || []) as unknown as MatchPlayer[];
+          const validation = validateFinalTeam(
+            players,
+            team.captain,
+            team.viceCaptain,
+            true
+          );
+          if (!validation.valid) {
+            console.warn(`[HARD_EXCLUSION] 🚫 Team #${team.teamNo} REJECTED — ${validation.errors.join("; ")}`);
+            return false;
+          }
+          return true;
+        });
+        if (validTeams.length < res.teams.length) {
+          console.warn(`[HARD_EXCLUSION] 🚫 ${res.teams.length - validTeams.length} teams rejected by final validation (bench/lineup out players detected)`);
+          toast.warning(`🚫 ${res.teams.length - validTeams.length} teams removed (contained bench/lineup out players) — ${validTeams.length} valid teams remain`);
+        }
+        res.teams = validTeams;
+      }
+
+      if (res.teams.length === 0) {
+        toast.error("All teams failed final validation — no eligible teams to save");
+        setGenerating(false);
+        return;
+      }
 
       // Store in state for preview
       setGeneratedTeams(res.teams);

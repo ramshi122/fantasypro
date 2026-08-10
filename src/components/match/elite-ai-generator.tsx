@@ -35,6 +35,7 @@ import {
 import type { MatchInfo, MatchPlayer, TeamRow } from "@/lib/api";
 import { getAllStandardCombos, validateCombo, type RoleCombo } from "@/lib/team-combos";
 import { TeamCombinationSelector } from "./team-combination-selector";
+import { getFinalEligiblePlayers, validateFinalTeam } from "@/lib/hard-exclusion";
 import {
   classifyAllPlayers,
   classifyPlayer,
@@ -343,6 +344,12 @@ export function EliteAIGenerator({
       if (directMode) { toast.info("🎯 Direct Mode — 11 players selected, AI picks only C/VC"); }
       else { toast.info(`🧠 AI Mode — ${pool.length} players selected`); }
     }
+    // === HARD EXCLUSION (per user spec) ===
+    // Apply centralized getFinalEligiblePlayers() — removes ALL bench/lineup out
+    // players after lineup announcement. NO FALLBACKS.
+    pool = getFinalEligiblePlayers(pool, lineupAnnounced);
+    console.log(`[EliteAI] After HARD EXCLUSION: ${pool.length} eligible players (lineupAnnounced=${lineupAnnounced})`);
+
     if (pool.length < 11) {
       if (!lineupAnnounced && manualExclude.size > 0) {
         // Before lineup + user manually excluded too many players
@@ -350,12 +357,12 @@ export function EliteAIGenerator({
           `Only ${pool.length} players available after exclusions. ` +
           `Before lineup, avoid excluding too many players — clear some exclusions or use AI Smart Selection.`
         );
-      } else if (lineupAnnounced && autoExcluded.length > 0) {
-        // After lineup + auto-excluded too many players (not enough in Playing XI)
+      } else if (lineupAnnounced) {
+        // After lineup + hard exclusion left too few players
         toast.error(
-          `Only ${pool.length} players in confirmed Playing XI. ` +
-          `${autoExcluded.length} players were auto-excluded (AVOID/NOT_PLAYING). ` +
-          `Wait for full lineup announcement or select more players manually.`
+          `Only ${pool.length} players in confirmed Playing XI (HARD EXCLUSION applied). ` +
+          `Bench/LINEUP OUT players removed. ` +
+          `Wait for full lineup or select more players manually.`
         );
       } else {
         toast.error(
@@ -401,6 +408,36 @@ export function EliteAIGenerator({
 
       if (!res || !res.rankedTeams || res.rankedTeams.length === 0) {
         toast.error("AI could not generate teams — try with more players");
+        setRunning(false);
+        return;
+      }
+
+      // === FINAL TEAM VALIDATION GATE (per user spec rule 7) ===
+      // Filter out any team that contains ineligible players (LINEUP OUT / BENCH).
+      if (lineupAnnounced) {
+        const validTeams = res.rankedTeams.filter(rt => {
+          const players = (rt.team.players || []) as unknown as MatchPlayer[];
+          const validation = validateFinalTeam(
+            players,
+            rt.team.captain,
+            rt.team.viceCaptain,
+            true
+          );
+          if (!validation.valid) {
+            console.warn(`[HARD_EXCLUSION] 🚫 Elite AI Team #${rt.rank} REJECTED — ${validation.errors.join("; ")}`);
+            return false;
+          }
+          return true;
+        });
+        if (validTeams.length < res.rankedTeams.length) {
+          console.warn(`[HARD_EXCLUSION] 🚫 ${res.rankedTeams.length - validTeams.length} Elite AI teams rejected (bench/lineup out players)`);
+          toast.warning(`🚫 ${res.rankedTeams.length - validTeams.length} teams removed (bench/lineup out) — ${validTeams.length} valid`);
+        }
+        res.rankedTeams = validTeams;
+      }
+
+      if (!res || !res.rankedTeams || res.rankedTeams.length === 0) {
+        toast.error("All teams failed final validation — no eligible teams");
         setRunning(false);
         return;
       }
