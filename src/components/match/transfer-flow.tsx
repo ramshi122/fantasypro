@@ -823,17 +823,16 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
                 );
               })()}
 
-              {/* Free Contests — locked for trial */}
+              {/* Free Contests — available for ALL licensed users */}
               {(() => {
-                const contestTiers = ["match_basic", "match_full", "weekly", "monthly", "elite", "lifetime"];
-                const canContest = license.isLicensed && license.licenseKeyType && contestTiers.includes(license.licenseKeyType);
+                const canContest = license.isLicensed;
                 return (
                   <Button
                     size="sm"
                     onClick={() => {
                       if (!license.requireLicense()) return;
                       if (!canContest) {
-                        toast.error("Contest join requires 1 Match pass (₹49) or higher.");
+                        toast.error("Activate license to join contests");
                         return;
                       }
                       setShowFreeContests(true);
@@ -1271,9 +1270,10 @@ function TransferButtons({
 
   // Tier checks
   const my11Tiers = ["match_full", "weekly", "monthly", "elite", "lifetime"];
-  const contestTiers = ["match_basic", "match_full", "weekly", "monthly", "elite", "lifetime"];
-  const canMy11 = isLicensed && licenseTier && my11Tiers.includes(licenseTier);
-  const canContest = isLicensed && licenseTier && contestTiers.includes(licenseTier);
+  // Join Contest: available for ALL licensed users (including trial)
+  // Per user spec: "Join contest originalil premiim lock ayappol idilum join contest kitunilla"
+  // Free contests should be accessible to any licensed user.
+  const canContest = isLicensed; // any valid license (including trial)
   const isTrial = licenseTier === "trial";
   // Connect Account button visible for ALL licensed users (any subscription tier)
   // Only hidden for free/unlicensed users
@@ -1326,10 +1326,7 @@ function TransferButtons({
       toast.error("Activate license to join contests");
       return;
     }
-    if (!canContest) {
-      toast.error("Contest join requires 1 Match pass (₹49) or higher");
-      return;
-    }
+    // Per user spec: Join Contest available for ALL licensed users (including trial)
     onJoinContests();
   }
 
