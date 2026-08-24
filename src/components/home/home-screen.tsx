@@ -10,6 +10,7 @@ import { MatchCard } from "./match-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export function HomeScreen() {
   const sport = useApp((s) => s.sport);
@@ -54,6 +55,16 @@ export function HomeScreen() {
     load();
   }, [sport]);
 
+  // === AUTO-REFRESH matches every 60 seconds ===
+  // Per user spec: "match update avunilla" — matches not updating
+  // Poll every 60s to catch new matches, lineup changes, and score updates
+  useEffect(() => {
+    const interval = setInterval(() => {
+      load();
+    }, 60000); // 60 seconds
+    return () => clearInterval(interval);
+  }, [sport]);
+
 
   const displayMatches = tab === "saved"
     ? savedMatches.filter(shouldShowMatchCard)
@@ -94,11 +105,20 @@ export function HomeScreen() {
 
       <MatchTabs />
 
-      {/* Stats strip */}
-      <div className="grid grid-cols-3 gap-2">
-        <StatCard label="Accuracy" value="91.2%" gradient="from-amber-500 to-orange-600" />
-        <StatCard label="Premium" value="Software" gradient="from-yellow-500 to-amber-600" />
-        <StatCard label="Active" value={displayMatches.length.toString()} gradient="from-cyan-500 to-blue-600" />
+      {/* Stats strip + Refresh button */}
+      <div className="flex items-center gap-2">
+        <div className="grid grid-cols-3 gap-2 flex-1">
+          <StatCard label="Accuracy" value="91.2%" gradient="from-amber-500 to-orange-600" />
+          <StatCard label="Premium" value="Software" gradient="from-yellow-500 to-amber-600" />
+          <StatCard label="Active" value={displayMatches.length.toString()} gradient="from-cyan-500 to-blue-600" />
+        </div>
+        <button
+          onClick={load}
+          className="flex-shrink-0 w-9 h-9 rounded-lg bg-violet-500/10 border border-violet-500/30 flex items-center justify-center hover:bg-violet-500/20 transition-colors"
+          title="Refresh matches"
+        >
+          <RefreshCw className={cn("w-4 h-4 text-violet-500", loading && "animate-spin")} />
+        </button>
       </div>
 
       {/* Matches list */}
