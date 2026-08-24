@@ -461,12 +461,56 @@ export function shouldShowMatchCard(match: MatchInfo | any): boolean {
 }
 
 export async function getMatches(sport: Sport): Promise<MatchInfo[]> {
+  // Try the primary API (tgsoftware-api.online)
   const resp = await rawFetch(`/api/fantasy/matches/${sport}`, { method: "GET" });
   if (resp.status && resp.status !== "success") return [];
   const data = unpackData<MatchInfo[] | MatchInfo>(resp);
-  if (Array.isArray(data)) return data.map(normalizeMatch);
-  if (data) return [normalizeMatch(data)];
-  return [];
+  let matches: MatchInfo[] = [];
+  if (Array.isArray(data)) matches = data.map(normalizeMatch);
+  else if (data) matches = [normalizeMatch(data)];
+
+  // === FALLBACK: If primary API returns empty, try Cricbuzz ===
+  // Per user spec: "Any match are not loading chek original tg"
+  // The tgsoftware backend sometimes has 0 matches in its database.
+  // Cricbuzz always has live matches — use as fallback.
+  if (matches.length === 0 && sport === "cricket") {
+    console.log("[getMatches] ⚠️ tgsoftware returned 0 matches — trying Cricbuzz fallback...");
+    try {
+      const cbRes = await fetch(`/api/cricbuzz-matches`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      });
+      const cbData = await cbRes.json();
+      const cbMatches = cbData.matches || cbData.data || [];
+      if (Array.isArray(cbMatches) && cbMatches.length > 0) {
+        console.log(`[getMatches] ✅ Cricbuzz fallback: found ${cbMatches.length} matches`);
+        // Convert Cricbuzz format to MatchInfo format
+        matches = cbMatches.map((m: any) => normalizeMatch({
+          matchId: m.id,
+          id: m.id,
+          title: m.title,
+          series: m.series,
+ subTitle: m.format,
+          team1: { shortName: m.title?.split(" vs ")[0] || "T1", name: m.title?.split(" vs ")[0] || "T1" },
+          team2: { shortName: m.title?.split(" vs ")[1] || "T2", name: m.title?.split(" vs ")[1] || "T2" },
+          startTime: null, // Cricbuzz doesn't provide timestamp
+          format: m.format,
+          dream11Url: `https://www.cricbuzz.com/live-cricket-scores/${m.id}/${m.slug}`,
+          fantasy_list: ["dream11"], // assume Dream11 support
+          lineup_status: 0,
+          status: "upcoming",
+          _cricbuzzId: m.id,
+          _cricbuzzSlug: m.slug,
+        }));
+      }
+    } catch (err: any) {
+      console.error("[getMatches] Cricbuzz fallback failed:", err?.message);
+    }
+  }
+
+  return matches;
 }
 
 export async function getMatchDetail(matchId: string | number): Promise<MatchInfo | null> {
