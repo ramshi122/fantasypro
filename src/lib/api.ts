@@ -44,7 +44,17 @@ import {
  *    flow works end-to-end without any external tokens.
  */
 
-export const API_BASE = "https://tgsoftware-api.online";
+/**
+ * API BASE — switched to possible11.com (same as original APK)
+ *
+ * The original Possible11 app uses https://possible11.com/admin/api2.php
+ * as its primary API. The possible11.com backend was returning
+ * 0 matches. possible11.com has the real, live match data.
+ *
+ * Per user spec: "I dont want fake original apk match show cheyunnund
+ * you chek original propper"
+ */
+export const API_BASE = "https://possible11.com";
 
 export type Sport = "cricket" | "football" | "basketball" | "kabaddi";
 export type FantasyApp = "dream11" | "my11circle" | "myteam11" | "vision11" | "jumbo";
@@ -461,56 +471,49 @@ export function shouldShowMatchCard(match: MatchInfo | any): boolean {
 }
 
 export async function getMatches(sport: Sport): Promise<MatchInfo[]> {
-  // Try the primary API (tgsoftware-api.online)
-  const resp = await rawFetch(`/api/fantasy/matches/${sport}`, { method: "GET" });
-  if (resp.status && resp.status !== "success") return [];
-  const data = unpackData<MatchInfo[] | MatchInfo>(resp);
-  let matches: MatchInfo[] = [];
-  if (Array.isArray(data)) matches = data.map(normalizeMatch);
-  else if (data) matches = [normalizeMatch(data)];
-
-  // === FALLBACK: If primary API returns empty, try Cricbuzz ===
-  // Per user spec: "Any match are not loading chek original tg"
-  // The tgsoftware backend sometimes has 0 matches in its database.
-  // Cricbuzz always has live matches — use as fallback.
-  if (matches.length === 0 && sport === "cricket") {
-    console.log("[getMatches] ⚠️ tgsoftware returned 0 matches — trying Cricbuzz fallback...");
+  // Use possible11.com/admin/api2.php (same as original APK)
+  // POST with action=getMatches, sport, matchState
+  try {
+    const res = await fetch(`${API_BASE}/admin/api2.php`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+      },
+      body: JSON.stringify({
+        action: "getMatches",
+        sport,
+        matchState: "upcoming",
+        uuid: "web-apna-cricket",
+        device: "web",
+        osVersion: "unknown",
+        model: "browser",
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(15000),
+    });
+    const text = await res.text();
+    let data: any[] = [];
     try {
-      const cbRes = await fetch(`/api/cricbuzz-matches`, {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        signal: AbortSignal.timeout(15000),
-      });
-      const cbData = await cbRes.json();
-      const cbMatches = cbData.matches || cbData.data || [];
-      if (Array.isArray(cbMatches) && cbMatches.length > 0) {
-        console.log(`[getMatches] ✅ Cricbuzz fallback: found ${cbMatches.length} matches`);
-        // Convert Cricbuzz format to MatchInfo format
-        matches = cbMatches.map((m: any) => normalizeMatch({
-          matchId: m.id,
-          id: m.id,
-          title: m.title,
-          series: m.series,
- subTitle: m.format,
-          team1: { shortName: m.title?.split(" vs ")[0] || "T1", name: m.title?.split(" vs ")[0] || "T1" },
-          team2: { shortName: m.title?.split(" vs ")[1] || "T2", name: m.title?.split(" vs ")[1] || "T2" },
-          startTime: null, // Cricbuzz doesn't provide timestamp
-          format: m.format,
-          dream11Url: `https://www.cricbuzz.com/live-cricket-scores/${m.id}/${m.slug}`,
-          fantasy_list: ["dream11"], // assume Dream11 support
-          lineup_status: 0,
-          status: "upcoming",
-          _cricbuzzId: m.id,
-          _cricbuzzSlug: m.slug,
-        }));
-      }
-    } catch (err: any) {
-      console.error("[getMatches] Cricbuzz fallback failed:", err?.message);
+      const parsed = JSON.parse(text);
+      data = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.data) ? parsed.data : []);
+    } catch {
+      // Maybe encrypted
+      const dec = decrypt<any>(text);
+      if (dec) data = Array.isArray(dec) ? dec : [dec];
     }
-  }
 
-  return matches;
+    if (data.length > 0) {
+      console.log(`[getMatches] ✅ Found ${data.length} matches from possible11.com`);
+      return data.map(normalizeMatch);
+    }
+
+    console.log("[getMatches] ⚠️ possible11.com returned 0 matches");
+    return [];
+  } catch (err: any) {
+    console.error("[getMatches] Error:", err?.message);
+    return [];
+  }
 }
 
 export async function getMatchDetail(matchId: string | number): Promise<MatchInfo | null> {
@@ -798,7 +801,7 @@ export async function getPrimeTeams(): Promise<TeamRow[]> {
  *
  * Uses the server-side proxy at /api/auth/verify (mirrors the original
  * teamgeneration.in APK flow). The proxy:
- *   - Calls https://tgsoftware-api.online/api/fantasy/auth/verify
+ *   - Calls https://possible11.com/api/fantasy/auth/verify
  *   - Returns { validToken: true|false|null }
  *       true  → token OK, proceed with transfer
  *       false → token expired, user must re-link via OTP

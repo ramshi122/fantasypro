@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import CryptoJS from "crypto-js";
 
-const BACKEND_URL = "https://tgsoftware-api.online";
+const BACKEND_URL = "https://possible11.com";
 const AES_KEY = "coder_bobby_believer01_tg_software";
 
 function decryptAES(encrypted: string): string {
@@ -52,7 +52,7 @@ function isConfirmedTokenExpiry(errorMsg: string, data: Record<string, unknown>)
 /**
  * Determine if the response data indicates a successful transfer.
  *
- * The tgsoftware-api.online backend proxy has a KNOWN BUG:
+ * The possible11.com backend proxy has a KNOWN BUG:
  * - It returns HTTP 201 + {status: "fail", message: "Something Went Wrong!"}
  *   even when the team WAS actually created on the platform.
  * - This happens because the proxy successfully forwards the request,
@@ -95,7 +95,7 @@ function isTransferSuccess(httpStatus: number, data: Record<string, unknown>): {
   }
 
   // Method 3: HTTP 201 + {status: "fail"} with "Something Went Wrong!"
-  // This is the KNOWN BUG in the tgsoftware-api.online backend proxy.
+  // This is the KNOWN BUG in the possible11.com backend proxy.
   // The team WAS actually created on the platform despite the error.
   // We must treat this as a TENTATIVE SUCCESS (matching original APK behavior).
   if (httpStatus === 201 && (data.status === "fail" || data.status === "error")) {
@@ -196,7 +196,7 @@ const PLATFORM_ENDPOINTS: Record<string, EndpointConfig> = {
   //
   // Calling /api/classic/dream11/addteam with a bulk-transfer payload returns
   // HTTP 404 + {"status":"fail","message":"Error while transfering the team!"}
-  // — confirmed by live smoke test against https://tgsoftware-api.online.
+  // — confirmed by live smoke test against https://possible11.com.
   // It was previously in this chain as a "fallback" — that was a bug:
   //   - 100% guaranteed failure when called (wrong payload shape)
   //   - Caused "404 transfer errors" reported by users

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { checkRateLimit, getClientIP } from "@/lib/security";
 
-const BACKEND_URL = "https://tgsoftware-api.online";
+const BACKEND_URL = "https://possible11.com";
 
 /**
  * Proxy for /api/{platform}/add-match

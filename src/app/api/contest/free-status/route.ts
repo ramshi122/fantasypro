@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const BACKEND_URL = "https://tgsoftware-api.online";
+const BACKEND_URL = "https://possible11.com";
 
 /**
  * Fetch all free contests available for a match + the user's linked account.

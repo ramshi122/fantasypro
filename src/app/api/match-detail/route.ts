@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import CryptoJS from "crypto-js";
 
-const BACKEND_URL = "https://tgsoftware-api.online";
+const BACKEND_URL = "https://possible11.com";
 const AES_KEY = "coder_bobby_believer01_tg_software";
 
 function decryptAES(encrypted: string): string {
@@ -47,14 +47,23 @@ export async function GET(request: Request) {
       return NextResponse.json({ status: "fail", message: "matchId is required" }, { status: 200 });
     }
 
-    console.log(`[MatchDetail] Fetching match ${matchId}...`);
+    console.log(`[MatchDetail] Fetching match ${matchId} from possible11.com...`);
 
-    const res = await fetch(`${BACKEND_URL}/api/fantasy/match/${matchId}`, {
-      method: "GET",
+    // Use possible11.com/admin/api2.php with POST (same as original APK)
+    const res = await fetch(`${BACKEND_URL}/admin/api2.php`, {
+      method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json, text/plain, */*",
       },
+      body: JSON.stringify({
+        action: "getMatchDetails",
+        mid: matchId,
+        uuid: "web-apna-cricket",
+        device: "web",
+        osVersion: "unknown",
+        model: "browser",
+      }),
       signal: AbortSignal.timeout(15000),
       cache: "no-store",
     });

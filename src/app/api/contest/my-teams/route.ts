@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 
-const BACKEND_URL = "https://tgsoftware-api.online";
+const BACKEND_URL = "https://possible11.com";
 
 /**
  * Fetch all teams already created by the user on Dream11/My11Circle for a match.
  *
  * Routes to:
- *   POST https://tgsoftware-api.online/api/fantasy/list-of-teams
+ *   POST https://possible11.com/api/fantasy/list-of-teams
  *   body: { fantasyApp, matchId, authToken }
  *
  * Returns:

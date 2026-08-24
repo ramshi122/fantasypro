@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { decrypt } from "@/lib/crypto";
 
-const BACKEND_URL = "https://tgsoftware-api.online";
+const BACKEND_URL = "https://possible11.com";
 
 /**
  * Classic addteam endpoint — generates a direct transfer link (no OTP required).

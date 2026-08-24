@@ -325,7 +325,7 @@ function lsSet<T>(key: string, value: T): void {
 
 const DEFAULT_SETTINGS: AdminSettings = {
   adminPassword: "", // SECURITY FIX: No longer stored client-side — verified via /api/admin/login
-  apiUrl: "https://tgsoftware-api.online",
+  apiUrl: "https://possible11.com",
   firebaseConfig: JSON.stringify({
     apiKey: "AIzaSyDbaFKRqrD976syNij_fSSuIBSPRtR9vbo",
     authDomain: "revofixer-81a1c.firebaseapp.com",

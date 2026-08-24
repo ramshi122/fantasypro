@@ -2896,7 +2896,7 @@ function MatchesTab() {
               </span>
               <ChevronRight className="w-3 h-3 text-slate-400" />
             </p>
-            <p className="text-[10px] text-violet-300">Scraped live from tgsoftware-api.online · 1-by-1 add</p>
+            <p className="text-[10px] text-violet-300">Scraped live from possible11.com · 1-by-1 add</p>
           </div>
         </div>
         <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-violet-300 hover:bg-violet-800/50" onClick={() => setShowSettings(v => !v)}>
@@ -2913,7 +2913,7 @@ function MatchesTab() {
             </Button>
           </div>
           <div className="text-[9px] text-slate-500 space-y-0.5">
-            <p>✓ API URL: Hidden (tgsoftware-api.online)</p>
+            <p>✓ API URL: Hidden (possible11.com)</p>
             <p>✓ AES Key: Hidden (server-side only)</p>
             <p>✓ Firebase Config: Hidden (revofixer-81a1c) — license-only</p>
             <p>✓ All original fields preserved</p>
