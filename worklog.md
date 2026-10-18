@@ -1654,3 +1654,17 @@ Work Log:
 
 Stage Summary:
 - Remote main is now 7be0f60 with ALL fixes from both sessions: crash guards at 3 levels (route error.tsx, root global-error.tsx, layout GlobalCrashGuard), ReferenceError fixes, generator combo sanitization + filler fix, upstream resilience cache.
+
+---
+Task ID: apk-crash-fix-3 (build verification)
+Agent: Main Agent (Z.ai Code)
+Task: Verify production build works; diagnose Vercel deployment
+
+Work Log:
+- Cloned repo @dd6c14d to /tmp, bun install (926 packages), npx next build → SUCCESS, all routes compiled (/, /api/match-detail, /api/matches, /api/admin/time, etc.).
+- Production https://apna-cricket.vercel.app still serves an OLD deployment: /api/matches returns 3 unnamed matches (old format), /api/match-detail + /api/admin/time return 404 (routes that exist in current code). The Vercel integration has not deployed recent commits (was already stale BEFORE this session — prod showed the old tgsoftware-era UI).
+- Action needed by repo owner: open Vercel dashboard → check the project's Git integration (repo/branch must be ramshi122/fantasypro@main) → trigger a manual "Redeploy" (or reconnect Git). The code builds clean, so a redeploy will ship all fixes.
+- All fixes are committed and pushed to GitHub main (7be0f60 + dd6c14d). Local dev server verified end-to-end after the rebase: 200 OK, 7 matches, match 94775 → 18+16 players via Cricbuzz.
+
+Stage Summary:
+- Code side is DONE and pushed. The only remaining step is infrastructure: Vercel must be (re)connected/redeployed by the owner to ship the fixed build to the APK's URL.
