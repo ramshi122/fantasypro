@@ -21,7 +21,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com data:",
               "img-src 'self' data: https: blob:",
-              "connect-src 'self' https://tgsoftware-api.online https://*.firebaseio.com https://firestore.googleapis.com wss://*.firebaseio.com",
+              "connect-src 'self' https://possible11.com https://tgsoftware-api.online https://*.firebaseio.com https://firestore.googleapis.com wss://*.firebaseio.com",
               "frame-ancestors 'none'",
               "base-uri 'self'",
               "form-action 'self'",

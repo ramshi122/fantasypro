@@ -471,8 +471,30 @@ export function shouldShowMatchCard(match: MatchInfo | any): boolean {
 }
 
 export async function getMatches(sport: Sport): Promise<MatchInfo[]> {
-  // Use possible11.com/admin/api2.php (same as original APK)
-  // POST with action=getMatches, sport, matchState
+  // Use server-side proxy /api/matches to avoid CSP issues and CORS problems.
+  // The proxy handles decryption server-side and returns clean JSON.
+  // Falls back to direct API_BASE call if proxy fails.
+  try {
+    // PRIMARY: server-side proxy
+    const proxyRes = await fetch(`/api/matches?sport=${sport}`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(15000),
+    });
+    if (proxyRes.ok) {
+      const proxyBody = await proxyRes.json();
+      if (proxyBody.status === "success" && Array.isArray(proxyBody.data) && proxyBody.data.length > 0) {
+        console.log(`[getMatches] ✅ Proxy returned ${proxyBody.data.length} matches`);
+        return proxyBody.data.map(normalizeMatch);
+      }
+    }
+    console.warn(`[getMatches] ⚠️ Proxy returned status=${proxyRes.status} or empty data, falling back to direct API`);
+  } catch (proxyErr: any) {
+    console.warn(`[getMatches] ⚠️ Proxy failed: ${proxyErr?.message}, falling back to direct API`);
+  }
+
+  // FALLBACK: direct call to possible11.com/admin/api2.php
   try {
     const res = await fetch(`${API_BASE}/admin/api2.php`, {
       method: "POST",
@@ -504,14 +526,14 @@ export async function getMatches(sport: Sport): Promise<MatchInfo[]> {
     }
 
     if (data.length > 0) {
-      console.log(`[getMatches] ✅ Found ${data.length} matches from possible11.com`);
+      console.log(`[getMatches] ✅ Found ${data.length} matches from possible11.com (direct)`);
       return data.map(normalizeMatch);
     }
 
-    console.log("[getMatches] ⚠️ possible11.com returned 0 matches");
+    console.log("[getMatches] ⚠️ possible11.com returned 0 matches (direct)");
     return [];
   } catch (err: any) {
-    console.error("[getMatches] Error:", err?.message);
+    console.error("[getMatches] Error (direct):", err?.message);
     return [];
   }
 }
