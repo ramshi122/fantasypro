@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { decrypt } from "@/lib/crypto";
 
-const BACKEND_URL = "https://possible11.com";
+const BACKEND_URL = "https://tgsoftware-api.online"; // FIX: fantasy endpoints (OTP/auth/transfer/contest) live here — possible11.com 404s them all
 
 /**
  * Classic addteam endpoint — generates a direct transfer link (no OTP required).

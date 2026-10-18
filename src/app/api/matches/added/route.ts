@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const BACKEND_URL = "https://possible11.com";
+const BACKEND_URL = "https://tgsoftware-api.online"; // FIX: fantasy endpoints (OTP/auth/transfer/contest) live here — possible11.com 404s them all
 
 /**
  * Proxy for /api/{platform}/added-matches

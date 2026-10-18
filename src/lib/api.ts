@@ -56,6 +56,29 @@ import {
  */
 export const API_BASE = "https://possible11.com";
 
+/**
+ * FANTASY API BASE — the real fantasy-platform backend (Dream11 / My11Circle /
+ * Jumbo / MyTeam11 / Vision11 OTP, tokens, transfers, contest joining).
+ *
+ * ROOT CAUSE FIX (OTP not receiving — Dream11 & My11Circle):
+ *   When API_BASE was switched to possible11.com (commit 2735cae) to get real
+ *   match data, ALL rawFetch calls were redirected there too. But
+ *   possible11.com does NOT host any /api/fantasy/* or /api/classic/* or
+ *   /api/{app}/contest/* endpoints — they return an HTML 404 page:
+ *     POST https://possible11.com/api/fantasy/send-otp   → 404 (HTML)
+ *     POST https://possible11.com/api/fantasy/verify-otp → 404 (HTML)
+ *   So the "Send OTP" request silently died before any SMS could be sent.
+ *
+ *   The fantasy endpoints (send-otp / verify-otp / auth/verify / addteam /
+ *   join-contest / teamlists / promotions) are live on tgsoftware-api.online
+ *   — verified by live probing (send-otp returns structured JSON errors for
+ *   bad input, join-contest returns 401 for missing token, matches 200).
+ *   This is also the backend the ORIGINAL APK used, and it is already
+ *   whitelisted in the CSP (next.config.ts connect-src) and sends
+ *   Access-Control-Allow-Origin: * — so browser calls are allowed.
+ */
+export const FANTASY_API_BASE = "https://tgsoftware-api.online";
+
 export type Sport = "cricket" | "football" | "basketball" | "kabaddi";
 export type FantasyApp = "dream11" | "my11circle" | "myteam11" | "vision11" | "jumbo";
 
@@ -256,8 +279,12 @@ interface ApiResponse {
   [k: string]: unknown;
 }
 
-async function rawFetch(path: string, init?: RequestInit): Promise<ApiResponse> {
-  const url = `${API_BASE}${path}`;
+async function rawFetch(
+  path: string,
+  init?: RequestInit,
+  base: string = API_BASE
+): Promise<ApiResponse> {
+  const url = `${base}${path}`;
   const res = await fetch(url, {
     ...init,
     headers: {
@@ -266,6 +293,7 @@ async function rawFetch(path: string, init?: RequestInit): Promise<ApiResponse> 
       ...(init?.headers || {}),
     },
     cache: "no-store",
+    signal: init?.signal,
   });
 
   // Try to parse the body even on error responses.
@@ -564,7 +592,7 @@ export async function getMatchDetail(matchId: string | number): Promise<MatchInf
 
   // Fallback: rawFetch to backend + manual decrypt ALL player strings
   try {
-    const resp = await rawFetch(`/api/fantasy/match/${matchId}`, { method: "GET" });
+    const resp = await rawFetch(`/api/fantasy/match/${matchId}`, { method: "GET" }, FANTASY_API_BASE);
     if (resp.status && resp.status !== "success") return null;
     const data = unpackData<MatchInfo>(resp);
     if (!data) return null;
@@ -594,7 +622,7 @@ export async function getMatchDetail(matchId: string | number): Promise<MatchInf
 }
 
 export async function getPromotions(): Promise<PromotionItem[]> {
-  const resp = await rawFetch<ApiResponse>(`/api/promotion/getlist`, { method: "GET" });
+  const resp = await rawFetch<ApiResponse>(`/api/promotion/getlist`, { method: "GET" }, FANTASY_API_BASE);
   if (resp.status && resp.status !== "success") return [];
   const data = unpackData<PromotionItem[] | PromotionItem>(resp);
   const normalize = (p: any): PromotionItem => ({
@@ -617,7 +645,7 @@ export async function getExpertTeams(): Promise<TeamRow[]> {
   const resp = await rawFetch<ApiResponse>(`/api/expert/teamlist`, {
     method: "POST",
     body: buildEncryptedBody({}),
-  });
+  }, FANTASY_API_BASE);
   if (resp.status !== "success") return [];
   const matchIds = (resp.expertTeamData || []) as string[];
   if (matchIds.length === 0) return [];
@@ -714,7 +742,7 @@ export async function getExpertTeams(): Promise<TeamRow[]> {
 
 export async function getPrimeTeams(): Promise<TeamRow[]> {
   // Step 1: Get list of match IDs that have prime teams
-  const resp = await rawFetch<ApiResponse>(`/api/primeteam/teamlist`, { method: "GET" });
+  const resp = await rawFetch<ApiResponse>(`/api/primeteam/teamlist`, { method: "GET" }, FANTASY_API_BASE);
   if (resp.status !== "success") return [];
   const matchIds = (Array.isArray(resp.data) ? resp.data : []) as string[];
   if (matchIds.length === 0) return [];
@@ -2276,7 +2304,7 @@ export async function joinContest(params: {
         contestId: params.contestId,
         teamIds: params.teamIds,
       }),
-    });
+    }, FANTASY_API_BASE);
     return {
       contestId: params.contestId,
       success: resp.status === "success",
@@ -2571,32 +2599,100 @@ export interface SendOtpResult {
   resends_left?: number;
 }
 
+/**
+ * Map low-level network failures to clear, user-facing OTP error messages.
+ * (Before this fix the user just saw "Network error" / "HTTP 404 Not Found"
+ * and had no idea why the OTP never arrived.)
+ */
+function otpNetworkErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err || "");
+  if (msg.includes("404")) {
+    return "OTP service is temporarily unavailable (backend route changed). Please try again later.";
+  }
+  if (msg.includes("timeout") || msg.includes("aborted") || msg.toLowerCase().includes("abort")) {
+    return "OTP service timed out. Check your internet connection and try again.";
+  }
+  if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("load failed")) {
+    return "Cannot reach the OTP service. Check your internet connection and try again.";
+  }
+  if (msg.includes("500") || msg.includes("502") || msg.includes("503")) {
+    return "OTP service is busy right now. Please try again in a minute.";
+  }
+  return msg || "Failed to send OTP. Please try again.";
+}
+
+/**
+ * The OTP envelope data may arrive as a plain object OR as an AES-encrypted
+ * string ("U2FsdGVk..."). Handle both — the original APK read
+ * `response.data.data.reasonCode` / `.challenge` directly from the plaintext
+ * envelope, so we must never choke on an encrypted variant either.
+ */
+function extractOtpData(res: ApiResponse): Record<string, unknown> {
+  const d = res.data;
+  if (d && typeof d === "object") return d as Record<string, unknown>;
+  if (typeof d === "string" && d.startsWith("U2FsdGVk")) {
+    try {
+      const dec = decrypt<Record<string, unknown>>(d);
+      if (dec && typeof dec === "object") return dec;
+    } catch { /* fall through */ }
+  }
+  if (typeof d === "string") {
+    try {
+      const parsed = JSON.parse(d);
+      if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+    } catch { /* fall through */ }
+  }
+  return {};
+}
+
 export async function sendFantasyOtp(params: {
   fantasyApp: FantasyApp;
   mobileNumber: string;
 }): Promise<SendOtpResult> {
-  const res = await rawFetch<ApiResponse>(`/api/fantasy/send-otp`, {
-    method: "POST",
-    body: JSON.stringify({
-      fantasyApp: params.fantasyApp,
-      mobileNumber: params.mobileNumber,
-    }),
-  });
-  if (res.status === "success" && res.data && typeof res.data === "object") {
-    const d = res.data as Record<string, unknown>;
-    return {
-      status: "success",
-      message: (res.message as string) || "",
-      state: d.state as string | undefined,
-      reasonCode: d.reasonCode as number | undefined,
-      challenge: d.challenge as string | undefined,
-      login_auth_token: d.login_auth_token as string | undefined,
-      userId: d.userId as string | undefined,
-      retries_left: d.retries_left as number | undefined,
-      resends_left: d.resends_left as number | undefined,
-    };
+  try {
+    // 20s timeout + 1 automatic retry on transient network failure —
+    // OTP requests must not die silently on a flaky mobile connection.
+    const doSend = () =>
+      rawFetch<ApiResponse>(
+        `/api/fantasy/send-otp`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            fantasyApp: params.fantasyApp,
+            mobileNumber: params.mobileNumber,
+          }),
+          signal: AbortSignal.timeout(20000),
+        },
+        FANTASY_API_BASE
+      );
+
+    let res: ApiResponse;
+    try {
+      res = await doSend();
+    } catch (firstErr) {
+      console.warn("[sendOtp] first attempt failed, retrying once:", firstErr);
+      res = await doSend();
+    }
+
+    if (res.status === "success") {
+      const d = extractOtpData(res);
+      return {
+        status: "success",
+        message: (res.message as string) || "",
+        state: d.state as string | undefined,
+        reasonCode: d.reasonCode as number | undefined,
+        challenge: d.challenge as string | undefined,
+        login_auth_token: d.login_auth_token as string | undefined,
+        userId: d.userId as string | undefined,
+        retries_left: d.retries_left as number | undefined,
+        resends_left: d.resends_left as number | undefined,
+      };
+    }
+    return { status: "fail", message: (res.message as string) || "Failed to send OTP" };
+  } catch (err: unknown) {
+    console.error("[sendOtp] failed:", err);
+    return { status: "fail", message: otpNetworkErrorMessage(err) };
   }
-  return { status: "fail", message: (res.message as string) || "Failed to send OTP" };
 }
 
 export interface VerifyOtpResult {
@@ -2641,26 +2737,36 @@ export async function verifyFantasyOtp(params: {
     body.userId = params.userId;
   }
 
-  const res = await rawFetch<ApiResponse>(`/api/fantasy/verify-otp`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-  if (res.status === "success" && res.data && typeof res.data === "object") {
-    const d = res.data as Record<string, unknown>;
-    return {
-      status: "success",
-      message: (res.message as string) || "",
-      token: d.token as string | undefined,
-      my11circleChallenge: d.my11circleChallenge as string | undefined,
-      my11circleUserId: d.my11circleUserId as string | undefined,
-      mobileNumber: params.mobileNumber,
-      // Dream11 subscription fields — present when the user has a paid Dream11 plan
-      maxAllowedTeam: typeof d.maxAllowedTeam === "number" ? d.maxAllowedTeam : null,
-      subscriptionTier: typeof d.subscriptionTier === "string" ? d.subscriptionTier : null,
-      d11SubscriptionActive: typeof d.d11SubscriptionActive === "boolean" ? d.d11SubscriptionActive : null,
-    };
+  try {
+    const res = await rawFetch<ApiResponse>(
+      `/api/fantasy/verify-otp`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(25000),
+      },
+      FANTASY_API_BASE
+    );
+    if (res.status === "success") {
+      const d = extractOtpData(res);
+      return {
+        status: "success",
+        message: (res.message as string) || "",
+        token: d.token as string | undefined,
+        my11circleChallenge: d.my11circleChallenge as string | undefined,
+        my11circleUserId: d.my11circleUserId as string | undefined,
+        mobileNumber: params.mobileNumber,
+        // Dream11 subscription fields — present when the user has a paid Dream11 plan
+        maxAllowedTeam: typeof d.maxAllowedTeam === "number" ? d.maxAllowedTeam : null,
+        subscriptionTier: typeof d.subscriptionTier === "string" ? d.subscriptionTier : null,
+        d11SubscriptionActive: typeof d.d11SubscriptionActive === "boolean" ? d.d11SubscriptionActive : null,
+      };
+    }
+    return { status: "fail", message: (res.message as string) || "Invalid OTP" };
+  } catch (err: unknown) {
+    console.error("[verifyOtp] failed:", err);
+    return { status: "fail", message: otpNetworkErrorMessage(err) };
   }
-  return { status: "fail", message: (res.message as string) || "Invalid OTP" };
 }
 
 /* ---------- Direct Team Transfer (NO auth needed — link generation) ---------- */
@@ -2689,7 +2795,7 @@ export async function generateDirectTransferLink(params: {
         vicecaptainData: params.viceCaptainId,
         generateLinkFlag: "general",
       }),
-    });
+    }, FANTASY_API_BASE);
     if (res.status === "success" && res.data) {
       let link: string | undefined;
       if (typeof res.data === "string") {

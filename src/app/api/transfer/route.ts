@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import CryptoJS from "crypto-js";
 
-const BACKEND_URL = "https://possible11.com";
+const BACKEND_URL = "https://tgsoftware-api.online"; // FIX: fantasy endpoints (OTP/auth/transfer/contest) live here — possible11.com 404s them all
 const AES_KEY = "coder_bobby_believer01_tg_software";
 
 function decryptAES(encrypted: string): string {
