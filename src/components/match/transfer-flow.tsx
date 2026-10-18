@@ -1304,6 +1304,11 @@ function TransferButtons({
 
   // Tier checks
   const my11Tiers = ["match_full", "weekly", "monthly", "elite", "lifetime"];
+  // CRASH FIX: `canMy11` was used in the JSX below but never defined here —
+  // rendering TransferButtons threw "ReferenceError: canMy11 is not defined",
+  // which white-screened the whole app for any user with a saved team
+  // (reported as "APK crash"). Derived the same way as the inline variant above.
+  const canMy11 = isLicensed && !!licenseTier && my11Tiers.includes(licenseTier);
   // Join Contest: available for ALL licensed users (including trial)
   // Per user spec: "Join contest originalil premiim lock ayappol idilum join contest kitunilla"
   // Free contests should be accessible to any licensed user.

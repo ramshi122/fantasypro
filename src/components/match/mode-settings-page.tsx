@@ -295,6 +295,13 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
       toast.error(`Total must be 11 (current: ${c.wk + c.bat + c.ar + c.bowl})`);
       return;
     }
+    // CRASH FIX: also enforce role minimums — a combo like WK 0 / BAT 11
+    // passed the sum check but every team built from it failed role-balance
+    // validation (needs ≥1 WK, ≥2 BAT, ≥1 AR, ≥2 BOWL) → 0/20 teams.
+    if (c.wk < 1 || c.bat < 2 || c.ar < 1 || c.bowl < 2) {
+      toast.error("Invalid combo — minimum: WK 1, BAT 2, AR 1, BOWL 2 (fantasy rules)");
+      return;
+    }
     const isDup = customCombos.some(existing =>
       existing.wk === c.wk && existing.bat === c.bat && existing.ar === c.ar && existing.bowl === c.bowl
     );
@@ -401,7 +408,7 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
     setSaved(false);
     try {
       const detail = await getMatchDetail(matchId);
-      if (!detail) { toast.error("Could not load player data"); setGenerating(false); return; }
+      if (!detail) { toast.error("Could not load match data — check internet and retry"); setGenerating(false); return; }
 
       // Detect lineup status
       const lineupStatus = (detail as any).lineup_status;
@@ -414,7 +421,12 @@ export function ModeSettingsPage({ mode, match, matchId, team1Name, team2Name, t
       // Just filter out any remaining non-object entries (shouldn't be any, but safety check).
       allPlayers = allPlayers.filter((p: any) => p && typeof p === "object" && p.name);
 
-      if (allPlayers.length < 11) { toast.error(`Only ${allPlayers.length} players available`); setGenerating(false); return; }
+      if (allPlayers.length === 0) {
+        toast.error("Squad not published yet — teams can be generated once squads are announced. Pull-to-refresh in a few minutes.");
+        setGenerating(false);
+        return;
+      }
+      if (allPlayers.length < 11) { toast.error(`Only ${allPlayers.length} players available — squad is still loading. Try again in a minute.`); setGenerating(false); return; }
 
       // === LINEUP DETECTION + PLAYER FILTERING ===
       // Per user spec: "LINEUP OUT / BENCH / NOT PLAYING = HARD BLOCK"

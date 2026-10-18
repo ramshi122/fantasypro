@@ -30,36 +30,108 @@ const CB_BASE = "https://www.cricbuzz.com";
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
+/* ================================================================== */
+/* RESILIENCE LAYER (stale-while-revalidate memory cache)              */
+/* ================================================================== */
+/* Upstream sources are FLAKY (observed in production):                */
+/*  - possible11 getMatches / getMatchDetails intermittently time out  */
+/*    or return crickid=0 for a match that had a valid crickid a       */
+/*    minute earlier                                                   */
+/*  - Cricbuzz pages occasionally fail / serve different structures    */
+/* Every upstream failure previously reached the user instantly →      */
+/* "players and data unavailable" → broken generation → reported as    */
+/* "APK crash". The cache keeps the LAST GOOD data and serves it when  */
+/* upstream fails, so the app keeps working through upstream hiccups.  */
+
+interface CacheEntry<T> { data: T; ts: number; }
+
+const MATCHES_FRESH_MS = 60_000;         // 1 min — fresh window
+const MATCHES_STALE_MS = 6 * 3600_000;   // up to 6 h old on upstream failure
+const DETAIL_FRESH_MS = 3 * 60_000;      // 3 min — fresh window (squads change rarely)
+const DETAIL_STALE_MS = 12 * 3600_000;   // up to 12 h old on upstream failure
+const MAX_CACHE_ENTRIES = 300;
+
+const matchesCache = new Map<string, CacheEntry<Awaited<ReturnType<typeof fetchP11Matches>>>>();
+const matchDetailCache = new Map<string, CacheEntry<Awaited<ReturnType<typeof buildMatchDetail>>>>();
+/** matchId → resolved Cricbuzz id. Once resolved, NEVER forgotten — possible11
+ *  intermittently returns crickid=0 for matches it previously resolved. */
+const crickidCache = new Map<string, string>();
+
+function trimCache<T>(m: Map<string, CacheEntry<T>>) {
+  if (m.size <= MAX_CACHE_ENTRIES) return;
+  const entries = [...m.entries()].sort((a, b) => a[1].ts - b[1].ts);
+  for (let i = 0; i < entries.length - MAX_CACHE_ENTRIES; i++) m.delete(entries[i][0]);
+}
+
+/**
+ * Fetch matches with stale-while-revalidate: fresh → return; upstream fail →
+ * return last-good copy if not too old.
+ */
+export async function getMatchesCached(sport = "cricket"): Promise<{ matches: Awaited<ReturnType<typeof fetchP11Matches>>; fromCache: boolean }> {
+  const cached = matchesCache.get(sport);
+  if (cached && Date.now() - cached.ts < MATCHES_FRESH_MS) {
+    return { matches: cached.data, fromCache: true };
+  }
+  try {
+    const matches = await fetchP11Matches(sport);
+    if (matches.length > 0) {
+      matchesCache.set(sport, { data: matches, ts: Date.now() });
+      trimCache(matchesCache);
+      return { matches, fromCache: false };
+    }
+    // Upstream returned EMPTY (common when it is having a bad moment).
+    // Serve last-good data instead of wiping the home screen.
+    if (cached && Date.now() - cached.ts < MATCHES_STALE_MS) {
+      console.warn(`[cache] ${sport} matches upstream EMPTY — serving ${Math.round((Date.now() - cached.ts) / 60000)}min-old cached list`);
+      return { matches: cached.data, fromCache: true };
+    }
+    return { matches, fromCache: false };
+  } catch (err) {
+    if (cached && Date.now() - cached.ts < MATCHES_STALE_MS) {
+      console.warn(`[cache] ${sport} matches upstream FAILED — serving cached list:`, err instanceof Error ? err.message : err);
+      return { matches: cached.data, fromCache: true };
+    }
+    throw err;
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* possible11                                                          */
 /* ------------------------------------------------------------------ */
 
 export async function p11Post<T = unknown>(action: string, extra: Record<string, unknown> = {}): Promise<T | null> {
-  try {
-    const res = await fetch(P11_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json, text/plain, */*" },
-      body: JSON.stringify({
-        action,
-        uuid: "web-apna-cricket",
-        device: "web",
-        osVersion: "unknown",
-        model: "browser",
-        ...extra,
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(15000),
-    });
-    const text = await res.text();
+  // Upstream is flaky — retry once with a short backoff before giving up.
+  for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      return JSON.parse(text) as T;
-    } catch {
+      const res = await fetch(P11_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json, text/plain, */*" },
+        body: JSON.stringify({
+          action,
+          uuid: "web-apna-cricket",
+          device: "web",
+          osVersion: "unknown",
+          model: "browser",
+          ...extra,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      });
+      const text = await res.text();
+      try {
+        return JSON.parse(text) as T;
+      } catch {
+        // Non-JSON response (upstream glitch / HTML error page) — retry once
+        if (attempt < 2) { await new Promise((r) => setTimeout(r, 800)); continue; }
+        return null;
+      }
+    } catch (err) {
+      if (attempt < 2) { await new Promise((r) => setTimeout(r, 800)); continue; }
+      console.error(`[p11] ${action} failed:`, err instanceof Error ? err.message : err);
       return null;
     }
-  } catch (err) {
-    console.error(`[p11] ${action} failed:`, err instanceof Error ? err.message : err);
-    return null;
   }
+  return null;
 }
 
 export interface P11Match {
@@ -275,21 +347,11 @@ const slugify = (s: string) =>
 /**
  * Fallback: locate the Cricbuzz match id by team names + codes in live/upcoming lists.
  *
- * PER user spec: "Now issu are after linup only team genereting i want before linup
- * and after need team generete" — for matches like IN-W vs ZM-W (id 94694) the
- * possible11 backend returns crickid="0" so we have to discover the Cricbuzz id
- * ourselves by scraping Cricbuzz's live/upcoming pages.
- *
- * The previous version only matched the slugged full team names ("india-women",
- * "zimbabwe-women"). That missed slugs like `zimw-vs-indw-2nd-t20i-zimbabwe-women-
- * tour-of-india-2026` which use the abbreviated team codes INW / ZMW (no "india-women"
- * substring at all → score 1 → below threshold 2 → returned null → 0 players →
- * team generation blocked before lineup).
- *
- * FIX: accept BOTH full names AND short codes (cod1/cod2 from possible11) as
- * needles, generate dash-stripped variants so "IN-W" matches "inw" inside the
- * slug, and lower the threshold to score >= 1 (any single needle match) when we
- * have multiple needles — a single confident match is much better than nothing.
+ * MERGED (both sessions): accepts BOTH full names AND short codes (cod1/cod2),
+ * dash-stripped variants ("IN-W" → "inw") AND word-acronyms ("England Champions"
+ * → "ec") so slugs like `zimw-vs-indw-2nd-t20i-...` and
+ * `england-champions-vs-west-indies-champions-...` both resolve even when
+ * possible11 returns crickid="0".
  */
 export async function findCricbuzzId(
   names: string[],
@@ -301,7 +363,6 @@ export async function findCricbuzzId(
     const slugged = slugify(n);
     if (slugged.length >= 2) {
       needleSet.add(slugged);
-      // Also add dash-stripped form so "India-Women" → "indiawomen", "IN-W" → "INW"
       const noDash = slugged.replace(/-/g, "");
       if (noDash.length >= 2) needleSet.add(noDash);
     }
@@ -315,6 +376,14 @@ export async function findCricbuzzId(
     }
   }
   const needles = Array.from(needleSet);
+  // Word-acronyms from multi-word full names ("England Champions" → "ec")
+  const acronyms = new Set<string>();
+  for (const n of names.filter(Boolean)) {
+    const words = n.trim().split(/\s+/).filter(Boolean);
+    if (words.length >= 2) {
+      acronyms.add(words.map((w) => slugify(w)[0] || "").join(""));
+    }
+  }
   if (needles.length === 0) return null;
 
   // We require either:
@@ -335,12 +404,20 @@ export async function findCricbuzzId(
       let best: { id: string; score: number; longestNeedle: number } | null = null;
       while ((m = re.exec(html))) {
         const slug = m[2];
-        // Score = number of DISTINCT needles that match
-        const matched = needles.filter((n) => slug.includes(n));
+        // Score = number of DISTINCT needles that match; acronym fallback for
+        // multi-word names whose slug form is absent from the match slug.
+        let matched = needles.filter((n) => slug.includes(n));
+        if (matched.length === 0) {
+          for (const a of acronyms) {
+            if (a.length >= 2 && slug.replace(/-/g, "").startsWith(a)) {
+              matched = [a];
+              break;
+            }
+          }
+        }
         if (matched.length === 0) continue;
         const score = matched.length;
         const longestNeedle = Math.max(...matched.map((n) => n.length));
-        // Track the best candidate by (score desc, longestNeedle desc)
         if (
           !best ||
           score > best.score ||
@@ -350,7 +427,7 @@ export async function findCricbuzzId(
         }
       }
       if (!best) continue;
-      // Acceptance threshold: 2+ needles matched OR a single 4+ char needle matched
+      // Acceptance: 2+ needles OR a single 4+ char needle (codes like "inw"/"zimw")
       if (best.score >= 2 || (best.score === 1 && best.longestNeedle >= minNeedleLenForSolo)) {
         return best.id;
       }
@@ -616,10 +693,45 @@ function parsePlayersFromPreview(
 /* ------------------------------------------------------------------ */
 
 export async function buildMatchDetail(matchId: string, sport = "cricket") {
-  const [matches, detailsRaw] = await Promise.all([
-    fetchP11Matches(sport),
+  // === STALE-WHILE-REVALIDATE WRAPPER ===
+  // Fresh (< 3 min) → return cache immediately. Otherwise try upstream;
+  // if upstream fails or returns 0 players while we HAVE a good cached copy,
+  // serve the cached copy (up to 12 h old) instead of breaking the UI.
+  const cachedDetail = matchDetailCache.get(String(matchId));
+  if (cachedDetail && Date.now() - cachedDetail.ts < DETAIL_FRESH_MS) {
+    return cachedDetail.data;
+  }
+
+  try {
+    const fresh = await buildMatchDetailUpstream(matchId, sport);
+    const totalPlayers = fresh.left_team_players.length + fresh.right_team_players.length;
+    if (totalPlayers > 0) {
+      matchDetailCache.set(String(matchId), { data: fresh, ts: Date.now() });
+      trimCache(matchDetailCache);
+      return fresh;
+    }
+    // Upstream returned 0 players (squads genuinely not published OR upstream
+    // glitch). If we have a cached copy with players — serve it.
+    if (cachedDetail && cachedDetail.data.left_team_players.length + cachedDetail.data.right_team_players.length > 0) {
+      console.warn(`[cache] match ${matchId} upstream 0 players — serving cached squads (${Math.round((Date.now() - cachedDetail.ts) / 60000)}min old)`);
+      return cachedDetail.data;
+    }
+    return fresh;
+  } catch (err) {
+    if (cachedDetail) {
+      console.warn(`[cache] match ${matchId} upstream FAILED — serving cached detail:`, err instanceof Error ? err.message : err);
+      return cachedDetail.data;
+    }
+    throw err;
+  }
+}
+
+async function buildMatchDetailUpstream(matchId: string, sport = "cricket") {
+  const [matchesResult, detailsRaw] = await Promise.all([
+    getMatchesCached(sport),
     p11Post<any>("getMatchDetails", { mid: matchId }),
   ]);
+  const matches = matchesResult.matches;
   const base = matches.find((m) => String(m.id) === String(matchId));
   const details: Record<string, any> | null = Array.isArray(detailsRaw)
     ? detailsRaw[0] ?? null
@@ -633,17 +745,25 @@ export async function buildMatchDetail(matchId: string, sport = "cricket") {
   const team2Full = base?.team2?.name;
 
   // Resolve the Cricbuzz id (possible11 provides it as `crickid`)
-  // PER user spec: pass BOTH the full team names AND the short codes (cod1/cod2,
-  // e.g. "IN-W" / "ZM-W") so findCricbuzzId can match slugs like
-  // `zimw-vs-indw-2nd-t20i-zimbabwe-women-tour-of-india-2026` where the slug
-  // uses the abbreviated codes INW/ZMW instead of full names.
-  let cricbuzzId: string | null = details?.crickid ? String(details.crickid) : null;
-  if (!cricbuzzId || cricbuzzId === "0") {
-    const teamCodes = [team1Short, team2Short].filter(Boolean);
+  // RESILIENCE (merged): possible11 intermittently returns crickid=0 for matches
+  // it previously resolved fine. Once resolved, cache the id FOREVER so the
+  // flaky crickid field can never wipe player data again. Also pass BOTH full
+  // names AND short codes (cod1/cod2, e.g. "IN-W"/"ZM-W") so findCricbuzzId can
+  // match slugs that use abbreviated codes.
+  let cricbuzzId: string | null = details?.crickid && String(details.crickid) !== "0" ? String(details.crickid) : null;
+  if (cricbuzzId) {
+    crickidCache.set(String(matchId), cricbuzzId);
+  } else {
+    cricbuzzId = crickidCache.get(String(matchId)) || null;
+    if (cricbuzzId) console.log(`[match-detail] ${matchId}: crickid missing/0 upstream — using cached Cricbuzz id ${cricbuzzId}`);
+  }
+  if (!cricbuzzId) {
+    const teamCodes = [team1Short, team2Short].filter(Boolean) as string[];
     cricbuzzId = await findCricbuzzId(
       [team1Full || "", team2Full || ""],
-      teamCodes as string[]
+      teamCodes
     );
+    if (cricbuzzId) crickidCache.set(String(matchId), cricbuzzId);
   }
 
   const squads = cricbuzzId ? await fetchCricbuzzSquads(cricbuzzId) : null;

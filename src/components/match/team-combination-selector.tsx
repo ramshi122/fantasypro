@@ -78,9 +78,29 @@ export function TeamCombinationSelector({
       if (saved) {
         const parsed = JSON.parse(saved) as RoleCombo[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setSelectedCombos(parsed);
-          onCombosChange(parsed);
-          return;
+          // CRASH FIX: validate saved combos before using them.
+          // A previously-saved invalid combo (e.g. WK 0 / BAT 11 / AR 0 / BOWL 0)
+          // made EVERY generated team fail role-balance validation → 0/20 teams
+          // → emergency fill garbage → app appeared broken/crashed.
+          // A valid combo: sums to 11, all counts ≥ 0, WK ≥ 1, BAT ≥ 2, AR ≥ 1, BOWL ≥ 2.
+          const isValidCombo = (c: RoleCombo) =>
+            c &&
+            Number.isFinite(c.wk) && Number.isFinite(c.bat) && Number.isFinite(c.ar) && Number.isFinite(c.bowl) &&
+            c.wk >= 0 && c.bat >= 0 && c.ar >= 0 && c.bowl >= 0 &&
+            c.wk + c.bat + c.ar + c.bowl === 11 &&
+            c.wk >= 1 && c.bat >= 2 && c.ar >= 1 && c.bowl >= 2;
+          const valid = parsed.filter(isValidCombo);
+          if (valid.length !== parsed.length) {
+            console.warn(`[TeamCombinationSelector] Dropped ${parsed.length - valid.length} invalid saved combo(s)`);
+            try {
+              localStorage.setItem(storageKey, JSON.stringify(valid));
+            } catch {}
+          }
+          if (valid.length > 0) {
+            setSelectedCombos(valid);
+            onCombosChange(valid);
+            return;
+          }
         }
       }
     } catch {}

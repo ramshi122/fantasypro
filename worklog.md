@@ -1597,3 +1597,43 @@ Stage Summary:
     2. Vercel production crash protection: previously any client-side error would show the raw white "Application error" page because there were zero error boundaries at route/root level. Fixed by adding src/app/error.tsx (route boundary), src/app/global-error.tsx (root boundary), and wrapping page.tsx main content in the existing ErrorBoundary component (defense in depth).
 - Users will now see a friendly dark recovery UI with the actual error message and three retry options (Try again / Reload / Clear cache & reload) instead of the raw white error page. Their license + auth are preserved across recovery.
 - Build is clean (no new TS errors), all servers return HTTP 200, fix is pushed to origin/main (28def92).
+Task ID: player-data-fix-2
+Agent: Main Agent (Z.ai Code)
+Task: Fix "players and data unavailable" in fantasypro — diagnose, fix, and push to GitHub (repo: ramshi122/fantasypro)
+
+Work Log:
+- Pulled latest main (2735cae). Found uncommitted local changes (an earlier player-data fix) + a broken dev-server state.
+- Probed upstream possible11.com api2.php: getMatches works with full payload (sport/matchState/uuid/device); getPlayers returns MASKED placeholder rows ("/ / / / /") for pre-lineup matches; getMatchDetails returns array with crickid = Cricbuzz match id.
+- Verified Cricbuzz /cricket-match-squads/{id} page structure: squads data lives in Next.js RSC flight chunks; extraction pipeline confirmed working for matches with published squads.
+- Discovered a parallel session had pushed 2299137 ("real squads via Cricbuzz") which introduced src/lib/match-data-server.ts (server-side p11 calls + Cricbuzz squad parse + findCricbuzzId fallback). Initially suspected a syntax error ("const atches,...") — disproved via od -c byte dump (tool-output display artifact eats "[m" sequences).
+- Ran remote version live: 94692 (IN-W vs ZM-W) → 15+15 real players via Cricbuzz ✓, but 94693 (AFG vs ZIM, squads not yet published anywhere) → 0 players (players_source: "none") ✗ — the remaining gap.
+- Added 3rd fallback parsePlayersFromPreview() to src/lib/match-data-server.ts: parses REAL player names + approximate roles from the possible11 preview article (detail/latest HTML) — "(XXX) Team Updates" sections, role headings (Opening Batters/Wicketkeeper/Spin Bowlers…), "X and Y will open…" patterns, stopword filtering, BAT→WK upgrade on re-mention, captain tagging, section cut at Match Prediction/Expert Advice boundary.
+- Fixed TS types (preview players cast to buildPlayers element shape; let team1Short/team2Short; added players_source "preview" + squad_status flag).
+- Rebased onto newer origin/main (4636cc1 — startTime crash fix, no conflicts) and pushed: 4636cc1..604f582 main -> main (token used inline, not persisted).
+- Restarted dev server; verified post-push: /api/matches → 8 real matches; 94692 → 15+15 (cricbuzz, lineup=1 — playing XI now announced); 94693 → 9+8 (preview: Ibrahim Zadran, Rahmanullah Gurbaz [WK], Rahmat Shah [C], …); tsc + eslint clean on changed file.
+
+Stage Summary:
+- Player data pipeline now has 3 server-side sources: possible11 getPlayers (post-lineup) → Cricbuzz squads via crickid (pre-lineup, published) → possible11 preview-article parser (pre-lineup, squads not yet published anywhere).
+- Matches list loads server-side (no CORS/ISP issues); match cards show real teams/flags/countdowns.
+- Commit 604f582 pushed to GitHub main. Browser E2E verified earlier in session: home → match → 30 players → generate 20 teams OK.
+
+---
+Task ID: apk-crash-fix
+Agent: Main Agent (Z.ai Code)
+Task: "Apk crash fix propper" — find and fix every crash path in the app (WebAPK users), verify E2E, push to GitHub
+
+Work Log:
+- Reproduced the full user flow in a browser with mobile emulation + fresh storage: license wall → activate key → home → match detail → auto-generate 20 teams.
+- BUG 1 (CRITICAL CRASH #1 — sweep-generator.ts:1766): `ReferenceError: _qualityRejected is not defined` — the Final Generation Summary log referenced a variable that was never declared. Threw at the END of every generateSweep() call → UI showed "Generation failed" / app appeared broken.
+- BUG 2 (CRITICAL CRASH #2 — transfer-flow.tsx TransferButtons): `ReferenceError: canMy11 is not defined` — the component's JSX (lines ~1416-1423) and handleMy11() referenced `canMy11` which was never derived in that scope (the inline copy of the same buttons at line ~721 had it, the extracted component didn't). ANY user with a saved team crashed instantly on opening My Teams — this is the actual "APK crash" (WebAPK has no reload button → white screen = dead app). Fixed: `const canMy11 = isLicensed && !!licenseTier && my11Tiers.includes(licenseTier)`.
+- BUG 3 (0/20 teams — invalid combo): browser localStorage `apna-sweep-selected-combos` contained `[{"wk":0,"bat":11,"ar":0,"bowl":0}]` (passes the old sum=11 check, violates fantasy role rules). Every generated team failed isValidRoleBalance (WK≥1) → main loop 0/20 from 1000 attempts → filler 3999/4000 "duplicates" → EMERGENCY COUNT FILL garbage. Fixed in 3 layers: (a) buildStrategicTeam now clamps any customCfg to role windows AND pool availability and re-balances to exactly 11; (b) team-combination-selector.tsx validates saved combos on load (sum 11, WK≥1, BAT≥2, AR≥1, BOWL≥2) and drops bad ones; (c) mode-settings-page.tsx addCombo() now rejects role-invalid combos with a clear toast.
+- BUG 4 (filler produced 1 unique team per 4000 attempts — sweep-generator filler loop): `_byRole` pools hold RankedPlayer wrappers, but the filler pushed the RAW wrappers into a MatchPlayer[] — teamFingerprint() then read p.player_fixed_id ?? p.pid ?? p.name → ALL undefined → EVERY filler team fingerprinted as "undefined|undefined|..." → 3999/4000 duplicates, and the single "unique" filler team had NO player names. Fixed: map to `.player` before pushing. Also switched all 3 LCG shuffle sites to overflow-safe `(Math.imul(s, 1103515245) + 12345) >>> 0` (plain multiplication exceeded 2^53; naive Math.imul alone produces negative seeds → negative array indices → undefined players).
+- BUG 5 (data unavailable / flaky upstream — match-data-server.ts): observed live: possible11 getMatchDetails returns crickid=175070, then crickid=0 for the SAME match minutes later; getMatches timed out completely → home screen 0 matches. Fixed with a stale-while-revalidate memory layer: getMatchesCached() (60s fresh / 6h stale fallback), buildMatchDetail wrapper (3min fresh / 12h stale), p11Post retries once, and a permanent crickidCache — once a Cricbuzz id is resolved it is never lost again even when possible11 returns crickid=0. findCricbuzzId now also receives full team names (cnm1/cnm2) + short codes and weighs full-name slug hits higher.
+- BUG 6 (white screen = "APK crash" with no recovery): the app ran WITHOUT any error boundary (ErrorBoundary existed but was never mounted; WebAPK users have no URL bar/refresh). Added src/components/global-crash-guard.tsx: GlobalCrashGuard (root ErrorBoundary with recovery UI, auto-soft-reload on boot crashes ≤2/session, "Clear cached data" escape hatch after 3+ crashes that preserves license/auth keys) + GlobalAsyncErrors (window.onerror + unhandledrejection logging). Mounted in layout.tsx around the whole app.
+- UX: mode-settings-page now shows "Squad not published yet — try again in a few minutes" instead of "Only 0 players available".
+- Verified: bun tests on the REAL 34-player pool (Cricbuzz squads for ENGCH vs WICH): 20/20 teams, 20 attempts, 13ms, NO emergency fill. Invalid combos {0-11-0-0}, {5-5-5-5}, {-1-9-1-2} all sanitize and generate. Browser E2E with the exact crashing user state (bad combo in localStorage + license + saved teams): home → match → Auto Generate → 20/20 teams saved → TransferButtons renders → no ReferenceErrors. tsc: 98 baseline errors → 81 (removed the 2 crash-causing ones + more); zero new errors. Lint: identical 75-problem baseline (0 new).
+- Note: remaining React "two children with same key" warnings (empty key) are non-fatal; observed during license sync re-renders, not a crash source.
+
+Stage Summary:
+- Root causes of "APK crash": (1) TransferButtons canMy11 ReferenceError — instant white-screen for every user with saved teams; (2) _qualityRejected ReferenceError — every generation ended in a caught-but-fatal error; (3) invalid persisted combo → 0/20 + garbage emergency fill; (4) filler loop fingerprint bug → count guarantees only met via emergency fill; (5) flaky possible11/Cricbuzz upstream with zero caching → "players and data unavailable".
+- All fixed + verified E2E. GlobalCrashGuard added so ANY future render crash shows a recovery screen instead of a dead white screen in the WebAPK.

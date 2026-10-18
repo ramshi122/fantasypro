@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildMatchDetail, fetchP11Matches } from "@/lib/match-data-server";
+import { buildMatchDetail, getMatchesCached } from "@/lib/match-data-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,8 +30,10 @@ export async function GET(request: Request) {
       return noCache(NextResponse.json({ status: "success", match, data: match }, { status: 200 }));
     }
 
-    const matches = await fetchP11Matches(sport);
-    console.log(`[Matches] ${matches.length} ${sport} matches from possible11.com`);
+    // RESILIENCE: getMatchesCached serves last-good data when possible11 is
+    // flaky/down (previously the home screen went empty → "data unavailable").
+    const { matches, fromCache } = await getMatchesCached(sport);
+    console.log(`[Matches] ${matches.length} ${sport} matches from possible11.com${fromCache ? " (cached)" : ""}`);
     return noCache(NextResponse.json({ status: "success", data: matches }, { status: 200 }));
   } catch (error) {
     console.error("[Matches] Route error:", error);

@@ -402,7 +402,9 @@ function memoizedShuffle(pool: RankedPlayer[], seed: number, cache: Map<string, 
   // seed * 2654435761 can exceed Number.MAX_SAFE_INTEGER if seed > ~3.4M.
   let s = ((seed % 2147483647) * 2654435761) % 2147483647;
   for (let j = shuffled.length - 1; j > 0; j--) {
-    s = (s * 1103515245 + 12345) % 2147483647;
+    // Math.imul keeps the LCG in 32-bit range — plain multiplication loses
+    // precision above 2^53 and collapses shuffle diversity.
+    s = ((Math.imul(s, 1103515245) + 12345) >>> 0) % 2147483647;
     const k = s % (j + 1);
     [shuffled[j], shuffled[k]] = [shuffled[k], shuffled[j]];
   }
@@ -443,11 +445,38 @@ function buildStrategicTeam(
   let remaining: number; // declared at function scope so clamp/fallback can use it
   if (customCfg) {
     // CUSTOM COMBINATION: use user-specified role counts
-    wk = customCfg.WK;
-    ar = customCfg.AR;
-    bat = customCfg.BAT;
-    bowl = customCfg.BOWL;
-    remaining = 11 - wk - ar - bat - bowl; // will be 0 for valid combos
+    // CRASH FIX (0/20 teams): never allow WK=0 — isValidRoleBalance requires
+    // ≥1 WK, so a WK=0 combo made EVERY attempt fail (0/20 teams, 1000 wasted
+    // attempts, then garbage emergency fill). Clamp to valid role windows AND
+    // pool availability, then re-balance so the combo always sums to 11.
+    wk = Math.max(1, Math.min(8, Math.min(availWK, Math.round(customCfg.WK) || 1)));
+    ar = Math.max(1, Math.min(8, Math.min(availAR, Math.round(customCfg.AR) || 1)));
+    bat = Math.max(2, Math.min(8, Math.min(availBAT, Math.round(customCfg.BAT) || 2)));
+    bowl = Math.max(2, Math.min(8, Math.min(availBOWL, Math.round(customCfg.BOWL) || 2)));
+    // Redistribute overflow/deficit so total = 11 while keeping role windows
+    let diff = 11 - (wk + bat + ar + bowl);
+    let guard = 0;
+    while (diff !== 0 && guard < 22) {
+      guard++;
+      if (diff > 0) {
+        // Need MORE players — add to the role with most availability headroom
+        if (bat < Math.min(8, availBAT)) { bat++; }
+        else if (bowl < Math.min(8, availBOWL)) { bowl++; }
+        else if (ar < Math.min(8, availAR)) { ar++; }
+        else if (wk < Math.min(8, availWK)) { wk++; }
+        else break; // pool exhausted — bail out; caller re-checks totals
+        diff--;
+      } else {
+        // Too MANY players — remove from the role with least headroom need
+        if (bowl > 2) { bowl--; }
+        else if (bat > 2) { bat--; }
+        else if (ar > 1) { ar--; }
+        else if (wk > 1) { wk--; }
+        else break; // cannot shrink further
+        diff++;
+      }
+    }
+    remaining = 11 - wk - ar - bat - bowl; // 0 after rebalance
   } else {
     // AUTO: Strategic for GL Rank 1
     wk = 1;
@@ -499,11 +528,11 @@ function buildStrategicTeam(
     const shuffled = lookups
       ? memoizedShuffle(pool, rotationOffset, lookups.shuffleCache, shuffleKey)
       : (() => {
-          // Fallback (no cache) — inline shuffle
+          // Fallback (no cache) — inline shuffle (overflow-safe LCG)
           const s = [...pool];
           let seed = ((rotationOffset % 2147483647) * 2654435761) % 2147483647;
           for (let j = s.length - 1; j > 0; j--) {
-            seed = (seed * 1103515245 + 12345) % 2147483647;
+            seed = ((Math.imul(seed, 1103515245) + 12345) >>> 0) % 2147483647;
             const k = seed % (j + 1);
             [s[j], s[k]] = [s[k], s[j]];
           }
@@ -1554,31 +1583,39 @@ export async function generateSweep(
         const _pool = _byRole[_role];
         if (_pool.length < _need) { _roleOk = false; break; }
 
-        // Deterministic shuffle with unique seed
+        // Deterministic shuffle with unique seed (Math.imul keeps the LCG in
+        // 32-bit range — plain multiplication lost precision above 2^53)
         const _sh = [..._pool];
         let _ss = (_fillerAttempts * 2654435761 + _role.charCodeAt(0) * 7919 + teams.length * 31) % 2147483647;
         for (let j = _sh.length - 1; j > 0; j--) {
-          _ss = (_ss * 1103515245 + 12345) % 2147483647;
+          _ss = ((Math.imul(_ss, 1103515245) + 12345) >>> 0) % 2147483647;
           const _k = _ss % (j + 1);
           [_sh[j], _sh[_k]] = [_sh[_k], _sh[j]];
         }
 
         // Pick by strategy
+        // CRASH FIX (filler produced 1 unique team in 4000 attempts):
+        // `_byRole` pools hold RankedPlayer wrappers — the code pushed the RAW
+        // wrappers into a MatchPlayer[] and then fingerprinted them via
+        // p.player_fixed_id ?? p.pid ?? p.name → ALL undefined → every team got
+        // the SAME "undefined|undefined|..." fingerprint → 3999/4000 "duplicates"
+        // and the ONE "unique" filler team had NO player names at all.
+        // Map to the inner MatchPlayer (.player) BEFORE pushing.
         if (_strategy === "safe") {
-          _team.push(..._sh.slice(0, _need));
+          _team.push(..._sh.slice(0, _need).map(rp => rp.player));
         } else if (_strategy === "balanced") {
           const _tc = Math.ceil(_need * 0.5);
-          _team.push(..._sh.slice(0, _tc), ..._sh.slice(_tc, _need));
+          _team.push(..._sh.slice(0, _tc).map(rp => rp.player), ..._sh.slice(_tc, _need).map(rp => rp.player));
         } else if (_strategy === "differential") {
           const _tc = Math.ceil(_need * 0.3);
           const _top = _sh.slice(0, _tc);
-          const _low = _sh.slice(_tc).sort((a, b) => Number(a.selected_by ?? a.sel ?? 0) - Number(b.selected_by ?? b.sel ?? 0));
-          _team.push(..._top, ..._low.slice(0, _need - _tc));
+          const _low = _sh.slice(_tc).sort((a, b) => a.selNum - b.selNum);
+          _team.push(..._top.map(rp => rp.player), ..._low.slice(0, _need - _tc).map(rp => rp.player));
         } else {
           const _tc = Math.ceil(_need * 0.3);
           const _top = _sh.slice(0, _tc);
-          const _contra = _sh.slice(_tc).sort((a, b) => Number(a.selected_by ?? a.sel ?? 0) - Number(b.selected_by ?? b.sel ?? 0));
-          _team.push(..._top, ..._contra.slice(0, _need - _tc));
+          const _contra = _sh.slice(_tc).sort((a, b) => a.selNum - b.selNum);
+          _team.push(..._top.map(rp => rp.player), ..._contra.slice(0, _need - _tc).map(rp => rp.player));
         }
 
         // MODE-SPECIFIC: Apply same mode adjustment as main loop
@@ -1594,6 +1631,8 @@ export async function generateSweep(
       if (!_roleOk || _team.length !== 11) continue;
 
       // Credits validation
+      // Overflow-safe LCG (Math.imul) — s * 1103515245 previously exceeded
+      // Number.MAX_SAFE_INTEGER, degrading shuffle randomness across attempts.
       const _tc = _team.reduce((s, p) => s + Number(p.credits || 0), 0);
       if (_tc > 100) {
         _team.sort((a, b) => Number(b.credits || 0) - Number(a.credits || 0));
@@ -1760,6 +1799,13 @@ export async function generateSweep(
   }
 
   // === DEBUG LOGS (per user spec) ===
+  // CRASH FIX: `_qualityRejected` was referenced but never declared →
+  // ReferenceError at the END of every successful generateSweep() call.
+  // This crashed the whole generation flow (caught as "Generation failed"
+  // toast in the UI — APK users saw the app as broken/crashed).
+  // Quality-based rejection was removed (scores now only sort, never reject),
+  // so the count is always 0.
+  const _qualityRejected = 0;
   console.log(`[generator] 📊 Final Generation Summary:`);
   console.log(`  Requested Teams: ${count}`);
   console.log(`  Successfully Generated: ${teams.length}`);
