@@ -1637,3 +1637,20 @@ Work Log:
 Stage Summary:
 - Root causes of "APK crash": (1) TransferButtons canMy11 ReferenceError — instant white-screen for every user with saved teams; (2) _qualityRejected ReferenceError — every generation ended in a caught-but-fatal error; (3) invalid persisted combo → 0/20 + garbage emergency fill; (4) filler loop fingerprint bug → count guarantees only met via emergency fill; (5) flaky possible11/Cricbuzz upstream with zero caching → "players and data unavailable".
 - All fixed + verified E2E. GlobalCrashGuard added so ANY future render crash shows a recovery screen instead of a dead white screen in the WebAPK.
+
+---
+Task ID: apk-crash-fix-2 (rebase + merge with parallel session)
+Agent: Main Agent (Z.ai Code)
+Task: Rebase apk-crash-fix onto parallel session's commits, resolve conflicts, push
+
+Work Log:
+- Remote had 3 newer commits from a parallel session: 28def92 (app error boundaries: src/app/error.tsx + global-error.tsx + page.tsx ErrorBoundary wrap), aa46dbc, 559dbca (findCricbuzzId accepts names+codes with dash-stripped variants, IN-W→inw matching).
+- Rebased; resolved conflicts:
+  * worklog.md — kept all 3 task entries (theirs: fix-client-crash-error-boundaries; mine: player-data-fix-2 + apk-crash-fix).
+  * match-data-server.ts — MERGED both findCricbuzzId approaches: remote's needle-set (names+codes, dash-stripped, solo 4+ char acceptance) + my word-acronym fallback ("England Champions" → "ec") + my permanent crickidCache + my crickid!=="0" guard + remote's findCricbuzzId(names, codes) call signature. Removed one stray brace left from their structure.
+- Their error.tsx/global-error.tsx (route-level) and my GlobalCrashGuard (layout-level, around children) coexist as defense in depth.
+- Post-merge verification: tsc 84 errors (all pre-existing incl. ~3 from their new files, 0 new from mine); real-pool generation 20/20 in 7-20ms with bad combo AND auto mode; dev server 200; /api/match-detail?matchId=94775 → 18+16 players via Cricbuzz (previously 0+0!); browser loads clean.
+- Pushed: 559dbca..7be0f60 main -> main. Vercel auto-deploys.
+
+Stage Summary:
+- Remote main is now 7be0f60 with ALL fixes from both sessions: crash guards at 3 levels (route error.tsx, root global-error.tsx, layout GlobalCrashGuard), ReferenceError fixes, generator combo sanitization + filler fix, upstream resilience cache.
