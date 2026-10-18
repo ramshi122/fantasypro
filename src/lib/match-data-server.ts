@@ -380,6 +380,176 @@ function nameScore(cbName: string, cbShort: string, code?: string, full?: string
 }
 
 /* ------------------------------------------------------------------ */
+/* Preview-article parser (PLAYER DATA FIX — 3rd fallback)             */
+/* ------------------------------------------------------------------ */
+/* When Cricbuzz has NOT published squads yet (match 1-3 days away),   */
+/* the possible11 preview article (`detail` field of getMatchDetails)  */
+/* still lists REAL player names grouped by role sections:             */
+/*                                                                     */
+/*   Afghanistan (AFG) Team Updates                                    */
+/*   Opening Batters                                                   */
+/*   Ibrahim Zadran and Rahmanullah Gurbaz will open the innings...    */
+/*   Wicketkeeper                                                      */
+/*   Rahmanullah Gurbaz will do the Wicket Keeping for Afghanistan.    */
+/*                                                                     */
+/* This parser extracts those REAL names + approximate roles so        */
+/* pre-squad matches show usable player data instead of 0 players.     */
+
+function stripHtmlToLines(html: unknown): string {
+  if (typeof html !== "string") return "";
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(h[1-6]|p|li|ul|ol|div|tr)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#39;|&apos;|&rsquo;|&lsquo;/gi, "'")
+    .replace(/&quot;|&ldquo;|&rdquo;/gi, '"')
+    .replace(/&#\d+;/g, " ")
+    .replace(/[ \t]+/g, " ");
+}
+
+/** Map a role-section heading to the app role number (0=WK 1=BAT 2=AR 3=BOWL) */
+function headingToRole(line: string): number | null {
+  const l = line.toLowerCase();
+  if (/wicket\s*keeper|\bwk\b|keeper\b/.test(l)) return 0;
+  if (/all\s*-?\s*rounder/.test(l)) return 2;
+  if (/batter|batsman|batting|open(er)?s?\b|one-down|middle-order|top-order/.test(l)) return 1;
+  if (/bowler|bowling|spin\b|pace\b|fast\b|death\b/.test(l)) return 3;
+  return null;
+}
+
+/** Words that appear capitalized in prose but are never player names */
+const PREVIEW_NAME_STOPWORDS = new Set([
+  "the", "both", "their", "his", "her", "he", "she", "they", "this", "that",
+  "these", "those", "there", "according", "winning", "match", "cricket",
+  "fantasy", "expert", "toss", "head", "live", "telecast", "team", "teams",
+  "updates", "preview", "prediction", "predictions", "advice", "league",
+  "leagues", "must", "picks", "risky", "top", "best", "good", "great",
+  "decent", "highest", "recent", "opening", "middle", "death", "spin",
+  "pace", "fast", "playing", "wicket", "keeping", "innings", "series",
+  "grand", "small", "captain", "vice", "batters", "bowlers", "all",
+  "played", "won", "tie", "games", "faced", "records", "born", "join",
+  "telegram", "possible11", "app", "over", "overs", "powerplay", "daily",
+]);
+
+interface PreviewPlayer {
+  name: string;
+  role: number;
+  isCaptain: boolean;
+}
+
+function parsePreviewSection(sectionText: string): PreviewPlayer[] {
+  const players: PreviewPlayer[] = [];
+  const seen = new Set<string>();
+  const token = "[A-Z][A-Za-z'’\\-]+(?:\\s+[A-Z][A-Za-z'’\\-]+)*";
+
+  let currentRole = 1; // BAT default
+  let captainName: string | null = null;
+
+  for (const rawLine of sectionText.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    // Heading line → switch role context
+    const headingRole = headingToRole(line);
+    if (headingRole !== null && line.length < 60 && !/\bwill\b/.test(line)) {
+      currentRole = headingRole;
+      continue;
+    }
+
+    // "X and Y will ..." pairs
+    const pairRe = new RegExp(`(${token})\\s+and\\s+(${token})\\s+will`, "g");
+    // "X will be|lead|do|take|open|strengthen ..." singles
+    const soloRe = new RegExp(`(?:^|[.,;!?]\\s*)(${token})\\s+will\\s+(?:be|lead|do|take|open|strengthen|keep|bat|bowl|miss|replace)`, "g");
+
+    const found: Array<{ name: string; isCap: boolean }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = pairRe.exec(line)) !== null) {
+      found.push({ name: m[1], isCap: false });
+      found.push({ name: m[2], isCap: false });
+    }
+    while ((m = soloRe.exec(line)) !== null) {
+      found.push({ name: m[1], isCap: /as a Captain|as the Captain|captain/i.test(line) });
+    }
+
+    for (const f of found) {
+      const name = f.name.replace(/\s+/g, " ").trim();
+      const parts = name.split(" ");
+      if (parts.length < 2 || name.length < 5 || name.length > 34) continue;
+      const lowerTokens = parts.map((p) => p.toLowerCase());
+      if (lowerTokens.every((t) => PREVIEW_NAME_STOPWORDS.has(t))) continue;
+      if (/^\d/.test(name)) continue;
+      if (/batters?|bowlers?|wicketkeeper|all-?rounder|team updates/i.test(name) && parts.length <= 2) continue;
+
+      const key = name.toLowerCase();
+      const existing = players.find((p) => p.name.toLowerCase() === key);
+      if (existing) {
+        if (f.isCap) existing.isCaptain = true;
+        // Re-mentioned under the Wicketkeeper section → upgrade BAT→WK
+        if (currentRole === 0 && existing.role === 1) existing.role = 0;
+        continue;
+      }
+      seen.add(key);
+      if (f.isCap) captainName = name;
+      players.push({ name, role: currentRole, isCaptain: f.isCap });
+    }
+
+    if (captainName) {
+      const cap = players.find((p) => p.name === captainName);
+      if (cap) cap.isCaptain = true;
+    }
+  }
+
+  return players;
+}
+
+/**
+ * Parse BOTH "(XXX) Team Updates" sections from the possible11 preview.
+ * Returns null if the article doesn't contain usable team sections.
+ */
+function parsePlayersFromPreview(
+  detailHtml: unknown,
+  latestHtml: unknown
+): Array<{ short: string; name: string; players: PreviewPlayer[] }> | null {
+  const detail = typeof detailHtml === "string" ? detailHtml : "";
+  const latest = typeof latestHtml === "string" ? latestHtml : "";
+  const text = stripHtmlToLines(detail.length > 400 ? detail : `${detail}\n${latest}`);
+  if (!text) return null;
+
+  const markerRe = /([A-Za-z][A-Za-z .'&()-]{1,40}?)\s*\(([A-Z]{2,10})\)\s*Team\s*Updates/gi;
+  const markers: Array<{ idx: number; end: number; name: string; short: string }> = [];
+  let mm: RegExpExecArray | null;
+  while ((mm = markerRe.exec(text)) !== null) {
+    markers.push({
+      idx: mm.index,
+      end: mm.index + mm[0].length,
+      name: mm[1].trim(),
+      short: mm[2].trim().toUpperCase(),
+    });
+  }
+  if (markers.length < 2) return null;
+
+  // Cut each section at the prediction/tips boundary so cross-team names
+  // ("Must Picks", expert advice) don't pollute team lists.
+  const cutRe = /(Match\s+Prediction|Winning\s+Prediction|Expert\s+Advice|Head\s+to\s+Head|Fantasy\s+Tips|Dream\d*\s+Team|Live\s+Telecast)/i;
+
+  const teams: Array<{ short: string; name: string; players: PreviewPlayer[] }> = [];
+  for (let i = 0; i < markers.length && teams.length < 2; i++) {
+    const sectionEnd = i + 1 < markers.length ? markers[i + 1].idx : text.length;
+    const body = text.slice(markers[i].end, sectionEnd);
+    const cut = body.search(cutRe);
+    const scoped = cut >= 0 ? body.slice(0, cut) : body;
+    const players = parsePreviewSection(scoped);
+    if (players.length >= 6) {
+      teams.push({ name: markers[i].name, short: markers[i].short, players });
+    }
+  }
+
+  return teams.length === 2 ? teams : null;
+}
+
+/* ------------------------------------------------------------------ */
 /* Match detail                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -395,8 +565,8 @@ export async function buildMatchDetail(matchId: string, sport = "cricket") {
       ? detailsRaw
       : null;
 
-  const team1Short = base?.team1Short || "T1";
-  const team2Short = base?.team2Short || "T2";
+  let team1Short = base?.team1Short || "T1";
+  let team2Short = base?.team2Short || "T2";
   const team1Full = base?.team1?.name;
   const team2Full = base?.team2?.name;
 
@@ -423,6 +593,66 @@ export async function buildMatchDetail(matchId: string, sport = "cricket") {
     if (swapped > straight) [a, b] = [b, a];
     left = buildPlayers(a.players, team1Short, 0, lineupAnnounced);
     right = buildPlayers(b.players, team2Short, 1, lineupAnnounced);
+  } else {
+    // PLAYER DATA FIX — 3rd fallback: Cricbuzz squads not published yet.
+    // The possible11 preview article still lists REAL player names — parse it
+    // so matches 1-3 days away are usable instead of showing 0 players.
+    const previewTeams = parsePlayersFromPreview(details?.detail, details?.latest);
+    if (previewTeams) {
+      const [pt1, pt2] = previewTeams;
+      const toPreviewPlayer = (
+        p: PreviewPlayer,
+        teamIndex: number,
+        teamShort: string
+      ) => {
+        const credits = p.isCaptain ? 9.5 : p.role === 0 ? 9 : 8.5;
+        const sel = p.isCaptain ? 45 : 25;
+        const ri =
+          p.role === 0
+            ? { role: 0, player_type: "WK", role_text: "Wicket Keeper" }
+            : p.role === 2
+              ? { role: 2, player_type: "AR", role_text: "All Rounder" }
+              : p.role === 3
+                ? { role: 3, player_type: "BOWL", role_text: "Bowler" }
+                : { role: 1, player_type: "BAT", role_text: "Batsman" };
+        return {
+          pid: `pv_${teamIndex}_${p.name.toLowerCase().replace(/[^a-z]+/g, "_")}`,
+          id: `pv_${teamIndex}_${p.name.toLowerCase().replace(/[^a-z]+/g, "_")}`,
+          player_fixed_id: `pv_${teamIndex}_${p.name.toLowerCase().replace(/[^a-z]+/g, "_")}`,
+          pl_id: `pv_${teamIndex}_${p.name.toLowerCase().replace(/[^a-z]+/g, "_")}`,
+          name: p.name,
+          shortName: p.name,
+          image: undefined,
+          team: teamShort,
+          team_name: teamShort,
+          team_short_name: teamShort,
+          team_index: teamIndex,
+          ...ri,
+          credits,
+          points: 0,
+          selected_by: sel,
+          sel,
+          captain_percentage: p.isCaptain ? 30 : 0,
+          vice_captain_percentage: 0,
+          playing: 0, // probable — lineup not announced yet
+          is_playing: 0,
+          lineup_group: "Preview",
+          is_captain: p.isCaptain,
+          batting_style: undefined,
+          bowling_style: undefined,
+          substitute: false,
+          overseas: false,
+          last_play: 0,
+        };
+      };
+      // Preview players share the MatchPlayer shape but are string-id based —
+      // cast is safe: every consumer reads name/role/credits/playing fields.
+      left = pt1.players.map((p) => toPreviewPlayer(p, 0, pt1.short || team1Short)) as unknown as ReturnType<typeof buildPlayers>;
+      right = pt2.players.map((p) => toPreviewPlayer(p, 1, pt2.short || team2Short)) as unknown as ReturnType<typeof buildPlayers>;
+      // Align team labels with what the preview article calls the teams
+      team1Short = pt1.short || team1Short;
+      team2Short = pt2.short || team2Short;
+    }
   }
 
   const stripHtml = (h?: unknown) =>
@@ -454,7 +684,8 @@ export async function buildMatchDetail(matchId: string, sport = "cricket") {
     lineup_status: lineupAnnounced ? 1 : 0,
     cricbuzzId,
     crickid: cricbuzzId,
-    players_source: squads ? "cricbuzz" : "none",
+    players_source: squads ? "cricbuzz" : left.length > 0 ? "preview" : "none",
+    squad_status: left.length + right.length > 0 ? "available" : "not_announced",
     preview_html: details?.detail,
     fantasy_tips_html: details?.fantasy,
     pitch_report_html: details?.report,
