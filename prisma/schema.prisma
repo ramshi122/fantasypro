@@ -30,3 +30,23 @@ model Post {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+/// Resolved fantasy-platform context for a local match + platform.
+/// The tgsoftware backend needs the PLATFORM's matchId + PLATFORM player IDs
+/// for /api/fantasy/add-team to actually create a team. Local (Cricbuzz-based)
+/// IDs do not exist there — they must be resolved once per match via
+/// /api/automatic/fantasy-app/list + /getplayerdata and cached here.
+model TransferMatchMap {
+  id               String   @id @default(cuid())
+  tgMatchId        String
+  fantasyApp       String
+  platformMatchId  String
+  platformLeftName String?
+  platformRightName String?
+  /// JSON array: [{ id, name, playerRole, teamIndex }]
+  platformPlayers  String
+  resolvedAt       DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([tgMatchId, fantasyApp])
+}

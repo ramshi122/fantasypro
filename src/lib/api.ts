@@ -1629,6 +1629,11 @@ export async function bulkTransferToAccount(params: {
   replaceMode?: boolean;
   existingTeamIds?: string[];
   skipVerify?: boolean;
+  /** Local match team names + start time — server needs them to resolve the
+   *  PLATFORM's own matchId (transfer only works with platform IDs). */
+  leftTeamName?: string;
+  rightTeamName?: string;
+  matchTime?: string;
 }, onProgress?: (done: number, total: number) => void): Promise<BulkTransferResult> {
   const account = requireAccount(params.accountId);
   const teams = params.teams;
@@ -1679,6 +1684,9 @@ export async function bulkTransferToAccount(params: {
       mobileNumber: accountCurrent.mobile || undefined,
       replaceMode: params.replaceMode,
       existingTeamIds: params.existingTeamIds,
+      leftTeamName: params.leftTeamName,
+      rightTeamName: params.rightTeamName,
+      matchTime: params.matchTime,
       skipVerify: true, // we already verified above
     },
     onProgress
@@ -2817,6 +2825,15 @@ export interface BulkTransferItem {
   playerIds: string[];
   captainId: string;
   viceCaptainId: string;
+  /** Player display names, parallel to playerIds. REQUIRED for the server to
+   *  map Cricbuzz IDs onto the fantasy platform's own player IDs (the actual
+   *  transfer only works with platform IDs). */
+  playerNames?: string[];
+  /** Optional parallel team index (0 = left team, 1 = right team). */
+  playerTeamIndex?: number[];
+  /** Captain / vice-captain display names (fallback for name-based mapping). */
+  captainName?: string;
+  viceCaptainName?: string;
 }
 
 export interface BulkTransferResult {
@@ -2884,6 +2901,12 @@ export async function bulkTransferToLinkedAccount(
     mobileNumber?: string;
     replaceMode?: boolean;
     existingTeamIds?: string[];
+    /** Local match team names + start time — used by the server to find the
+     *  PLATFORM's own matchId (required for the transfer to actually work).
+     *  Reference: teamgeneration.in automatic mapper flow. */
+    leftTeamName?: string;
+    rightTeamName?: string;
+    matchTime?: string;
     /** Set to false to skip the pre-transfer auth verify call.
      *  Default: true (matches original APK flow). */
     skipVerify?: boolean;
@@ -3093,6 +3116,10 @@ export async function bulkTransferToLinkedAccount(
     // All workers read from `sharedParams.authToken` — when one worker refreshes
     // the token, all subsequent attempts by other workers use the new token.
     let sharedParams = { ...params };
+    // PROPER TRANSFER FIX — the PLATFORM's own matchId (resolved server-side)
+    // is needed ONLY for list-of-teams verification. Transfer requests must
+    // keep OUR local matchId — it's the server-side resolver's cache key.
+    let verifyMatchId: string | null = null;
     let latestKnownTeamCount = initialTeamCount;
     let completedCount = 0;
     let batchNeedsReauth = false; // set if ANY worker hits a permanent auth failure
@@ -3162,6 +3189,16 @@ export async function bulkTransferToLinkedAccount(
         authToken: sharedParams.authToken,
         sportIndex: sharedParams.sportIndex ?? 0,
         type: isReplace ? "edit" : "new",
+        // PROPER TRANSFER FIX — let the server resolve the PLATFORM's own
+        // matchId + player IDs (local/Cricbuzz IDs are rejected by the
+        // backend's add-team). Reference: teamgeneration.in.
+        playerNames: t.playerNames,
+        playerTeamIndex: t.playerTeamIndex,
+        captainName: t.captainName,
+        viceCaptainName: t.viceCaptainName,
+        leftTeamName: sharedParams.leftTeamName,
+        rightTeamName: sharedParams.rightTeamName,
+        matchTime: sharedParams.matchTime,
       };
       if (isReplace && sharedParams.existingTeamIds) body.id = sharedParams.existingTeamIds[i];
 
@@ -3196,7 +3233,15 @@ export async function bulkTransferToLinkedAccount(
             code?: string;
             backendError?: string;
             httpStatus?: number;
+            platformMatchId?: string | null;
           };
+
+          // PROPER TRANSFER FIX — remember the PLATFORM matchId for
+          // verification calls (list-of-teams needs the platform id space).
+          if (res.platformMatchId && String(res.platformMatchId) !== String(verifyMatchId)) {
+            console.log(`[bulkTransfer] 🎯 Platform matchId for verification: ${res.platformMatchId}`);
+            verifyMatchId = String(res.platformMatchId);
+          }
 
           // ── CASE 1: SESSION EXPIRED ──
           if (res.needsReauth) {
@@ -3232,9 +3277,12 @@ export async function bulkTransferToLinkedAccount(
               break;
             }
 
-            // TENTATIVE success — verify via list-of-teams
+            // TENTATIVE success — verify via list-of-teams (platform matchId)
             await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
-            const verifyResult = await verifyTransferCompletion(sharedParams, isReplace, latestKnownTeamCount, i + 1);
+            const verifyResult = await verifyTransferCompletion(
+              { ...sharedParams, matchId: verifyMatchId || sharedParams.matchId },
+              isReplace, latestKnownTeamCount, i + 1
+            );
 
             if (verifyResult.verified) {
               console.log(`[bulkTransfer] Team ${t.teamNo}: ✅ VERIFIED (count: ${verifyResult.newCount})`);
@@ -3245,7 +3293,10 @@ export async function bulkTransferToLinkedAccount(
 
             // Re-check after short delay
             await new Promise((r) => setTimeout(r, RECHECK_DELAY_MS));
-            const recheckResult = await verifyTransferCompletion(sharedParams, isReplace, latestKnownTeamCount, i + 1);
+            const recheckResult = await verifyTransferCompletion(
+              { ...sharedParams, matchId: verifyMatchId || sharedParams.matchId },
+              isReplace, latestKnownTeamCount, i + 1
+            );
             if (recheckResult.verified) {
               console.log(`[bulkTransfer] Team ${t.teamNo}: ✅ VERIFIED on 2nd check (count: ${recheckResult.newCount})`);
               teamTransferred = true;
@@ -3280,7 +3331,10 @@ export async function bulkTransferToLinkedAccount(
 
           // Idempotency check before retry
           await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
-          const idempotencyCheck = await verifyTransferCompletion(sharedParams, isReplace, latestKnownTeamCount, i + 1);
+          const idempotencyCheck = await verifyTransferCompletion(
+            { ...sharedParams, matchId: verifyMatchId || sharedParams.matchId },
+            isReplace, latestKnownTeamCount, i + 1
+          );
           if (idempotencyCheck.verified) {
             console.log(`[bulkTransfer] Team ${t.teamNo}: ✅ Idempotency check — team was actually created`);
             teamTransferred = true;

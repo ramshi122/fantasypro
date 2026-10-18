@@ -241,15 +241,21 @@ export function ApnaTransferModal({
   // This is the SAME logic used by Elite AI transfer flow.
   function buildItems(): BulkTransferItem[] {
     return validTeams.map((t) => {
-      // Step 1: Player IDs — playerIdMap first, fallback to fixedId (same as Elite AI)
-      let playerIds = (t.players || [])
-        .map((p) => {
-          const fixedId = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "");
-          if (!fixedId) return "";
-          const mapped = playerIdMap[`${fixedId}|${selectedApp}`];
-          return mapped || fixedId;
-        })
-        .filter(Boolean);
+      // PROPER TRANSFER FIX — build ALIGNED (id, name, teamIndex) triples so
+      // the server can map local IDs onto the PLATFORM's own player IDs by
+      // NAME (platform IDs are the only ones add-team accepts).
+      const triples = (t.players || []).flatMap((p) => {
+        const fixedId = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "");
+        if (!fixedId) return [];
+        const mapped = playerIdMap[`${fixedId}|${selectedApp}`];
+        const name = String(p.name ?? p.shortName ?? "").trim();
+        const teamIndex = typeof p.team_index === "number" ? p.team_index : undefined;
+        return [{ id: mapped || fixedId, name, teamIndex }];
+      });
+
+      let playerIds = triples.map((x) => x.id);
+      const playerNames = triples.map((x) => x.name);
+      const playerTeamIndex = triples.map((x) => x.teamIndex ?? -1);
 
       // Fix: If < 11 after mapping, try raw IDs
       if (playerIds.length < 11) {
@@ -292,7 +298,15 @@ export function ApnaTransferModal({
         if (!viceCaptainId) viceCaptainId = playerIds[0] || "";
       }
 
-      return { teamNo: t.teamNo ?? 0, playerIds, captainId, viceCaptainId };
+      // Resolve captain/VC names aligned to mapped ids (server maps by name)
+      const idToNameApna = new Map<string, string>();
+      triples.forEach((x, i) => {
+        if (playerIds[i]) idToNameApna.set(playerIds[i], x.name);
+      });
+      const captainName = idToNameApna.get(captainId) || "";
+      const viceCaptainName = idToNameApna.get(viceCaptainId) || "";
+
+      return { teamNo: t.teamNo ?? 0, playerIds, captainId, viceCaptainId, playerNames, playerTeamIndex, captainName, viceCaptainName };
     }).filter(item =>
       item.playerIds.length === 11 &&
       item.captainId &&
@@ -429,6 +443,11 @@ export function ApnaTransferModal({
             replaceMode: isReplace,
             existingTeamIds: isReplace ? selectedIds.slice(0, teamsToSend) : undefined,
             skipVerify: true, // bulkTransferToAccount will verify internally if needed
+            // PROPER TRANSFER FIX — team names + time let the server resolve
+            // the PLATFORM's own matchId (required for real transfers).
+            leftTeamName: (typeof match.left_team_name === "string" ? match.left_team_name : (match.team1 as any)?.name) || undefined,
+            rightTeamName: (typeof match.right_team_name === "string" ? match.right_team_name : (match.team2 as any)?.name) || undefined,
+            matchTime: (match.match_time || match.startTime) ? String(match.match_time || match.startTime) : undefined,
           },
           (done, _total) => setProgress({ done: ai * teamsToSend + done, total: teamsToSend * accountsToTransfer.length })
         );

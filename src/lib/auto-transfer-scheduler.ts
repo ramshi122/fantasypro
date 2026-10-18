@@ -158,22 +158,47 @@ async function runReplaceAndTransfer(
   let lastError = "";
 
   try {
-    const res = await fetch("/api/transfer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        matchId,
-        platform,
-        authToken,
-        teams: updatedTeams,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && (data?.status === "success" || data?.status === "ok")) {
-      successCount = updatedTeams.length;
-    } else {
-      lastError = String(data?.message || data?.error || `HTTP ${res.status}`);
-      failedCount = updatedTeams.length;
+    // PROPER TRANSFER FIX — /api/transfer handles ONE team per call
+    // (players + captain + vice_captain). Send each team sequentially with
+    // full player data (names included so the server can map onto the
+    // fantasy platform's own player IDs — required for a real transfer).
+    // NOTE: always send OUR local matchId — the server resolves + caches the
+    // PLATFORM matchId keyed by it (repeat calls hit the DB cache).
+    for (const team of updatedTeams) {
+      const players = (team.players || [])
+        .map((p) => {
+          const id = p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.id;
+          return id === undefined || id === null ? "" : String(id);
+        })
+        .filter(Boolean);
+      const playerNames = (team.players || [])
+        .map((p) => String(p.name ?? "").trim());
+      const captain = String(team.captain ?? team.c ?? players[0] ?? "");
+      const viceCaptain = String(team.viceCaptain ?? team.vc ?? team.vicecaptain ?? players[1] ?? players[0] ?? "");
+
+      const res = await fetch("/api/transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          matchId,
+          captain,
+          vice_captain: viceCaptain,
+          vicecaptain: viceCaptain,
+          players,
+          playerNames,
+          fantasyApp: platform,
+          authToken,
+          sportIndex: 0,
+          type: "new",
+        }),
+      });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (res.ok && (data?.status === "success" || data?.status === "ok")) {
+        successCount++;
+      } else {
+        failedCount++;
+        lastError = String(data?.error || data?.message || `HTTP ${res.status}`);
+      }
     }
   } catch (err: any) {
     lastError = String(err?.message || err || "Network error during transfer");

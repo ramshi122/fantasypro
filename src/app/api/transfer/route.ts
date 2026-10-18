@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
 import CryptoJS from "crypto-js";
+import {
+  resolvePlatformContext,
+  mapPlayersToPlatform,
+  normaliseName,
+  type LocalPlayerRef,
+} from "@/lib/fantasy-transfer-resolver";
+import { buildMatchDetail } from "@/lib/match-data-server";
 
 const BACKEND_URL = "https://tgsoftware-api.online"; // FIX: fantasy endpoints (OTP/auth/transfer/contest) live here — possible11.com 404s them all
 const AES_KEY = "coder_bobby_believer01_tg_software";
@@ -294,6 +301,15 @@ export async function POST(request: Request) {
       my11circleUserId,
       my11circleMobile,
       skipPreVerify,  // Allow skipping pre-verification for speed
+      // NEW — platform-context resolution inputs:
+      playerNames,     // array of player names, parallel to `players`
+      playerTeamIndex, // optional parallel array of team indexes (0/1)
+      captainName,     // captain display name (name-based mapping fallback)
+      viceCaptainName, // vice-captain display name (name-based mapping fallback)
+      leftTeamName,    // local match left team name
+      rightTeamName,   // local match right team name
+      matchTime,       // local match start time (ISO / ms / string)
+      forceRefresh,    // re-resolve platform mapping even if cached
     } = body;
 
     // Normalize captain/vice_captain — accept all field name variants
@@ -391,6 +407,138 @@ export async function POST(request: Request) {
     // Build the payload
     const preparedToken = String(authToken);
 
+    // ============================================================
+    // PROPER TRANSFER FIX (reference: teamgeneration.in)
+    // ============================================================
+    // The tgsoftware backend's /api/fantasy/add-team ONLY accepts the
+    // PLATFORM's own matchId + PLATFORM player IDs. Our players come from
+    // possible11/Cricbuzz (different ID space) — sending them verbatim is
+    // exactly why teams were never actually created ("Something Went
+    // Wrong!" → no team on the platform).
+    //
+    // The original app resolves the platform context via
+    //   /api/automatic/fantasy-app/list      (platform matches, user token)
+    //   /api/automatic/fantasy-app/getplayerdata (platform player IDs)
+    // and maps players BY NAME. We do the same here, server-side, cached.
+    // ============================================================
+    let platformMatchId: string | null = null;
+    let platformPlayersPayload: number[] | null = null;
+    let platformCaptain: number | null = null;
+    let platformViceCaptain: number | null = null;
+    const nameList: string[] = Array.isArray(playerNames) ? playerNames.map((n: unknown) => String(n ?? "")) : [];
+
+    // ---------------------------------------------------------------
+    // SELF-SERVICE MATCH META — if the caller didn't send player names
+    // or team names, fetch them from our own match-detail builder
+    // (possible11 + Cricbuzz). Without names the platform player mapping
+    // cannot work, so this is essential for scheduler/legacy callers.
+    // ---------------------------------------------------------------
+    let resolvedLeft = typeof leftTeamName === "string" ? leftTeamName : "";
+    let resolvedRight = typeof rightTeamName === "string" ? rightTeamName : "";
+    let resolvedMatchTime = typeof matchTime === "string" || typeof matchTime === "number" ? String(matchTime) : "";
+    if (numericPlayerIds.length > 0 && (nameList.length !== numericPlayerIds.length || !resolvedLeft || !resolvedRight)) {
+      try {
+        const detail = await buildMatchDetail(String(matchId), "cricket");
+        if (detail) {
+          const allPlayers = [...(detail.left_team_players || []), ...(detail.right_team_players || [])] as Array<Record<string, unknown>>;
+          const nameById = new Map<string, string>();
+          for (const p of allPlayers) {
+            const id = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.id ?? "");
+            const nm = String(p.name ?? "").trim();
+            if (id && nm) nameById.set(id, nm);
+          }
+          if (nameList.length !== numericPlayerIds.length) {
+            // Build names from match detail by matching the sent local IDs
+            for (let i = 0; i < numericPlayerIds.length; i++) {
+              const nm = nameById.get(String(numericPlayerIds[i]));
+              nameList[i] = nm || nameList[i] || "";
+            }
+          }
+          if (!resolvedLeft && detail.left_team_name) resolvedLeft = String(detail.left_team_name);
+          if (!resolvedRight && detail.right_team_name) resolvedRight = String(detail.right_team_name);
+          if (!resolvedMatchTime && (detail as Record<string, unknown>).match_time) {
+            resolvedMatchTime = String((detail as Record<string, unknown>).match_time);
+          }
+          console.log(`[Transfer][RESOLVE] Self-served match meta: names=${nameList.filter(Boolean).length}/${numericPlayerIds.length}, teams="${resolvedLeft}" vs "${resolvedRight}"`);
+        }
+      } catch (metaErr) {
+        console.warn(`[Transfer][RESOLVE] match-detail self-service failed (non-fatal):`, metaErr instanceof Error ? metaErr.message : metaErr);
+      }
+    }
+
+    if (nameList.length === numericPlayerIds.length && numericPlayerIds.length > 0) {
+      try {
+        const ctx = await resolvePlatformContext({
+          fantasyApp: app,
+          authToken: preparedToken,
+          matchId: String(matchId),
+          leftTeamName: resolvedLeft || undefined,
+          rightTeamName: resolvedRight || undefined,
+          matchTime: resolvedMatchTime || undefined,
+          userId: typeof userId === "string" || typeof userId === "number" ? String(userId) : undefined,
+          forceRefresh: forceRefresh === true,
+        });
+
+        if (ctx) {
+          const localRefs: LocalPlayerRef[] = numericPlayerIds.map((pid, i) => ({
+            localId: String(pid),
+            name: nameList[i],
+            teamIndex: Array.isArray(playerTeamIndex) && typeof playerTeamIndex[i] === "number" ? playerTeamIndex[i] : undefined,
+          }));
+
+          const { idMap, unmapped } = mapPlayersToPlatform(localRefs, ctx.platformPlayers, app);
+
+          if (unmapped.length > 0) {
+            // NEVER send unmapped players to the platform — that produced
+            // silent garbage teams / generic failures. Fail honestly.
+            const names = unmapped.map((u) => u.name).join(", ");
+            console.error(`[Transfer][RESOLVE] ${unmapped.length}/${localRefs.length} players could not be matched to ${app} players: ${names}`);
+            return NextResponse.json({
+              status: "fail",
+              error: `Could not match ${unmapped.length} player(s) to the ${app} squad: ${names}. The platform squad may have changed — please refresh the match and try again.`,
+              code: "PLAYER_MAPPING_FAILED",
+              platformMatchId: ctx.platformMatchId,
+              unmapped: unmapped.map((u) => u.name),
+            }, { status: 200 });
+          }
+
+          // Rewrite payload into PLATFORM id space (original add-team contract)
+          const platformIds = numericPlayerIds.map((pid) => Number(idMap[String(pid)]));
+
+          // Captain/VC: map through the id map; if the local id is missing from
+          // the map (id space mismatch), fall back to NAME-based resolution.
+          const nameToPlatformId = new Map<string, string>();
+          for (const [localId, platId] of Object.entries(idMap)) {
+            const idx = numericPlayerIds.findIndex((p) => String(p) === String(localId));
+            if (idx !== -1 && nameList[idx]) nameToPlatformId.set(normaliseName(nameList[idx]), String(platId));
+          }
+          const capIdStr = idMap[String(finalCaptain)] || (captainName ? nameToPlatformId.get(normaliseName(String(captainName))) : undefined);
+          const vcIdStr = idMap[String(finalViceCaptain)] || (viceCaptainName ? nameToPlatformId.get(normaliseName(String(viceCaptainName))) : undefined);
+          if (!capIdStr || !vcIdStr) {
+            console.error(`[Transfer][RESOLVE] Captain/VC missing from platform mapping (cap=${!!capIdStr}, vc=${!!vcIdStr})`);
+            return NextResponse.json({
+              status: "fail",
+              error: `Could not match the captain / vice-captain to the ${app} squad. Please refresh and try again.`,
+              code: "PLAYER_MAPPING_FAILED",
+              platformMatchId: ctx.platformMatchId,
+            }, { status: 200 });
+          }
+
+          platformMatchId = ctx.platformMatchId;
+          platformPlayersPayload = platformIds;
+          platformCaptain = Number(capIdStr);
+          platformViceCaptain = Number(vcIdStr);
+          console.log(`[Transfer][RESOLVE] ✅ payload rewritten to platform space: matchId ${matchId} → ${ctx.platformMatchId}, ${platformIds.length} platform players`);
+        } else {
+          console.warn(`[Transfer][RESOLVE] Could not resolve platform context for match ${matchId} (${app}) — falling back to legacy payload (likely to fail honestly)`);
+        }
+      } catch (resolveErr) {
+        console.error(`[Transfer][RESOLVE] Resolver error (non-fatal, continuing legacy):`, resolveErr instanceof Error ? resolveErr.message : resolveErr);
+      }
+    } else if (numericPlayerIds.length > 0) {
+      console.warn(`[Transfer][RESOLVE] playerNames missing or length mismatch (${nameList.length} names vs ${numericPlayerIds.length} ids) — cannot resolve platform players by name`);
+    }
+
     // Pre-verify token - ONLY if explicitly requested (skipPreVerify defaults to true for speed)
     // We handle token expiry reactively during transfer, detecting "Proxy returned 400" etc.
     // Pre-verification adds latency and may give false negatives (server says expired but token works)
@@ -412,11 +560,13 @@ export async function POST(request: Request) {
     }
 
     const payload: Record<string, unknown> = {
-      matchId: matchId,
-      captain: finalCaptain,
-      vice_captain: finalViceCaptain,
-      vicecaptain: finalViceCaptain, // Original APK format (no underscore)
-      players: numericPlayerIds,
+      // PROPER FIX: use the PLATFORM's matchId + player IDs when the resolver
+      // mapped them (the backend only understands platform id space).
+      matchId: platformMatchId ?? matchId,
+      captain: platformCaptain ?? finalCaptain,
+      vice_captain: platformViceCaptain ?? finalViceCaptain,
+      vicecaptain: platformViceCaptain ?? finalViceCaptain, // Original APK format (no underscore)
+      players: platformPlayersPayload ?? numericPlayerIds,
       fantasyApp: app,
       authToken: preparedToken,
       sportIndex: sport,
@@ -531,6 +681,7 @@ export async function POST(request: Request) {
             data: responseData || null,
             httpStatus: res.status,
             confidence: 'definite',
+            platformMatchId: platformMatchId || String(matchId),
             message: `Team ${operation === "edit" ? "replaced" : "added"} on ${app} successfully`,
           }, { status: 200 });
         }
@@ -735,6 +886,7 @@ export async function POST(request: Request) {
       httpStatus: lastHttpStatus,
       platform: app,
       operation: operation,
+      platformMatchId: platformMatchId || null,
       endpointsTried: endpointChain,
       details: {
         matchId: String(matchId),

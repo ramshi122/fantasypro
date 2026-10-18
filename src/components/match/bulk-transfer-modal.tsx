@@ -99,6 +99,9 @@ export function BulkTransferModal({
   const [matchNumericId, setMatchNumericId] = useState<string>("");
   const [matchDbId, setMatchDbId] = useState<string>("");
   const [supportedApps, setSupportedApps] = useState<string[]>([]);
+  // Local match metadata — the server needs the team names + start time to
+  // find the PLATFORM's own matchId (transfer only works with platform IDs).
+  const [matchMeta, setMatchMeta] = useState<{ leftTeamName?: string; rightTeamName?: string; matchTime?: string }>({});
   // Map: "fixedId|appName" → fantasy player ID for that app
   const [playerIdMap, setPlayerIdMap] = useState<Record<string, string>>({});
   // Track which apps have proper fantasy_id_list entries (not fallback IDs)
@@ -119,6 +122,17 @@ export function BulkTransferModal({
       const d = detail as any;
       setMatchNumericId(String(d.id || match.matchId || match.id || ""));
       setMatchDbId(String(d._id || ""));
+
+      // PROPER TRANSFER FIX — remember team names + start time so the server
+      // can resolve the platform's own matchId (teamgeneration.in flow).
+      const leftName = String(d.left_team_name || (typeof d.team1 === "string" ? d.team1 : d.team1?.name) || match.team1 || "");
+      const rightName = String(d.right_team_name || (typeof d.team2 === "string" ? d.team2 : d.team2?.name) || match.team2 || "");
+      const startTime = d.match_time || d.startTime || (match as any).match_time || (match as any).startTime || "";
+      setMatchMeta({
+        leftTeamName: leftName || undefined,
+        rightTeamName: rightName || undefined,
+        matchTime: startTime ? String(startTime) : undefined,
+      });
 
       // Detect supported apps from fantasy_version field
       const versions: string[] = (d.fantasy_version || []).map((v: any) => v.name);
@@ -259,22 +273,40 @@ export function BulkTransferModal({
   function buildTransferItems(app: FantasyApp): BulkTransferItem[] {
     // COMMON TRANSFER PAYLOAD BUILDER — works for ALL modes (Elite AI + sweep)
     return validTeams.map((t) => {
-      let playerIds = (t.players || [])
-        .map((p) => {
-          const fixedId = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "");
-          if (!fixedId) return "";
-          const mapped = playerIdMap[`${fixedId}|${app}`];
-          return mapped || fixedId;
-        })
-        .filter(Boolean);
+      // PROPER TRANSFER FIX — build ALIGNED (id, name, teamIndex) triples so
+      // the server can map local IDs onto the PLATFORM's own player IDs by
+      // NAME. Platform player IDs are the only ones add-team accepts.
+      const triples = (t.players || []).flatMap((p) => {
+        const fixedId = String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "");
+        if (!fixedId) return [];
+        const mapped = playerIdMap[`${fixedId}|${app}`];
+        const name = String(p.name ?? p.shortName ?? "").trim();
+        const teamIndex = typeof p.team_index === "number" ? p.team_index : undefined;
+        return [{ id: mapped || fixedId, name, teamIndex }];
+      });
 
-      // Fix: If < 11 after mapping, try raw IDs
+      let playerIds = triples.map((x) => x.id);
+      const playerNames = triples.map((x) => x.name);
+      const playerTeamIndex = triples.map((x) => x.teamIndex ?? -1);
+
+      // Fix: If < 11 after mapping, try raw IDs (same order — names stay aligned)
       if (playerIds.length < 11) {
         const rawIds = (t.players || [])
           .map(p => String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? ""))
           .filter(Boolean);
         if (rawIds.length === 11) playerIds = rawIds;
       }
+
+      // PROPER TRANSFER FIX — find the captain/VC's NAME (server maps by name;
+      // local captain ID alone may not exist in platform id space)
+      const capNameRaw = String(t.captain ?? t.c ?? "");
+      const capPlayerForName = (t.players || []).find(p =>
+        String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "") === capNameRaw
+      );
+      const vcNameRaw = String(t.viceCaptain ?? t.vc ?? t.vicecaptain ?? "");
+      const vcPlayerForName = (t.players || []).find(p =>
+        String(p.player_fixed_id ?? p.pl_id ?? p.pid ?? p.name ?? "") === vcNameRaw
+      );
 
       // Captain — try map, fallback to raw, fallback to first player
       const capRaw = String(t.captain ?? t.c ?? "");
@@ -309,7 +341,30 @@ export function BulkTransferModal({
         if (!viceCaptainId) viceCaptainId = playerIds[0] || "";
       }
 
-      return { teamNo: t.teamNo ?? 0, playerIds, captainId, viceCaptainId };
+      // Resolve captain/VC NAMES aligned to their mapped ids — the server maps
+      // all 11 players by name, then maps captain/VC ids through the same map.
+      // We also send the captain/VC names as a fallback for the resolver.
+      const idToName = new Map<string, string>();
+      triples.forEach((x, i) => {
+        if (playerIds[i]) idToName.set(playerIds[i], x.name);
+      });
+      const captainName =
+        idToName.get(captainId) ||
+        (capPlayerForName ? String(capPlayerForName.name ?? "").trim() : "") || "";
+      const viceCaptainName =
+        idToName.get(viceCaptainId) ||
+        (vcPlayerForName ? String(vcPlayerForName.name ?? "").trim() : "") || "";
+
+      return {
+        teamNo: t.teamNo ?? 0,
+        playerIds,
+        captainId,
+        viceCaptainId,
+        playerNames,
+        playerTeamIndex,
+        captainName,
+        viceCaptainName,
+      };
     }).filter(item =>
       item.playerIds.length === 11 &&
       item.captainId &&
@@ -441,6 +496,11 @@ export function BulkTransferModal({
               replaceMode: replaceExisting,
               existingTeamIds: existingIds,
               skipVerify: true,
+              // PROPER TRANSFER FIX — team names + time let the server find the
+              // PLATFORM's own matchId (transfers only work with platform IDs).
+              leftTeamName: matchMeta.leftTeamName,
+              rightTeamName: matchMeta.rightTeamName,
+              matchTime: matchMeta.matchTime,
             },
             (done, _total) => {
               // Per-account progress — update global progress
