@@ -471,44 +471,23 @@ export function shouldShowMatchCard(match: MatchInfo | any): boolean {
 }
 
 export async function getMatches(sport: Sport): Promise<MatchInfo[]> {
-  // Use possible11.com/admin/api2.php (same as original APK)
-  // POST with action=getMatches, sport, matchState
+  // Matches come from possible11.com via our server-side proxy (/api/matches).
+  // Calling possible11.com directly from the browser is blocked by CORS
+  // (its preflight does not allow the Content-Type header).
   try {
-    const res = await fetch(`${API_BASE}/admin/api2.php`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/plain, */*",
-      },
-      body: JSON.stringify({
-        action: "getMatches",
-        sport,
-        matchState: "upcoming",
-        uuid: "web-apna-cricket",
-        device: "web",
-        osVersion: "unknown",
-        model: "browser",
-      }),
+    const res = await fetch(`/api/matches?sport=${encodeURIComponent(sport)}`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
       cache: "no-store",
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(20000),
     });
-    const text = await res.text();
-    let data: any[] = [];
-    try {
-      const parsed = JSON.parse(text);
-      data = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.data) ? parsed.data : []);
-    } catch {
-      // Maybe encrypted
-      const dec = decrypt<any>(text);
-      if (dec) data = Array.isArray(dec) ? dec : [dec];
-    }
-
+    const body = await res.json();
+    const data: any[] = Array.isArray(body?.data) ? body.data : [];
     if (data.length > 0) {
-      console.log(`[getMatches] ✅ Found ${data.length} matches from possible11.com`);
+      console.log(`[getMatches] ✅ Found ${data.length} matches`);
       return data.map(normalizeMatch);
     }
-
-    console.log("[getMatches] ⚠️ possible11.com returned 0 matches");
+    console.log("[getMatches] ⚠️ 0 matches returned");
     return [];
   } catch (err: any) {
     console.error("[getMatches] Error:", err?.message);
