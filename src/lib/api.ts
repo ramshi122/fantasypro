@@ -359,21 +359,47 @@ function buildEncryptedBody(payload: Record<string, unknown>, token?: string | n
 
 function normalizeMatch(raw: any): MatchInfo {
   if (!raw || typeof raw !== "object") return raw;
+
+  // === possible11.com API field mapping ===
+  // possible11 returns: id, date, name, tour, cod1, cnm1, fl1, cod2, cnm2, fl2
+  // Our app expects: matchId, startTime, series, team1, team2, team1Short, etc.
+  // The "date" field is a string like "2026-10-18 19:00:00" — must convert to timestamp.
+
+  // Convert date string to timestamp (ms)
+  let startTimeVal: number | undefined = raw.startTime ?? raw.match_time ?? raw.start_time;
+  if (!startTimeVal && raw.date) {
+    // possible11 returns "2026-10-18 19:00:00" — parse as IST (UTC+5:30)
+    const parsed = new Date(String(raw.date).replace(" ", "T") + "+05:30").getTime();
+    if (!isNaN(parsed)) startTimeVal = parsed;
+  }
+
+  // Team mapping: possible11 uses cod1/cnm1/fl1 (code, name, flag)
+  const team1Name = raw.team1 ?
+    (typeof raw.team1 === "object" ? (raw.team1.name || raw.team1.shortName) : raw.team1) :
+    raw.cnm1 || raw.left_team_name || raw.cod1;
+  const team1Short = raw.team1Short ?? raw.cod1 ?? raw.left_team_name;
+  const team1Logo = raw.team1Logo ?? raw.fl1 ?? raw.left_team_image;
+  const team2Name = raw.team2 ?
+    (typeof raw.team2 === "object" ? (raw.team2.name || raw.team2.shortName) : raw.team2) :
+    raw.cnm2 || raw.right_team_name || raw.cod2;
+  const team2Short = raw.team2Short ?? raw.cod2 ?? raw.right_team_name;
+  const team2Logo = raw.team2Logo ?? raw.fl2 ?? raw.right_team_image;
+
   return {
     ...raw,
     matchId: raw.matchId ?? raw.id ?? raw._id,
-    series: raw.series ?? raw.series_name ?? raw.title,
-    title: raw.title ?? raw.series_name,
+    series: raw.series ?? raw.series_name ?? raw.tour ?? raw.title,
+    title: raw.title ?? raw.name ?? raw.series_name ?? raw.tour,
     subTitle: raw.subTitle ?? raw.sub_title,
-    team1: raw.team1 ?? (raw.left_team_name ? { shortName: raw.left_team_name, name: raw.left_team_name, logo: raw.left_team_image } : undefined),
-    team2: raw.team2 ?? (raw.right_team_name ? { shortName: raw.right_team_name, name: raw.right_team_name, logo: raw.right_team_image } : undefined),
-    team1Short: raw.team1Short ?? raw.left_team_name,
-    team2Short: raw.team2Short ?? raw.right_team_name,
-    team1Logo: raw.team1Logo ?? raw.left_team_image,
-    team2Logo: raw.team2Logo ?? raw.right_team_image,
-    startTime: raw.startTime ?? raw.match_time ?? raw.start_time,
+    team1: raw.team1 ?? { shortName: team1Short, name: team1Name, logo: team1Logo },
+    team2: raw.team2 ?? { shortName: team2Short, name: team2Name, logo: team2Logo },
+    team1Short,
+    team2Short,
+    team1Logo,
+    team2Logo,
+    startTime: startTimeVal,
     venue: raw.venue ?? raw.venue_name,
-    format: raw.format ?? raw.match_type,
+    format: raw.format ?? raw.match_type ?? raw.type,
     type: raw.type ?? raw.match_type,
     dream11Url: raw.dream11Url ?? raw.dream11_url,
     my11circleUrl: raw.my11circleUrl ?? raw.my11circle_url ?? (Array.isArray(raw.fantasy_list) && raw.fantasy_list.includes("my11circle") ? "https://www.my11circle.com" : undefined),

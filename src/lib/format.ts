@@ -1,11 +1,19 @@
 /**
  * Format a future timestamp (ms or ISO string) into "12h 53m 27s" style countdown.
+ * SAFETY: handles null/undefined/NaN/invalid strings without crashing.
  */
-export function formatCountdown(target: string | number | undefined): string {
+export function formatCountdown(target: string | number | undefined | null): string {
   if (!target) return "--";
-  const ts = typeof target === "string" ? new Date(target).getTime() : Number(target);
+  let ts: number;
+  if (typeof target === "string") {
+    ts = new Date(target).getTime();
+  } else {
+    ts = Number(target);
+  }
+  if (isNaN(ts)) return "--"; // invalid date — don't crash
   // If seconds, convert to ms
   const ms = ts < 1e12 ? ts * 1000 : ts;
+  if (isNaN(ms)) return "--";
   const diff = ms - Date.now();
   if (diff <= 0) return "Live";
   const totalSec = Math.floor(diff / 1000);
@@ -17,10 +25,17 @@ export function formatCountdown(target: string | number | undefined): string {
   return `${h}h ${m}m ${s}s`;
 }
 
-export function isMatchLive(target: string | number | undefined): boolean {
+export function isMatchLive(target: string | number | undefined | null): boolean {
   if (!target) return false;
-  const ts = typeof target === "string" ? new Date(target).getTime() : Number(target);
+  let ts: number;
+  if (typeof target === "string") {
+    ts = new Date(target).getTime();
+  } else {
+    ts = Number(target);
+  }
+  if (isNaN(ts)) return false; // invalid date — not live
   const ms = ts < 1e12 ? ts * 1000 : ts;
+  if (isNaN(ms)) return false;
   return ms <= Date.now();
 }
 
