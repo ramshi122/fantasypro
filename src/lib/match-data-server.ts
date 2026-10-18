@@ -272,10 +272,57 @@ export async function fetchCricbuzzSquads(cricbuzzId: string | number): Promise<
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
-/** Fallback: locate the Cricbuzz match id by team names in live/upcoming lists. */
-export async function findCricbuzzId(names: string[]): Promise<string | null> {
-  const needles = names.filter(Boolean).map(slugify).filter((n) => n.length >= 2);
+/**
+ * Fallback: locate the Cricbuzz match id by team names + codes in live/upcoming lists.
+ *
+ * PER user spec: "Now issu are after linup only team genereting i want before linup
+ * and after need team generete" — for matches like IN-W vs ZM-W (id 94694) the
+ * possible11 backend returns crickid="0" so we have to discover the Cricbuzz id
+ * ourselves by scraping Cricbuzz's live/upcoming pages.
+ *
+ * The previous version only matched the slugged full team names ("india-women",
+ * "zimbabwe-women"). That missed slugs like `zimw-vs-indw-2nd-t20i-zimbabwe-women-
+ * tour-of-india-2026` which use the abbreviated team codes INW / ZMW (no "india-women"
+ * substring at all → score 1 → below threshold 2 → returned null → 0 players →
+ * team generation blocked before lineup).
+ *
+ * FIX: accept BOTH full names AND short codes (cod1/cod2 from possible11) as
+ * needles, generate dash-stripped variants so "IN-W" matches "inw" inside the
+ * slug, and lower the threshold to score >= 1 (any single needle match) when we
+ * have multiple needles — a single confident match is much better than nothing.
+ */
+export async function findCricbuzzId(
+  names: string[],
+  codes: string[] = []
+): Promise<string | null> {
+  // Build needle set: dash-stripped + original slug form, for both full names and codes.
+  const needleSet = new Set<string>();
+  for (const n of names.filter(Boolean)) {
+    const slugged = slugify(n);
+    if (slugged.length >= 2) {
+      needleSet.add(slugged);
+      // Also add dash-stripped form so "India-Women" → "indiawomen", "IN-W" → "INW"
+      const noDash = slugged.replace(/-/g, "");
+      if (noDash.length >= 2) needleSet.add(noDash);
+    }
+  }
+  for (const c of codes.filter(Boolean)) {
+    const slugged = slugify(c);
+    if (slugged.length >= 2) {
+      needleSet.add(slugged);
+      const noDash = slugged.replace(/-/g, "");
+      if (noDash.length >= 2) needleSet.add(noDash);
+    }
+  }
+  const needles = Array.from(needleSet);
   if (needles.length === 0) return null;
+
+  // We require either:
+  //   - 2+ needles matching (high confidence), OR
+  //   - 1 needle matching if the needle is at least 4 chars (e.g. "indw", "zimw")
+  //     — this catches the IN-W vs ZM-W case where the slug uses abbreviated codes.
+  const minNeedleLenForSolo = 4;
+
   const pages = [
     `${CB_BASE}/cricket-match/live-scores`,
     `${CB_BASE}/cricket-match/live-scores/upcoming-matches`,
@@ -285,13 +332,28 @@ export async function findCricbuzzId(names: string[]): Promise<string | null> {
       const html = await fetchHtml(url);
       const re = /\/live-cricket-scores\/(\d+)\/([a-z0-9-]+)/g;
       let m: RegExpExecArray | null;
-      let best: { id: string; score: number } | null = null;
+      let best: { id: string; score: number; longestNeedle: number } | null = null;
       while ((m = re.exec(html))) {
         const slug = m[2];
-        const score = needles.filter((n) => slug.includes(n)).length;
-        if (score > 0 && (!best || score > best.score)) best = { id: m[1], score };
+        // Score = number of DISTINCT needles that match
+        const matched = needles.filter((n) => slug.includes(n));
+        if (matched.length === 0) continue;
+        const score = matched.length;
+        const longestNeedle = Math.max(...matched.map((n) => n.length));
+        // Track the best candidate by (score desc, longestNeedle desc)
+        if (
+          !best ||
+          score > best.score ||
+          (score === best.score && longestNeedle > best.longestNeedle)
+        ) {
+          best = { id: m[1], score, longestNeedle };
+        }
       }
-      if (best && best.score >= Math.min(2, needles.length)) return best.id;
+      if (!best) continue;
+      // Acceptance threshold: 2+ needles matched OR a single 4+ char needle matched
+      if (best.score >= 2 || (best.score === 1 && best.longestNeedle >= minNeedleLenForSolo)) {
+        return best.id;
+      }
     } catch {
       /* try next page */
     }
@@ -571,9 +633,17 @@ export async function buildMatchDetail(matchId: string, sport = "cricket") {
   const team2Full = base?.team2?.name;
 
   // Resolve the Cricbuzz id (possible11 provides it as `crickid`)
+  // PER user spec: pass BOTH the full team names AND the short codes (cod1/cod2,
+  // e.g. "IN-W" / "ZM-W") so findCricbuzzId can match slugs like
+  // `zimw-vs-indw-2nd-t20i-zimbabwe-women-tour-of-india-2026` where the slug
+  // uses the abbreviated codes INW/ZMW instead of full names.
   let cricbuzzId: string | null = details?.crickid ? String(details.crickid) : null;
   if (!cricbuzzId || cricbuzzId === "0") {
-    cricbuzzId = await findCricbuzzId([team1Full || "", team2Full || ""]);
+    const teamCodes = [team1Short, team2Short].filter(Boolean);
+    cricbuzzId = await findCricbuzzId(
+      [team1Full || "", team2Full || ""],
+      teamCodes as string[]
+    );
   }
 
   const squads = cricbuzzId ? await fetchCricbuzzSquads(cricbuzzId) : null;

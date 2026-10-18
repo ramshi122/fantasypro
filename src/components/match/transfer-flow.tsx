@@ -635,6 +635,40 @@ export function TransferFlow({ match }: { match: MatchInfo }) {
               <p className="text-sm text-muted-foreground mb-3">
                 No teams yet. Auto-generate up to 500 teams or build one manually from {players.length} real players.
               </p>
+              {/* === PLAYER AVAILABILITY WARNING === */}
+              {/* PER user spec: "after linup only team genereting i want before linup
+                  and after need team generete" — when the squad isn't published
+                  yet for an upcoming match, players.length is 0 and the generator
+                  button is disabled. Show a clear actionable banner explaining WHY
+                  so the user understands and can retry, instead of just seeing
+                  a grayed-out button with no context. */}
+              {players.length < 11 && (
+                <div className="mb-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 p-3 text-center">
+                  <div className="flex items-center justify-center gap-1.5 mb-1">
+                    <AlertCircle className="w-4 h-4 text-amber-600" />
+                    <p className="text-xs font-bold text-amber-700 dark:text-amber-300">
+                      {players.length === 0
+                        ? "Squad not yet published for this match"
+                        : `Only ${players.length} players available — need at least 11`}
+                    </p>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mb-2">
+                    {players.length === 0
+                      ? "We're still fetching the full squad for this match. Squads usually publish 1-2 days before the match. Tap Retry in a few minutes — teams can be generated BEFORE the lineup is announced (using the full squad) and again AFTER the lineup is confirmed (using the Playing XI)."
+                      : "More players needed to generate a valid team. Try refreshing to fetch the latest squad."}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={() => setRefreshKey((k) => k + 1)}
+                    disabled={step === "loading"}
+                  >
+                    <RefreshCw className={cn("w-3 h-3 mr-1", step === "loading" && "animate-spin")} />
+                    {step === "loading" ? "Fetching…" : "Retry fetch"}
+                  </Button>
+                </div>
+              )}
               {/* License lock banner */}
               {!license.isLicensed && (
                 <div className="mb-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 p-3 text-center">
