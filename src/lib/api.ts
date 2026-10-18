@@ -3107,10 +3107,23 @@ export async function bulkTransferToLinkedAccount(
     const RECHECK_DELAY_MS = 200;
     const REQUEST_TIMEOUT_MS = 15000; // was 45000 — fail fast, retry fast
 
-    // Concurrency per platform
-    const CONCURRENCY = params.fantasyApp === "dream11" ? 3
-                      : params.fantasyApp === "my11circle" ? 1
-                      : 1;
+    // PACING — exact parity with the ORIGINAL teamgeneration.in bulk transfer
+    // (verified in its minified bundle):
+    //   const r = {dream11: 200, my11circle: 2e3, myteam11: 2e3}[u.slug] || 0
+    //   → teams are transferred SERIALLY with this delay between each one.
+    // Hammering the backend with parallel team creations (previous behaviour:
+    // dream11 concurrency 3) caused mass "Something Went Wrong!" rejections.
+    const INTER_TEAM_DELAY_MS: Record<string, number> = {
+      dream11: 200,
+      my11circle: 2000,
+      jumbo: 2000,
+      myteam11: 2000,
+    };
+    const interTeamDelay = INTER_TEAM_DELAY_MS[params.fantasyApp] || 0;
+
+    // Concurrency per platform — SERIAL for all platforms (original parity).
+    // The original app never creates teams in parallel on one account.
+    const CONCURRENCY = 1;
 
     // === SHARED STATE ACROSS WORKERS ===
     // All workers read from `sharedParams.authToken` — when one worker refreshes
@@ -3315,7 +3328,17 @@ export async function bulkTransferToLinkedAccount(
           }
 
           // ── CASE 3: FAILURE RESPONSE ──
-          teamErrorMessage = (res.error as string) || (res.message as string) || "Transfer failed";
+          // PROPER DIAGNOSIS: surface the backend's RAW error when it is
+          // informative, so failures can be diagnosed from the UI itself.
+          const rawBackendError = typeof res.backendError === "string" ? res.backendError : "";
+          const platformCtxResolved = typeof res.platformMatchId === "string" && res.platformMatchId.length > 0;
+          let failureMsg = (res.error as string) || (res.message as string) || "Transfer failed";
+          if (res.mappingRegistered === false && platformCtxResolved) {
+            failureMsg = `${failureMsg} [mapping: could not register with platform]`;
+          } else if (rawBackendError && rawBackendError.toLowerCase() !== "something went wrong!" && rawBackendError !== failureMsg) {
+            failureMsg = `${failureMsg} [platform: ${rawBackendError}]`;
+          }
+          teamErrorMessage = failureMsg;
           const lowerErr = teamErrorMessage.toLowerCase();
           console.warn(`[bulkTransfer] Team ${t.teamNo} attempt ${attempt}: ⚠️ ${teamErrorMessage} [code: ${res.code || "N/A"}]`);
 
@@ -3382,7 +3405,9 @@ export async function bulkTransferToLinkedAccount(
     console.log(`[bulkTransfer] 🚀 Starting transfer: ${teams.length} teams, concurrency=${CONCURRENCY} (${sharedParams.fantasyApp})`);
 
     if (CONCURRENCY === 1) {
-      // Sequential — preserves original behavior (for My11Circle, etc.)
+      // Sequential — original parity: teams are created ONE AT A TIME with
+      // the platform's pacing delay between each (dream11 200ms,
+      // my11circle 2000ms — verified from the original bundle).
       for (let i = 0; i < teams.length; i++) {
         if (batchNeedsReauth) {
           // Token expired mid-batch — mark remaining teams as skipped
@@ -3399,6 +3424,10 @@ export async function bulkTransferToLinkedAccount(
           continue;
         }
         await processTeam(i);
+        // PACING: wait between team creations (never after the last one)
+        if (interTeamDelay > 0 && i < teams.length - 1) {
+          await new Promise((r) => setTimeout(r, interTeamDelay));
+        }
       }
     } else {
       // Parallel batch — N workers pull from a shared queue

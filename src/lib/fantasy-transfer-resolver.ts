@@ -275,6 +275,88 @@ async function writeCache(
 }
 
 /* ------------------------------------------------------------------ */
+/* Server-side automatic mapping registration (CRITICAL)              */
+/* ------------------------------------------------------------------ */
+/* The original app's AUTOMATIC transfer flow (verified in both its
+ * minified bundles) works in two steps:
+ *
+ *   STEP 1 — POST /api/automatic/add_mapping  (NO auth required —
+ *            verified live: accepts writes and returns
+ *            {"status":"success","message":"Mapping created successfully!"})
+ *            {
+ *              tgMatchId:        <the APP's own match id>,
+ *              fantasyAppMatchId:<the PLATFORM's match id>,
+ *              fantasyAppName:   "dream11" | "my11circle" | ...,
+ *              playerMapperData: [{tgMatchId: <app player id>,
+ *                                  fantasyAppMatchId: <platform player id>}...]
+ *            }
+ *
+ *   STEP 2 — POST /api/fantasy/add-team with the APP's own matchId +
+ *            APP player ids. The backend looks the match up in its
+ *            matches DB (for admin-managed matches) or the automatic
+ *            mapping table (for automatic/mapped matches) and
+ *            translates everything into platform id space itself.
+ *
+ * Our previous behaviour — sending the PLATFORM matchId directly to
+ * add-team — matches NEITHER lookup source (tgsoftware's matches DB is
+ * EMPTY, verified live: /api/fantasy/matches/cricket → []), which is why
+ * every add-team call failed with the generic
+ * {"status":"fail","message":"Something Went Wrong!"}.
+ */
+
+/** Mappings already registered during this server process (throttle). */
+const mappingRegisteredInProcess = new Set<string>();
+
+function toPlatformIdValue(v: string): number | string {
+  const n = parseInt(v, 10);
+  return isNaN(n) ? v : n;
+}
+
+/**
+ * Register (upsert) the TG↔platform mapping on the tgsoftware backend so
+ * that /api/fantasy/add-team can resolve OUR matchId + player ids.
+ * Idempotent; throttled per (app, match, platformMatch) for the process
+ * lifetime. Never throws — returns false when registration failed.
+ */
+export async function registerAutomaticMapping(params: {
+  fantasyApp: string;
+  /** Our local (app) match id — the mapping table's tgMatchId key. */
+  tgMatchId: string;
+  /** The resolved platform match id. */
+  platformMatchId: string;
+  /** local player id → platform player id pairs (all 11 + captain/VC). */
+  pairs: Array<{ localId: string; platformId: string }>;
+}): Promise<boolean> {
+  const { fantasyApp, tgMatchId, platformMatchId, pairs } = params;
+  if (!fantasyApp || !tgMatchId || !platformMatchId) return false;
+  const usable = (pairs || []).filter((p) => p.localId && p.platformId);
+  if (usable.length === 0) return false;
+
+  const key = `${fantasyApp}:${tgMatchId}:${platformMatchId}:${usable.length}`;
+  if (mappingRegisteredInProcess.has(key)) return true;
+
+  const body = {
+    tgMatchId: toPlatformIdValue(tgMatchId),
+    fantasyAppMatchId: toPlatformIdValue(platformMatchId),
+    fantasyAppName: fantasyApp,
+    playerMapperData: usable.map((p) => ({
+      tgMatchId: toPlatformIdValue(p.localId),
+      fantasyAppMatchId: toPlatformIdValue(p.platformId),
+    })),
+  };
+
+  const res = await postJson(`${FANTASY_API_BASE}/api/automatic/add_mapping`, body, 15000);
+  const ok = res.httpStatus === 200 && !!res.data && res.data.status === "success";
+  if (ok) {
+    mappingRegisteredInProcess.add(key);
+    console.log(`[TransferResolver] ✅ add_mapping registered: ${fantasyApp} match ${tgMatchId} → platform ${platformMatchId} (${usable.length} players)`);
+  } else {
+    console.warn(`[TransferResolver] add_mapping registration failed (non-fatal): http=${res.httpStatus} body=${JSON.stringify(res.data || {}).slice(0, 200)}`);
+  }
+  return ok;
+}
+
+/* ------------------------------------------------------------------ */
 /* Main resolver                                                      */
 /* ------------------------------------------------------------------ */
 

@@ -62,3 +62,72 @@ Stage Summary:
   context is resolved WITH the user's own session token.
 - NOTE: teamgeneration.in's newest flow uses v2.tgsoftware-api.online behind Google login;
   not integrable for this white-label — V1 automatic-mapper endpoints are the supported path.
+
+---
+Task ID: 4
+Agent: Z.ai Code (main)
+Task: "Server rejected fail" — transfer attempts rejected by tgsoftware backend (39/40 failed with "The dream11 server rejected this transfer", token valid). Reference: https://teamgeneration.in/
+
+Work Log:
+- Re-fetched the LIVE teamgeneration.in production bundle (main.278ef53f.js — unchanged hash) and re-audited its CURRENT transfer pipeline end-to-end; diffed against the extracted original APK bundle (scripts/apk-extract/web/main.js).
+- KEY DISCOVERY (root cause of "Something Went Wrong!" rejections):
+    1. The original app NEVER sends a platform matchId to /api/fantasy/add-team.
+       It ALWAYS sends ITS OWN app-space matchId + app-space player ids
+       (player_fixed_id) — the backend resolves the match via (a) its own
+       matches DB (empty live: /api/fantasy/matches/cricket → []), or (b) the
+       AUTOMATIC MAPPING TABLE.
+    2. The automatic flow registers the mapping SERVER-SIDE first:
+       POST /api/automatic/add_mapping {tgMatchId: <app match id>,
+       fantasyAppMatchId: <platform match id>, fantasyAppName: <slug>,
+       playerMapperData: [{tgMatchId: <app player id>, fantasyAppMatchId:
+       <platform player id>}, ...]} — NO auth required (verified live:
+       {"status":"success","message":"Mapping created successfully!"}).
+       Our previous fix resolved platform ids client-side but NEVER registered
+       them AND sent the PLATFORM matchId directly — unknown to the backend's
+       lookup sources → generic rejection for every team.
+    3. The live site now routes dream11/my11circle CRICKET transfers to the V2
+       backend (POST {v2}/fantasy/transfer/{app}/add, Bearer v2 Google-login
+       token, accountId=integration id, V2 /matches data with platform-scoped
+       ids like m11c_119585). V2 requires Google auth (/auth/google; guest
+       login disabled: "Guest login is not available") → NOT usable by this
+       white-label app. V1 add-team + registered mapping is the supported path.
+    4. Original bulk-transfer PACING (from bundle): SERIAL transfers with
+       inter-team delay {dream11:200ms, my11circle:2000ms, myteam11:2000ms}.
+       Our previous dream11 concurrency=3 hammering aggravated rejections.
+- IMPLEMENTED (server):
+    * fantasy-transfer-resolver.ts: NEW registerAutomaticMapping() — upserts the
+      TG↔platform mapping via /api/automatic/add_mapping (in-process throttle,
+      never throws, idempotent).
+    * api/transfer/route.ts: registers the mapping right after platform context
+      resolution (all 11 players + captain/VC pairs); payload now built as DUAL
+      VARIANTS executed in order across the endpoint chain —
+      VARIANT 1 "mapping" (original contract): OUR matchId + OUR player ids
+      (backend translates via mapping table);
+      VARIANT 2 "platform" (previous behaviour kept as fallback): platform
+      matchId + platform player ids;
+      VARIANT 3 "legacy": unchanged fallthrough when nothing resolved.
+      Success response now reports which variant worked; failure response adds
+      mappingRegistered + variantsTried for diagnosis.
+- IMPLEMENTED (client api.ts):
+    * CONCURRENCY 1 (serial) for ALL platforms + INTER_TEAM_DELAY_MS map
+      {dream11:200, my11circle/jumbo/myteam11:2000} — exact original pacing.
+    * Failure messages now surface the backend's RAW error ([platform: ...])
+      and mapping-registration status, so future failures are diagnosable
+      directly from the transfer modal UI.
+- Verified: tsc 84 pre-existing errors (0 new), eslint 9 pre-existing require()
+  warnings (0 new); live smoke test of /api/transfer with dummy token → correct
+  honest TOKEN_EXPIRED classification; dev-log shows resolver→fallback→classify
+  flow executing as designed. No remove-mapping endpoint exists server-side
+  (probed) — add_mapping acts as upsert, app re-registers correct mapping on
+  every transfer.
+
+Stage Summary:
+- Transfer now follows the original's AUTOMATIC contract exactly:
+  register mapping (add_mapping, unauth) → add-team with OUR ids → backend
+  translates; platform-id payload retained as fallback; serial pacing matches
+  the original; honest errors with raw backend messages in the UI.
+- REQUIRES: owner redeploy + APK rebuild to take effect.
+- If mapping-variant transfers STILL fail generically, the backend's add-team
+  may no longer consult the mapping table (V2-only era) — the failure UI now
+  shows enough raw detail ([platform: ...]/[mapping: ...]) to confirm and the
+  next escalation would require V2 Google-login integration.

@@ -3,6 +3,7 @@ import CryptoJS from "crypto-js";
 import {
   resolvePlatformContext,
   mapPlayersToPlatform,
+  registerAutomaticMapping,
   normaliseName,
   type LocalPlayerRef,
 } from "@/lib/fantasy-transfer-resolver";
@@ -425,6 +426,7 @@ export async function POST(request: Request) {
     let platformPlayersPayload: number[] | null = null;
     let platformCaptain: number | null = null;
     let platformViceCaptain: number | null = null;
+    let mappingRegistered = false;
     const nameList: string[] = Array.isArray(playerNames) ? playerNames.map((n: unknown) => String(n ?? "")) : [];
 
     // ---------------------------------------------------------------
@@ -529,6 +531,33 @@ export async function POST(request: Request) {
           platformCaptain = Number(capIdStr);
           platformViceCaptain = Number(vcIdStr);
           console.log(`[Transfer][RESOLVE] ✅ payload rewritten to platform space: matchId ${matchId} → ${ctx.platformMatchId}, ${platformIds.length} platform players`);
+
+          // ========================================================
+          // CRITICAL (original automatic contract): register the
+          // TG↔platform mapping on the backend BEFORE calling add-team.
+          // add-team resolves the matchId through its matches DB or the
+          // automatic mapping table — sending our raw ids without this
+          // registration produced "Something Went Wrong!" for every team.
+          // ========================================================
+          const mappingPairs: Array<{ localId: string; platformId: string }> = [];
+          for (const [localId, platId] of Object.entries(idMap)) {
+            mappingPairs.push({ localId: String(localId), platformId: String(platId) });
+          }
+          // Ensure captain / VC pairs exist even when they were matched by NAME
+          if (captainName && !idMap[String(finalCaptain)]) {
+            const pid = nameToPlatformId.get(normaliseName(String(captainName)));
+            if (pid) mappingPairs.push({ localId: String(finalCaptain), platformId: String(pid) });
+          }
+          if (viceCaptainName && !idMap[String(finalViceCaptain)]) {
+            const pid = nameToPlatformId.get(normaliseName(String(viceCaptainName)));
+            if (pid) mappingPairs.push({ localId: String(finalViceCaptain), platformId: String(pid) });
+          }
+          mappingRegistered = await registerAutomaticMapping({
+            fantasyApp: app,
+            tgMatchId: String(matchId),
+            platformMatchId: ctx.platformMatchId,
+            pairs: mappingPairs,
+          });
         } else {
           console.warn(`[Transfer][RESOLVE] Could not resolve platform context for match ${matchId} (${app}) — falling back to legacy payload (likely to fail honestly)`);
         }
@@ -581,43 +610,107 @@ export async function POST(request: Request) {
     // The original APK uses field name `id` with the team_id value from list-of-teams.
     // Try to coerce to number if possible (backend may expect numeric ID),
     // but fall back to string if it's not a pure number.
+    let editTeamId: number | string | null = null;
     if (operation === "edit" && id !== undefined && id !== null && id !== "") {
       const idNum = typeof id === "string" ? parseInt(id, 10) : id;
-      payload.id = (typeof idNum === "number" && !isNaN(idNum)) ? idNum : id;
-      console.log(`[Transfer][EDIT] Replacing team ID: ${payload.id} (original: ${JSON.stringify(id)})`);
+      editTeamId = (typeof idNum === "number" && !isNaN(idNum)) ? idNum : id;
+      payload.id = editTeamId;
+      console.log(`[Transfer][EDIT] Replacing team ID: ${editTeamId} (original: ${JSON.stringify(id)})`);
     }
 
-    // IMPORTANT: Per original teamgeneration.in bulk-transfer flow, the transfer payload
-    // for /api/fantasy/add-team and /api/fantasy/edit-team is GENERIC across all platforms.
     // My11Circle-specific fields (my11circleChallenge, my11circleUserId, my11circleMobile)
     // are ONLY sent to /api/fantasy/auth/verify and /api/fantasy/list-of-teams — NOT to
     // the transfer endpoint. Sending them here caused the backend to misroute My11Circle
     // transfers (root cause of "team not getting created on My11Circle" bug).
-
-    if (app === "vision11" && userId) {
-      payload.userId = userId;
-    }
+    const vision11UserId = app === "vision11" ? userId : undefined;
 
     // Get platform-specific endpoint config
     const config = PLATFORM_ENDPOINTS[app] || DEFAULT_CONFIG;
     const endpointChain = operation === "edit" ? config.editEndpoints : config.addEndpoints;
 
+    // ============================================================
+    // DUAL PAYLOAD VARIANTS (original automatic contract first)
+    // ============================================================
+    // The original app's automatic flow (proven from its own bundles):
+    //   1. POST /api/automatic/add_mapping  {tgMatchId: OUR match id,
+    //      fantasyAppMatchId: platform match id, playerMapperData:
+    //      [{tgMatchId: OUR player id, fantasyAppMatchId: platform id}]}
+    //   2. POST /api/fantasy/add-team with OUR matchId + OUR player ids —
+    //      the backend translates them via the mapping table.
+    // So VARIANT 1 (primary) sends OUR id space. If the backend still
+    // rejects it, VARIANT 2 (fallback) sends the PLATFORM id space.
+    // ============================================================
+    const basePayloadFields: Record<string, unknown> = {
+      fantasyApp: app,
+      authToken: preparedToken,
+      sportIndex: sport,
+      type: operation === "edit" ? "edit" : "new",
+    };
+    if (vision11UserId) basePayloadFields.userId = vision11UserId;
+
+    interface PayloadVariant {
+      label: string;
+      payload: Record<string, unknown>;
+    }
+    const payloadVariants: PayloadVariant[] = [];
+
+    if (platformMatchId) {
+      // VARIANT 1 — original automatic contract: OUR id space + mapping table.
+      // NOTE: tried even when THIS process's registration call failed — the
+      // mapping may already exist server-side from an earlier attempt
+      // (add_mapping is an idempotent upsert on the backend).
+      const mappingPayload: Record<string, unknown> = {
+        ...basePayloadFields,
+        matchId: toNumber(matchId) ?? matchId,
+        captain: finalCaptain,
+        vice_captain: finalViceCaptain,
+        vicecaptain: finalViceCaptain,
+        players: numericPlayerIds,
+      };
+      if (editTeamId !== null) mappingPayload.id = editTeamId;
+      payloadVariants.push({ label: "mapping", payload: mappingPayload });
+    }
+
+    if (platformMatchId && platformPlayersPayload && platformCaptain !== null && platformViceCaptain !== null) {
+      // VARIANT 2 — direct platform id space (previous behaviour, kept as fallback)
+      const platformPayload: Record<string, unknown> = {
+        ...basePayloadFields,
+        matchId: toNumber(platformMatchId) ?? platformMatchId,
+        captain: platformCaptain,
+        vice_captain: platformViceCaptain,
+        vicecaptain: platformViceCaptain,
+        players: platformPlayersPayload,
+      };
+      if (editTeamId !== null) platformPayload.id = editTeamId;
+      payloadVariants.push({ label: "platform", payload: platformPayload });
+    }
+
+    if (payloadVariants.length === 0) {
+      // No platform context resolved — legacy payload (fails honestly)
+      payloadVariants.push({ label: "legacy", payload });
+    }
+
     // Detailed request logging
     console.log(`\n${"=".repeat(60)}`);
     console.log(`[Transfer][REQUEST] ${app} ${operation.toUpperCase()}`);
     console.log(`[Transfer][REQUEST] Endpoint chain: ${endpointChain.join(" → ")}`);
-    console.log(`[Transfer][REQUEST] matchId=${matchId}, sportIndex=${sport}`);
+    console.log(`[Transfer][REQUEST] Payload variants: ${payloadVariants.map((v) => v.label).join(", ")}`);
+    console.log(`[Transfer][REQUEST] matchId=${matchId} (platform: ${platformMatchId || "unresolved"}), mappingRegistered=${mappingRegistered}`);
+    console.log(`[Transfer][REQUEST] sportIndex=${sport}`);
     console.log(`[Transfer][REQUEST] captain=${finalCaptain}, vice_captain=${finalViceCaptain}`);
     console.log(`[Transfer][REQUEST] players=${numericPlayerIds.length}, operation=${operation}, id=${id || "N/A"}`);
     console.log(`[Transfer][REQUEST] authToken: len=${preparedToken.length}, isJWT=${preparedToken.startsWith("eyJ")}, isJSON=${preparedToken.startsWith("{")}`);
     console.log(`${"=".repeat(60)}\n`);
 
-    // Execute with multi-endpoint fallback
+    // Execute with variant × endpoint fallback
     let lastError = "";
     let lastData: Record<string, unknown> | null = null;
     let lastHttpStatus = 0;
 
-    for (const endpointUrl of endpointChain) {
+    for (const variant of payloadVariants) {
+      console.log(`[Transfer][VARIANT] Trying payload variant "${variant.label}" (matchId=${JSON.stringify(variant.payload.matchId)})`);
+
+      for (const endpointUrl of endpointChain) {
       console.log(`[Transfer][ENDPOINT] Trying: ${endpointUrl}`);
 
       try {
@@ -625,7 +718,7 @@ export async function POST(request: Request) {
         const res = await fetch(endpointUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(variant.payload),
           signal: AbortSignal.timeout(30000),
         });
         const requestDuration = Date.now() - requestStart;
@@ -670,12 +763,13 @@ export async function POST(request: Request) {
             }
           }
 
-          console.log(`[Transfer][SUCCESS] Team transferred to ${app} (${operation}) - HTTP ${res.status} (confidence: ${transferResult.confidence})`);
+          console.log(`[Transfer][SUCCESS] Team transferred to ${app} (${operation}) via variant "${variant.label}" - HTTP ${res.status} (confidence: ${transferResult.confidence})`);
 
           return NextResponse.json({
             status: "success",
             method: endpointUrl.includes("classic") ? "classic" : "fantasy",
             endpoint: endpointUrl,
+            variant: variant.label,
             platform: app,
             operation: operation,
             data: responseData || null,
@@ -692,7 +786,7 @@ export async function POST(request: Request) {
 
         console.error(`[Transfer][FAILED] ${lastError} (HTTP ${res.status})`);
 
-        // If it's a confirmed token expiry, stop immediately
+        // If it's a confirmed token expiry, stop immediately (no variant can fix auth)
         if (isConfirmedTokenExpiry(lastError, data)) {
           console.error(`[Transfer][AUTH] Token expired confirmed. Stopping.`);
           return NextResponse.json({
@@ -731,7 +825,7 @@ export async function POST(request: Request) {
           continue;
         }
 
-        // For other errors, try next endpoint
+        // For other errors, try next endpoint (and next variant)
         continue;
 
       } catch (fetchErr) {
@@ -743,13 +837,14 @@ export async function POST(request: Request) {
         lastHttpStatus = 0;
         continue;
       }
+      }
     }
 
-    // If edit failed, try add as fallback
+    // If edit failed, try add as fallback (re-use the BEST payload variant)
     if (operation === "edit" && lastError && !isConfirmedTokenExpiry(lastError, lastData || {})) {
       console.log(`[Transfer][FALLBACK] Edit failed on all endpoints. Trying add as fallback...`);
 
-      const fallbackPayload = { ...payload };
+      const fallbackPayload = { ...payloadVariants[0].payload };
       delete fallbackPayload.id;
       fallbackPayload.type = "new";
 
@@ -887,6 +982,8 @@ export async function POST(request: Request) {
       platform: app,
       operation: operation,
       platformMatchId: platformMatchId || null,
+      mappingRegistered,
+      variantsTried: payloadVariants.map((v) => v.label),
       endpointsTried: endpointChain,
       details: {
         matchId: String(matchId),
