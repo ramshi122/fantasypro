@@ -1704,3 +1704,27 @@ Stage Summary:
 - OTP linking (Dream11 + My11Circle + MyTeam11 + Vision11 + Jumbo) now talks to the live fantasy backend; SMS OTP delivery restored
 - Bonus fixes riding the same root cause: expert teams, prime teams, promotions, contest joining, classic addteam links, token verification — all were silently 404ing on possible11.com since commit 2735cae
 - NOTE for owner: must REDEPLOY (Vercel was stale per commit 89ef029) and REBUILD the APK/PWA for users to get the fix
+
+---
+Task ID: 3
+Agent: Main Agent (Z.ai Code)
+Task: Fix "transfer shows team transferred but team is NOT actually transferred" — false-success bug
+
+Work Log:
+- Traced full transfer chain: bulkTransferToLinkedAccount (client) → POST /api/transfer (server proxy) → tgsoftware-api.online/api/fantasy/add-team
+- LIVE-PROOFED the root cause: real backend returns HTTP 201 + {"status":"fail","message":"Something Went Wrong!"} for a FAILED transfer (dummy-token add-team probe; NO team created). The old isTransferSuccess() Method 3 treated exactly that envelope as "TENTATIVE SUCCESS" — a heuristic left over from the old possible11.com proxy bug that does NOT apply to the real backend.
+- Second liar found client-side: bulkTransferToLinkedAccount CASE 2 "Trust the success response anyway (backend list-of-teams cache lag)" — marked teams as transferred+verified even when list-of-teams verification FAILED twice.
+- Also confirmed the original APK's contract from its bundle: "success" !== response.data?.status → FAILURE. The APK NEVER treats generic fails as success, and its add-team payload (matchId, captain, vice_captain, players, fantasyApp, authToken, sportIndex, type, id) matches our route exactly.
+- FIX server (src/app/api/transfer/route.ts):
+  * isTransferSuccess() now ONLY accepts data.status === "success" (APK parity). No more tentative/fuzzy success.
+  * Final failure path now CLASSIFIES generic backend errors by calling /api/fantasy/auth/verify (real token validity): expired → needsReauth=true + "re-link via OTP"; token valid → honest "platform rejected (deadline/lineup/match)" message. No more always-blame-session, never fake success.
+- FIX client (src/lib/api.ts bulkTransferToLinkedAccount):
+  * Removed "trust the success anyway" — unverified success is now reported as FAILURE with a clear message.
+  * NEW STEP 2.5: auto-register the match in the backend DB before transferring (my11circle/jumbo, matching the APK's add-match contract incl. authToken; idempotent "already exists"; non-fatal). Backend matches DB is currently EMPTY — without registration add-team rejects transfers.
+- Verified: tsc 84→84 (zero new errors), eslint clean for new code, live smoke test: POST /api/transfer with dummy token now returns honest {"status":"fail","needsReauth":true,"error":"Your dream11 session has expired..."} instead of fake success.
+
+Stage Summary:
+- The UI can no longer claim "Team transferred!" unless the backend explicitly returned status:"success" — false success eliminated at BOTH layers
+- Failed transfers now show the REAL reason (expired session vs platform rejection) via auth/verify classification
+- Matches are auto-registered (my11circle/jumbo) before transfers, mirroring the original APK's required "Add to DB" step
+- NOTE: Dream11 transfers have no add-match endpoint (same as original APK) — if Dream11 add-team still rejects with generic errors, the backend DB likely needs the match present; the honest error will now surface it instead of hiding behind fake success

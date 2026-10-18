@@ -50,81 +50,38 @@ function isConfirmedTokenExpiry(errorMsg: string, data: Record<string, unknown>)
 }
 
 /**
- * Determine if the response data indicates a successful transfer.
+ * Determine if the response data indicates a REAL, successful transfer.
  *
- * The possible11.com backend proxy has a KNOWN BUG:
- * - It returns HTTP 201 + {status: "fail", message: "Something Went Wrong!"}
- *   even when the team WAS actually created on the platform.
- * - This happens because the proxy successfully forwards the request,
- *   the platform creates the team, but the proxy fails to read the
- *   response properly and returns its own error.
+ * PROPER FIX (user report: "transfer showing team transferred — really team
+ * not transferred"):
  *
- * Transfer result categories:
- * 1. DEFINITE SUCCESS: HTTP 200 + {status: "success"}
- * 2. TENTATIVE SUCCESS: HTTP 201 + {status: "fail", message: "Something Went Wrong!"}
- *    → The team was likely created despite the error message
- *    → We treat this as success (matching original APK behavior)
- * 3. DEFINITE FAILURE: HTTP 201 + {status: "fail", message: "Proxy returned 400/401/403"}
- *    → The platform API rejected the request (token expired)
- * 4. OTHER FAILURES: HTTP 4xx/5xx or other error messages
- *    → Treat as genuine failures
+ * The OLD version treated `HTTP 201 + {status:"fail","Something Went Wrong!"}`
+ * as "TENTATIVE SUCCESS". That heuristic was written for the old
+ * possible11.com proxy bug (where the proxy returned its own error AFTER the
+ * platform had already created the team).
+ *
+ * We now talk to the REAL backend (tgsoftware-api.online — the ORIGINAL APK
+ * backend). Live-verified: it returns EXACTLY that envelope when a transfer
+ * FAILS (e.g. invalid token):
+ *   POST /api/fantasy/add-team (bad token)
+ *     → HTTP 201 + {"status":"fail","message":"Something Went Wrong!"}
+ *     → NO team created on the platform.
+ * So on this backend a generic "fail" is a REAL failure, and treating it as
+ * success is what produced the false "Team transferred!" message.
+ *
+ * The original APK's own contract (its minified bundle) is:
+ *   "success" !== response.data?.status  → count as FAILURE
+ * So the ONLY accepted success signal here is data.status === "success".
  */
 function isTransferSuccess(httpStatus: number, data: Record<string, unknown>): {
   success: boolean;
   confidence: 'definite' | 'tentative';
 } {
-  // Method 1: Explicit success status field
   if (data.status === "success") {
     return { success: true, confidence: 'definite' };
   }
-
-  // Method 2: HTTP 2xx + no explicit failure + success indicators
-  if (httpStatus >= 200 && httpStatus < 300 && data.status !== "fail" && data.status !== "error") {
-    const msg = String(data.message || "").toLowerCase();
-    const hasSuccessIndicator =
-      msg.includes("success") ||
-      msg.includes("created") ||
-      msg.includes("added") ||
-      msg.includes("updated") ||
-      msg.includes("saved") ||
-      data.data !== undefined;
-
-    if (hasSuccessIndicator) {
-      return { success: true, confidence: 'definite' };
-    }
-  }
-
-  // Method 3: HTTP 201 + {status: "fail"} with "Something Went Wrong!"
-  // This is the KNOWN BUG in the possible11.com backend proxy.
-  // The team WAS actually created on the platform despite the error.
-  // We must treat this as a TENTATIVE SUCCESS (matching original APK behavior).
-  if (httpStatus === 201 && (data.status === "fail" || data.status === "error")) {
-    const msg = String(data.message || "").toLowerCase();
-
-    // Check if it's a genuine token/auth failure from the proxy
-    if (
-      msg.includes("proxy returned 400") ||
-      msg.includes("proxy returned 401") ||
-      msg.includes("proxy returned 403") ||
-      msg.includes("invalid token") ||
-      msg.includes("token expired") ||
-      msg.includes("jwt expired") ||
-      msg.includes("session expired") ||
-      msg.includes("not authenticated") ||
-      msg.includes("authentication failed")
-    ) {
-      // Genuine auth failure - the platform rejected the request
-      console.log(`[Transfer][AUTH_FAILURE] HTTP 201 + genuine auth error: ${data.message}. Treating as FAILURE.`);
-      return { success: false, confidence: 'definite' };
-    }
-
-    // "Something Went Wrong!" or other generic errors from the proxy
-    // These are false negatives - the team was likely created
-    console.log(`[Transfer][TENTATIVE_SUCCESS] HTTP 201 + body status=${data.status}, message="${data.message}". Backend proxy bug - treating as TENTATIVE SUCCESS (team likely created).`);
-    return { success: true, confidence: 'tentative' };
-  }
-
-  // All other cases: failure
+  // Everything else — including HTTP 201/2xx with status:"fail" — is a FAILURE.
+  // Never guess. The client now surfaces honest errors instead of fake success.
   return { success: false, confidence: 'definite' };
 }
 
@@ -573,10 +530,8 @@ export async function POST(request: Request) {
             operation: operation,
             data: responseData || null,
             httpStatus: res.status,
-            confidence: transferResult.confidence,
-            message: transferResult.confidence === 'tentative'
-              ? `Team ${operation === "edit" ? "replaced" : "added"} on ${app} (verified by proxy)`
-              : `Team ${operation === "edit" ? "replaced" : "added"} on ${app} successfully`,
+            confidence: 'definite',
+            message: `Team ${operation === "edit" ? "replaced" : "added"} on ${app} successfully`,
           }, { status: 200 });
         }
 
@@ -696,10 +651,8 @@ export async function POST(request: Request) {
               operation: "add",
               data: responseData || null,
               httpStatus: fallbackRes.status,
-              confidence: fallbackCheck.confidence,
-              message: fallbackCheck.confidence === 'tentative'
-                ? `Team added to ${app} (verified by proxy, fallback)`
-                : `Team added to ${app} successfully (fallback from edit)`,
+              confidence: 'definite',
+              message: `Team added to ${app} successfully (fallback from edit)`,
             }, { status: 200 });
           }
 
@@ -738,10 +691,33 @@ export async function POST(request: Request) {
 
     let displayError = lastError || "Unknown transfer error";
 
-    if (displayError === "All proxy attempts failed" || displayError.includes("proxy attempts failed")) {
+    // ============================================================
+    // PROPER FIX — classify generic failures instead of guessing.
+    // The real backend returns the generic "Something Went Wrong!"
+    // for MANY different root causes (expired token, match not in
+    // DB, deadline passed, invalid players...). We can't tell from
+    // the message alone, so ask /api/fantasy/auth/verify (which
+    // DOES return real token validity) to classify:
+    //   - token expired → needsReauth + "re-link via OTP" message
+    //   - token OK      → honest "platform rejected" message
+    // This replaced the old behaviour of ALWAYS claiming the session
+    // expired (or worse, previously: claiming success!)
+    // ============================================================
+    let finalNeedsReauth = false;
+
+    if (lastError === "Something Went Wrong!" || lastError === "Error while transfering the team!" || !lastError) {
+      console.log(`[Transfer][CLASSIFY] Generic backend error — checking token validity to give an honest error...`);
+      const tokenState = await preVerifyToken(preparedToken, app, String(matchId));
+      if (tokenState === false) {
+        finalNeedsReauth = true;
+        displayError = `Your ${app} session has expired. Please re-link your account via OTP verification, then transfer again.`;
+        console.log(`[Transfer][CLASSIFY] Token is EXPIRED → needsReauth`);
+      } else {
+        displayError = `The ${app} server rejected this transfer. Your account is linked, but the platform refused the request — this usually means the match deadline has passed, the playing lineup is not announced yet, or the match is not transferable right now. Please try again closer to the deadline or re-link your account.`;
+        console.log(`[Transfer][CLASSIFY] Token is ${tokenState === true ? "VALID" : "UNKNOWN"} → honest rejection message`);
+      }
+    } else if (displayError === "All proxy attempts failed" || displayError.includes("proxy attempts failed")) {
       displayError = `The ${app} server rejected the transfer. Your session may have expired. Please re-link your account via OTP verification and try again.`;
-    } else if (displayError === "Something Went Wrong!") {
-      displayError = `The ${app} server returned an error. Your session has likely expired - please re-link your account via OTP verification.`;
     } else if (displayError === "Proxy returned 400") {
       displayError = `Your ${app} session has expired (the platform rejected the request). Please re-link your account via OTP verification.`;
     } else if (displayError === "Error while transfering the team!") {
@@ -754,7 +730,7 @@ export async function POST(request: Request) {
       status: "fail",
       error: displayError,
       code: "TRANSFER_ERROR",
-      needsReauth: false,
+      needsReauth: finalNeedsReauth,
       backendError: lastError,
       httpStatus: lastHttpStatus,
       platform: app,

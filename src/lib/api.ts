@@ -2981,6 +2981,39 @@ export async function bulkTransferToLinkedAccount(
     let initialTeamCount = 0;
     // We'll fetch lazily if a tentative-success happens (see CASE 2 below).
 
+    // === STEP 2.5: AUTO-REGISTER MATCH IN BACKEND DB (my11circle / jumbo) ===
+    // The original APK required matches to be registered in the backend DB
+    // (admin "Add to DB" button → POST /api/{platform}/add-match with the
+    // user's authToken) BEFORE teams could be transferred for that match.
+    // The backend's own matches list is currently EMPTY — without registration
+    // add-team rejects the transfer with a generic "Something Went Wrong!".
+    // We register automatically here: idempotent (backend answers
+    // "already exists" → success), non-fatal (if it fails we still try the
+    // transfer and surface its real error), and only for the platforms that
+    // have an add-match endpoint (my11circle, jumbo — same as the APK).
+    if (params.fantasyApp === "my11circle" || params.fantasyApp === "jumbo") {
+      try {
+        console.log(`[bulkTransfer] 📋 Auto-registering match ${params.matchId} for ${params.fantasyApp} (add-match)...`);
+        const regRes = await fetch(`/api/matches/add`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            platform: params.fantasyApp,
+            matchId: String(params.matchId),
+            sport: "cricket",
+            authToken: params.authToken,
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+        const regData = await regRes.json().catch(() => ({ status: "fail" }));
+        console.log(`[bulkTransfer] 📋 add-match result: ${regData.status} ${regData.message || ""} ${regData.alreadyExists ? "(already existed)" : ""}`);
+      } catch (regErr) {
+        // Non-fatal — the transfer attempt will surface the real error if
+        // registration truly failed.
+        console.warn(`[bulkTransfer] add-match registration failed (continuing):`, regErr instanceof Error ? regErr.message : regErr);
+      }
+    }
+
     // === STEP 3: PRE-TRANSFER AUTH VERIFY (only if skipVerify=false) ===
     if (params.skipVerify === false && params.authToken) {
       console.log("[bulkTransfer] Pre-verifying auth token (skipVerify=false)...");
@@ -3220,10 +3253,13 @@ export async function bulkTransferToLinkedAccount(
               break;
             }
 
-            // Trust the success response anyway (backend list-of-teams cache lag)
-            console.warn(`[bulkTransfer] Team ${t.teamNo}: ⚠️ Verify failed twice but response was success — trusting`);
-            teamTransferred = true;
-            teamVerified = true;
+            // PROPER FIX — never claim success without proof.
+            // OLD behaviour: "Trust the success response anyway" → marked the
+            // team as transferred even when list-of-teams showed NO new team.
+            // That is exactly the "transfer shows team transferred but team is
+            // NOT transferred" bug. Now: report honestly as FAILED.
+            console.error(`[bulkTransfer] Team ${t.teamNo}: ❌ Response said success but list-of-teams could NOT confirm it twice — reporting FAILURE (no fake success)`);
+            teamErrorMessage = `The team could not be verified on ${sharedParams.fantasyApp} after transfer. It was NOT added. Please re-link your account via OTP and try again.`;
             break;
           }
 
