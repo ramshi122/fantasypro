@@ -26,6 +26,10 @@ import { LicenseLockOverlay } from "@/components/admin/license-lock";
 import { useLicense } from "@/lib/use-license";
 import { Lock, CheckCircle2 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
+// Defense-in-depth: catches any in-tree client crash so we never show the raw
+// "Application error: a client-side exception has occurred" page. Also
+// covered by app/error.tsx + app/global-error.tsx at the route/root level.
+import { ErrorBoundary } from "@/components/error-boundary";
 
 const SPLASH_KEY = "apna-cricket-splash-shown";
 
@@ -120,50 +124,56 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <TopHeader onAdminTrigger={() => setShowAdmin(true)} />
+    <ErrorBoundary
+      onError={(err) => {
+        console.error("[page] ErrorBoundary caught:", err);
+      }}
+    >
+      <div className="min-h-screen bg-background flex flex-col">
+        <TopHeader onAdminTrigger={() => setShowAdmin(true)} />
 
-      <main className="flex-1 max-w-3xl mx-auto w-full">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={view}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.2 }}
-          >
-            {view === "home" && <HomeScreen />}
-            {view === "match-detail" && <MatchDetailScreen />}
-            {view === "my-matches" && <MyMatchesScreen />}
-            {view === "research" && <ResearchScreen />}
-            {view === "cricket-live" && <CricketLivePage onClose={() => setView("home")} />}
-            {view === "ocr-generator" && <OCRGenerator />}
-            {view === "contest-tracker" && <ContestTracker onClose={() => setView("profile")} />}
-            {view === "player-form" && <PlayerFormDashboard onClose={() => setView("research")} />}
-            {view === "whatsapp-share" && <WhatsAppShareButton onClose={() => setView("home")} />}
-            {view === "profile" && <ProfileScreen onAdminTrigger={() => setShowAdmin(true)} />}
-            {view === "promotions" && <PromotionsScreen />}
-            {view === "expert-teams" && <TeamListScreen variant="expert" />}
-            {view === "prime-teams" && <TeamListScreen variant="prime" />}
-            {view === "contact" && <ContactScreen />}
-            {view === "match-research" && (
-              <MatchResearchPage onClose={() => setView("home")} />
-            )}
-          </motion.div>
-        </AnimatePresence>
-      </main>
+        <main className="flex-1 max-w-3xl mx-auto w-full">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={view}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2 }}
+            >
+              {view === "home" && <HomeScreen />}
+              {view === "match-detail" && <MatchDetailScreen />}
+              {view === "my-matches" && <MyMatchesScreen />}
+              {view === "research" && <ResearchScreen />}
+              {view === "cricket-live" && <CricketLivePage onClose={() => setView("home")} />}
+              {view === "ocr-generator" && <OCRGenerator />}
+              {view === "contest-tracker" && <ContestTracker onClose={() => setView("profile")} />}
+              {view === "player-form" && <PlayerFormDashboard onClose={() => setView("research")} />}
+              {view === "whatsapp-share" && <WhatsAppShareButton onClose={() => setView("home")} />}
+              {view === "profile" && <ProfileScreen onAdminTrigger={() => setShowAdmin(true)} />}
+              {view === "promotions" && <PromotionsScreen />}
+              {view === "expert-teams" && <TeamListScreen variant="expert" />}
+              {view === "prime-teams" && <TeamListScreen variant="prime" />}
+              {view === "contact" && <ContactScreen />}
+              {view === "match-research" && (
+                <MatchResearchPage onClose={() => setView("home")} />
+              )}
+            </motion.div>
+          </AnimatePresence>
+        </main>
 
-      <BottomNav />
+        <BottomNav />
 
-      {/* Hidden Admin Panel — triggered by 5 taps on logo or version text */}
-      <AdminPanel open={showAdmin} onClose={() => setShowAdmin(false)} />
+        {/* Hidden Admin Panel — triggered by 5 taps on logo or version text */}
+        <AdminPanel open={showAdmin} onClose={() => setShowAdmin(false)} />
 
-      {/* License Lock Overlay — blocks team generator features until verified */}
-      <LicenseLockOverlay />
+        {/* License Lock Overlay — blocks team generator features until verified */}
+        <LicenseLockOverlay />
 
-      {/* Lineup Alert Manager — monitors matches for lineup announcements */}
-      <LineupAlertManager />
-    </div>
+        {/* Lineup Alert Manager — monitors matches for lineup announcements */}
+        <LineupAlertManager />
+      </div>
+    </ErrorBoundary>
   );
 }
 
