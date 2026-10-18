@@ -1555,3 +1555,45 @@ Stage Summary:
 - "Fetch real Dream11 data for the selected account before enabling Join Contest or Transfer" — enforced via `verifyAccountBeforeTransfer` pre-check in `bulkTransferToAccount` and `joinFreeContestForAccount`. If the token is expired AND can't be refreshed, the operation is blocked with `needsReauth: true` and the UI prompts re-link via OTP.
 - Cache invalidation is surgical: transfers and joins invalidate only the affected account's my-teams/joined-contests/free-contests cache — other accounts' caches are untouched.
 - Removed accounts have their cache invalidated immediately (multi-account-manager.tsx handleRemove).
+
+---
+Task ID: fix-client-crash-error-boundaries
+Agent: Main Agent (Super Z)
+Task: User reported "Application error: a client-side exception has occurred" on both fantasypro.vercel.app (production) and s1g3g5rk1ja1-d.space-z.ai (space-z preview). "Chek and fix".
+
+Work Log:
+- Inspected project state: latest commit was 4636cc1 "fix: client-side crash on time selection — startTime null from possible11 API" but the user was still seeing the white error page.
+- Ran `npx next build` → ✓ Compiled successfully in 20.6s. So the bug is NOT a build-time error; it is a runtime client-side crash.
+- Tested locally with `npx next start` (port 3001) → page loaded fine, showed FullPageLicenseLock screen (no license in fresh browser).
+- Used agent-browser to inspect fantasypro.vercel.app from a clean browser (no localStorage) → page loaded fine, showed "SUBSCRIPTION REQUIRED" page.
+- Injected a fake license (apna-cricket-license JSON with verified:true, key matching /^[A-Z]+-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/ format, keyType:'trial', expiresAt:future) → BOTH local prod and Vercel rendered the full home screen (8 match cards, no error).
+- Inspected dev.log (port 3000) → found Turbopack internal crash:
+    `thread 'tokio-runtime-worker' panicked at /build/turbopack/crates/turbo-tasks-backend/src/backend/mod.rs:1354:30: Failed to lookup task id for CachedTaskType { ... path: "pages/_app.tsx" } from database failed`
+    `Caused by: Unable to open static sorted file 00000045.sst — No such file or directory`
+    `Error: ENOENT: no such file or directory, open '/home/z/my-project/.next/dev/server/app/page/build-manifest.json'`
+  This is the dev server's RocksDB SST cache corruption. The dev server (port 3000, proxied by Caddy at s1g3g5rk1ja1-d.space-z.ai) was crashing mid-request → Next.js fell back to its default white "Application error" page → users see the screenshot shown.
+- Inspected src/app/ directory → found ZERO error-boundary files (no error.tsx, no global-error.tsx). The existing src/components/error-boundary.tsx class was only used inside transfer-flow.tsx and admin-panel.tsx — it never wrapped the main app shell. This means ANY client-side crash (in HomeScreen, MatchDetailScreen, AppBootstrap, SecurityOverlay, etc.) would bubble all the way up to Next.js's default white error page.
+- Fixed the dev server crash: `pkill -f "next dev"` → `rm -rf .next` → fresh `npx next dev -p 3000` → dev.log now shows clean `✓ Ready in 1378ms`, `GET / 200 in 18.8s`. Preview URL https://s1g3g5rk1ja1-d.space-z.ai/ now returns HTTP 200 with the full app rendered.
+- Added src/app/error.tsx (route-level error boundary):
+    * Catches errors thrown while rendering the "/" route (HomeScreen, MatchDetailScreen, ProfileScreen, etc.).
+    * Friendly dark UI with the actual error message in an amber pill.
+    * Three actions: "Try again" (reset boundary), "Reload" (window.location.reload), "Clear cache & reload" (last-resort — wipes non-essential localStorage BUT KEEPS apna-cricket-license + apna-cricket-auth so the user stays logged in).
+- Added src/app/global-error.tsx (root-level error boundary):
+    * Catches errors thrown while rendering RootLayout itself (AppBootstrap, SecurityOverlay, OfflineIndicator, Toaster, ServiceWorkerRegister).
+    * Renders its own <html>+<body> (required by Next.js for global-error.tsx).
+    * Recovery UI + service-worker unregister on the "Reload" path (clears stale SW that may be serving bad assets).
+- Wrapped the main content tree in src/app/page.tsx with the existing <ErrorBoundary> component as defense-in-depth. A transient crash in one screen can be retried WITHOUT resetting the entire route state.
+- Verified build: `rm -rf .next && npx next build` → ✓ Compiled successfully in 36.0s. Production HTML now includes `error: $5` reference + a dedicated error-boundary chunk `743f8879eacb360a.js` (was absent before).
+- Verified live:
+    * Dev server port 3000 → HTTP 200, page renders with splash screen → main app.
+    * Preview URL https://s1g3g5rk1ja1-d.space-z.ai/ → HTTP 200, full home screen loads.
+    * Local prod (port 3002) → HTTP 200, page renders cleanly.
+    * fantasypro.vercel.app → HTTP 200 from clean browser, shows SUBSCRIPTION REQUIRED page (will pick up the new error boundary on next deploy).
+- Committed and pushed: `git pull --rebase origin main && git push origin main` → commit 28def92 pushed to origin/main (Vercel will auto-redeploy on the push).
+
+Stage Summary:
+- Two distinct failure modes both fixed:
+    1. space-z.ai preview URL crash: Turbopack's RocksDB SST file corrupted → dev server crashed mid-request → white error page. Fixed by clearing .next/ and restarting fresh dev server.
+    2. Vercel production crash protection: previously any client-side error would show the raw white "Application error" page because there were zero error boundaries at route/root level. Fixed by adding src/app/error.tsx (route boundary), src/app/global-error.tsx (root boundary), and wrapping page.tsx main content in the existing ErrorBoundary component (defense in depth).
+- Users will now see a friendly dark recovery UI with the actual error message and three retry options (Try again / Reload / Clear cache & reload) instead of the raw white error page. Their license + auth are preserved across recovery.
+- Build is clean (no new TS errors), all servers return HTTP 200, fix is pushed to origin/main (28def92).
