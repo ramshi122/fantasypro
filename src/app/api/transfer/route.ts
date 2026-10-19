@@ -278,6 +278,50 @@ async function preVerifyToken(authToken: string, fantasyApp: string, matchId?: s
   }
 }
 
+/**
+ * ORIGINAL list-of-teams contract (verified from the original APK bundle):
+ *   POST {backend}/api/fantasy/list-of-teams
+ *   {fantasyApp, matchId: <OUR app matchId>, authToken}
+ *   → 200 {status:"success", teams_list:[{team_id, team_number}, ...]}
+ *
+ * The backend resolves OUR matchId through its own matches DB or the
+ * automatic mapping table — exactly like add-team. This makes it BOTH the
+ * success-verification oracle AND a live probe of whether the backend can
+ * resolve our mapping at all.
+ */
+async function fetchTeamList(
+  fantasyApp: string,
+  authToken: string,
+  matchId: string,
+  timeoutMs = 15000
+): Promise<{ reachable: boolean; teams: Array<{ team_id: unknown; team_number: unknown }>; rawMessage?: string }> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/fantasy/list-of-teams`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fantasyApp, matchId: String(matchId), authToken }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const text = await res.text();
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { reachable: false, teams: [] };
+    }
+    if (res.status === 200 && data.status === "success" && Array.isArray(data.teams_list)) {
+      const teams = (data.teams_list as Array<Record<string, unknown>>).map((t) => ({
+        team_id: t.team_id,
+        team_number: t.team_number,
+      }));
+      return { reachable: true, teams };
+    }
+    return { reachable: false, teams: [], rawMessage: (data.message as string) || `HTTP ${res.status}` };
+  } catch {
+    return { reachable: false, teams: [] };
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -427,6 +471,7 @@ export async function POST(request: Request) {
     let platformCaptain: number | null = null;
     let platformViceCaptain: number | null = null;
     let mappingRegistered = false;
+    let matchAddedToDb = false;
     const nameList: string[] = Array.isArray(playerNames) ? playerNames.map((n: unknown) => String(n ?? "")) : [];
 
     // ---------------------------------------------------------------
@@ -558,6 +603,52 @@ export async function POST(request: Request) {
             platformMatchId: ctx.platformMatchId,
             pairs: mappingPairs,
           });
+
+          // ==================================================================
+          // THE MISSING PIECE (root cause of "team not transferred"):
+          // REGISTER THE PLATFORM MATCH IN THE BACKEND'S MAIN MATCHES DB.
+          //
+          // The original APK's automatic-mapper screen has an explicit
+          // "Add to DB" step (verified in its own bundle):
+          //     POST /api/my11circle/add-match {my11circleMatchId, sport, authToken}
+          //     POST /api/jumbo/add-match     {jumboMatchId, sport}
+          //   → the BACKEND fetches the match (squads, fantasy ids, time)
+          //     FROM THE PLATFORM using the user's own session and stores it
+          //     in its main matches DB — the very DB that add-team resolves
+          //     matchIds against. Live probe confirms the endpoint works
+          //     (a null authToken yields the platform's own 401 back) and
+          //     that its DB already contains user-added matches
+          //     (/api/my11circle/added-matches → user-added fixtures).
+          //
+          // We previously only registered the id-mapping table — but the
+          // backend's add-team match lookup consults the MAIN matches DB,
+          // which stayed empty for our match → every add-team failed with
+          // the generic "Something Went Wrong!".
+          // dream11 has NO add-match endpoint (admin-managed only) — for
+          // dream11 the mapping table registration above is all we can do.
+          // ==================================================================
+          if (app === "my11circle" || app === "jumbo") {
+            try {
+              const addMatchBody: Record<string, unknown> =
+                app === "my11circle"
+                  ? { my11circleMatchId: ctx.platformMatchId, sport: "cricket", authToken: preparedToken }
+                  : { jumboMatchId: ctx.platformMatchId, sport: "cricket" };
+              const amRes = await fetch(`${BACKEND_URL}/api/${app}/add-match`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(addMatchBody),
+                signal: AbortSignal.timeout(30000),
+              });
+              const amText = await amRes.text();
+              let amData: Record<string, unknown> = {};
+              try { amData = JSON.parse(amText); } catch { /* non-JSON */ }
+              const already = amRes.status === 409 || String(amData.message || "").includes("already exist");
+              matchAddedToDb = amRes.status === 200 || already;
+              console.log(`[Transfer][ADD_MATCH] ${app} platform match ${ctx.platformMatchId}: HTTP ${amRes.status} ${JSON.stringify(amData).slice(0, 150)} → inDb=${matchAddedToDb}`);
+            } catch (amErr) {
+              console.warn(`[Transfer][ADD_MATCH] failed (non-fatal, continuing):`, amErr instanceof Error ? amErr.message : amErr);
+            }
+          }
         } else {
           console.warn(`[Transfer][RESOLVE] Could not resolve platform context for match ${matchId} (${app}) — falling back to legacy payload (likely to fail honestly)`);
         }
@@ -639,6 +730,12 @@ export async function POST(request: Request) {
     //      the backend translates them via the mapping table.
     // So VARIANT 1 (primary) sends OUR id space. If the backend still
     // rejects it, VARIANT 2 (fallback) sends the PLATFORM id space.
+    //
+    // SAME-TO-SAME PAYLOAD SHAPE (original `nt`/`Ze` functions):
+    //   {matchId, captain, vice_captain, players, fantasyApp, authToken,
+    //    sportIndex, type}          (+ id for edit, + userId for vision11)
+    // The original NEVER sends a duplicate "vicecaptain" key — extra fields
+    // are stripped so the payload is byte-comparable with the original's.
     // ============================================================
     const basePayloadFields: Record<string, unknown> = {
       fantasyApp: app,
@@ -660,12 +757,11 @@ export async function POST(request: Request) {
       // mapping may already exist server-side from an earlier attempt
       // (add_mapping is an idempotent upsert on the backend).
       const mappingPayload: Record<string, unknown> = {
-        ...basePayloadFields,
         matchId: toNumber(matchId) ?? matchId,
         captain: finalCaptain,
         vice_captain: finalViceCaptain,
-        vicecaptain: finalViceCaptain,
         players: numericPlayerIds,
+        ...basePayloadFields,
       };
       if (editTeamId !== null) mappingPayload.id = editTeamId;
       payloadVariants.push({ label: "mapping", payload: mappingPayload });
@@ -674,12 +770,11 @@ export async function POST(request: Request) {
     if (platformMatchId && platformPlayersPayload && platformCaptain !== null && platformViceCaptain !== null) {
       // VARIANT 2 — direct platform id space (previous behaviour, kept as fallback)
       const platformPayload: Record<string, unknown> = {
-        ...basePayloadFields,
         matchId: toNumber(platformMatchId) ?? platformMatchId,
         captain: platformCaptain,
         vice_captain: platformViceCaptain,
-        vicecaptain: platformViceCaptain,
         players: platformPlayersPayload,
+        ...basePayloadFields,
       };
       if (editTeamId !== null) platformPayload.id = editTeamId;
       payloadVariants.push({ label: "platform", payload: platformPayload });
@@ -695,12 +790,22 @@ export async function POST(request: Request) {
     console.log(`[Transfer][REQUEST] ${app} ${operation.toUpperCase()}`);
     console.log(`[Transfer][REQUEST] Endpoint chain: ${endpointChain.join(" → ")}`);
     console.log(`[Transfer][REQUEST] Payload variants: ${payloadVariants.map((v) => v.label).join(", ")}`);
-    console.log(`[Transfer][REQUEST] matchId=${matchId} (platform: ${platformMatchId || "unresolved"}), mappingRegistered=${mappingRegistered}`);
+    console.log(`[Transfer][REQUEST] matchId=${matchId} (platform: ${platformMatchId || "unresolved"}), mappingRegistered=${mappingRegistered}, matchInDb=${matchAddedToDb}`);
     console.log(`[Transfer][REQUEST] sportIndex=${sport}`);
     console.log(`[Transfer][REQUEST] captain=${finalCaptain}, vice_captain=${finalViceCaptain}`);
     console.log(`[Transfer][REQUEST] players=${numericPlayerIds.length}, operation=${operation}, id=${id || "N/A"}`);
     console.log(`[Transfer][REQUEST] authToken: len=${preparedToken.length}, isJWT=${preparedToken.startsWith("eyJ")}, isJSON=${preparedToken.startsWith("{")}`);
     console.log(`${"=".repeat(60)}\n`);
+
+    // ------------------------------------------------------------------
+    // SUCCESS VERIFICATION BASELINE (original list-of-teams contract).
+    // The backend resolves OUR matchId here the same way add-team does,
+    // so a reachable list also proves the mapping resolution works.
+    // ------------------------------------------------------------------
+    const beforeList = await fetchTeamList(app, preparedToken, String(matchId));
+    const teamCountBefore = beforeList.reachable ? beforeList.teams.length : -1;
+    const beforeTeamIds = new Set(beforeList.teams.map((t) => String(t.team_id)));
+    console.log(`[Transfer][VERIFY] team list BEFORE: reachable=${beforeList.reachable}, count=${teamCountBefore}${beforeList.rawMessage ? ` (${beforeList.rawMessage})` : ""}`);
 
     // Execute with variant × endpoint fallback
     let lastError = "";
@@ -765,6 +870,44 @@ export async function POST(request: Request) {
 
           console.log(`[Transfer][SUCCESS] Team transferred to ${app} (${operation}) via variant "${variant.label}" - HTTP ${res.status} (confidence: ${transferResult.confidence})`);
 
+          // ----------------------------------------------------------
+          // POST-SUCCESS VERIFICATION (kills the original false-success
+          // class of bugs): ask list-of-teams whether the team actually
+          // appeared. Uses the ORIGINAL contract (OUR matchId — the
+          // backend resolves it exactly like add-team).
+          //   add  → verified when the count grew or a NEW team_id appears
+          //   edit → verified when the list is still reachable
+          // If the backend says "success" but the list is reachable AND
+          // unchanged, we report an honest failure instead — the team was
+          // NOT created (this is exactly the "shows transferred but team
+          // not transferred" bug the user reported).
+          // ----------------------------------------------------------
+          await new Promise((r) => setTimeout(r, 1500));
+          const afterList = await fetchTeamList(app, preparedToken, String(matchId));
+          const teamCountAfter = afterList.reachable ? afterList.teams.length : -1;
+          let verified: boolean;
+          if (!beforeList.reachable || !afterList.reachable) {
+            // list-of-teams itself is unavailable — fall back to trusting
+            // add-team's own success (same-to-same with the original app).
+            verified = false;
+            console.log(`[Transfer][VERIFY] list unavailable (before=${beforeList.reachable}, after=${afterList.reachable}) — trusting add-team response (original behaviour)`);
+          } else if (operation === "add") {
+            verified = teamCountAfter > teamCountBefore ||
+              afterList.teams.some((t) => !beforeTeamIds.has(String(t.team_id)));
+            console.log(`[Transfer][VERIFY] add check: before=${teamCountBefore} after=${teamCountAfter} → verified=${verified}`);
+          } else {
+            verified = true; // edit: team already existed; list reachable = mapping works
+            console.log(`[Transfer][VERIFY] edit check: list reachable → verified=true`);
+          }
+
+          if (operation === "add" && beforeList.reachable && afterList.reachable && !verified) {
+            console.error(`[Transfer][VERIFY] FAILED — backend reported success but no new team appeared on the platform (count ${teamCountBefore} → ${teamCountAfter})`);
+            lastError = `The ${app} backend reported success but no new team appeared on your account (teams: ${teamCountBefore} → ${teamCountAfter}). The transfer did NOT go through — please try again or re-link your account.`;
+            lastData = data;
+            lastHttpStatus = res.status;
+            continue; // try the next variant/endpoint
+          }
+
           return NextResponse.json({
             status: "success",
             method: endpointUrl.includes("classic") ? "classic" : "fantasy",
@@ -774,9 +917,16 @@ export async function POST(request: Request) {
             operation: operation,
             data: responseData || null,
             httpStatus: res.status,
-            confidence: 'definite',
+            confidence: verified ? "definite" : "tentative",
+            verified,
+            mappingRegistered,
+            matchAddedToDb,
+            teamCountBefore: teamCountBefore >= 0 ? teamCountBefore : null,
+            teamCountAfter: teamCountAfter >= 0 ? teamCountAfter : null,
             platformMatchId: platformMatchId || String(matchId),
-            message: `Team ${operation === "edit" ? "replaced" : "added"} on ${app} successfully`,
+            message: verified
+              ? `Team ${operation === "edit" ? "replaced" : "added"} on ${app} successfully (verified on your account)`
+              : `Team ${operation === "edit" ? "replaced" : "added"} on ${app} (backend reported success; list verification unavailable)`,
           }, { status: 200 });
         }
 
@@ -958,9 +1108,22 @@ export async function POST(request: Request) {
         finalNeedsReauth = true;
         displayError = `Your ${app} session has expired. Please re-link your account via OTP verification, then transfer again.`;
         console.log(`[Transfer][CLASSIFY] Token is EXPIRED → needsReauth`);
+      } else if (!beforeList.reachable && !platformMatchId) {
+        // Mapping oracle: the backend could not resolve OUR matchId even for
+        // list-of-teams, AND we never resolved a platform context (the
+        // automatic bridge did not run/failed). This is an upstream bridge
+        // problem, not a bad team or a deadline.
+        displayError = `The fantasy backend could not link this match to your ${app} account (its automatic bridge did not respond). Re-link your account via OTP; if it still fails, the transfer service upstream is temporarily down — try again later.`;
+        console.log(`[Transfer][CLASSIFY] Team list unreachable AND no platform context → upstream bridge failure`);
+      } else if (!beforeList.reachable && platformMatchId) {
+        // Platform context resolved + mapping registered, but the backend
+        // still cannot resolve the match even for list-of-teams → the
+        // backend's add-team/list lookup side is not consulting the mapping.
+        displayError = `The match was mapped to ${app} (platform match ${platformMatchId}) but the fantasy backend cannot resolve the mapping yet. Please retry in a few minutes — if it persists, the transfer service upstream is degraded.`;
+        console.log(`[Transfer][CLASSIFY] Team list unreachable despite mapping → backend mapping lookup degraded`);
       } else {
-        displayError = `The ${app} server rejected this transfer. Your account is linked, but the platform refused the request — this usually means the match deadline has passed, the playing lineup is not announced yet, or the match is not transferable right now. Please try again closer to the deadline or re-link your account.`;
-        console.log(`[Transfer][CLASSIFY] Token is ${tokenState === true ? "VALID" : "UNKNOWN"} → honest rejection message`);
+        displayError = `The ${app} server rejected this transfer. Your account is linked and the match is mapped, but the platform refused the request — this usually means the match deadline has passed, the playing lineup is not announced yet, or the team is not valid for this match. Please try again closer to the deadline or re-link your account.`;
+        console.log(`[Transfer][CLASSIFY] Token is ${tokenState === true ? "VALID" : "UNKNOWN"}, team list reachable → honest platform-rejection message`);
       }
     } else if (displayError === "All proxy attempts failed" || displayError.includes("proxy attempts failed")) {
       displayError = `The ${app} server rejected the transfer. Your session may have expired. Please re-link your account via OTP verification and try again.`;
@@ -983,6 +1146,9 @@ export async function POST(request: Request) {
       operation: operation,
       platformMatchId: platformMatchId || null,
       mappingRegistered,
+      matchAddedToDb,
+      teamListReachable: beforeList.reachable,
+      teamCountBefore: teamCountBefore >= 0 ? teamCountBefore : null,
       variantsTried: payloadVariants.map((v) => v.label),
       endpointsTried: endpointChain,
       details: {

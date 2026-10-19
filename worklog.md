@@ -131,3 +131,34 @@ Stage Summary:
   may no longer consult the mapping table (V2-only era) — the failure UI now
   shows enough raw detail ([platform: ...]/[mapping: ...]) to confirm and the
   next escalation would require V2 Google-login integration.
+
+---
+Task ID: 5
+Agent: Z.ai Code (main)
+Task: "Now also not transfering team chek original apk and bypass same to same" — transfers still failing after tasks 3/4; replicate the ORIGINAL APK's exact transfer mechanism.
+
+Work Log:
+- Re-cloned repo (sandbox reset); previous commits (96dec6c, 34e36f8, 0ad25c3) confirmed on origin/main. Re-ran full dependency install + prisma db:push.
+- RE-ANALYSED the original APK bundle (scripts/apk-extract/web/main.js) line-by-line and found THE MISSING STEP every previous attempt overlooked:
+    * The original's automatic-mapper screen has an explicit "Add to DB" button:
+        POST /api/my11circle/add-match {my11circleMatchId: <PLATFORM match id>, sport:"cricket", authToken}
+        POST /api/jumbo/add-match     {jumboMatchId: <PLATFORM match id>, sport:"cricket"}
+      → the BACKEND fetches the match (squads/fantasy ids/time) FROM THE PLATFORM with the user's own session and stores it in its MAIN matches DB — the DB that /api/fantasy/add-team resolves matchIds against.
+    * LIVE PROBES CONFIRM: /api/my11circle/added-matches already lists USER-ADDED fixtures (118696/118701/118710) — the main DB is alive and populated exactly this way; add-match with a null authToken returns the platform's own 401 (proving it calls the platform).
+    * /api/fantasy/matches/cricket (the ADMIN list) is empty — that list is NOT the DB; add-team resolution depends on add-match entries + the mapping table, which tasks 3/4 never fed correctly (we registered the mapping but never added the match to the DB, and the client's old add-match call sent OUR possible11 id instead of the PLATFORM id).
+- IMPLEMENTED (server):
+    * NEW src/app/api/transfer/mapper/route.ts — the original "Automatic Mapper" as a visible staged API: INPUT → RESOLVE_PLATFORM_CONTEXT → MAP_PLAYERS → ADD_MATCH_TO_DB → REGISTER_MAPPING, each stage reported with ok/fail/skipped + detail. Fail-fast honest errors (PLATFORM_CONTEXT_FAILED) instead of generic rejections.
+    * api/transfer/route.ts:
+        - after platform resolution, NOW CALLS /api/{my11circle|jumbo}/add-match with the PLATFORM matchId + user authToken (idempotent; dream11 has no add-match endpoint — admin-managed — mapping registration remains its mechanism);
+        - add-team payload is now BYTE-EXACT to the original (`{matchId, captain, vice_captain, players, fantasyApp, authToken, sportIndex, type}` + id/userId) — removed our extra duplicate `vicecaptain` field;
+        - SUCCESS VERIFICATION via the ORIGINAL list-of-teams contract ({fantasyApp, matchId: OUR id, authToken} → teams_list): baseline before add-team, re-check after; add is VERIFIED only when a new team_id/count appears; if the backend claims success but the list is reachable and unchanged → honest failure (kills any remaining false-success path); list unreachable → fall back to trusting add-team (original behaviour);
+        - failure responses now carry matchAddedToDb/teamListReachable/teamCountBefore diagnostics and the classifier distinguishes: token expired / bridge down (no platform context) / mapping unresolved (context ok, list unreachable) / true platform rejection (list reachable).
+- IMPLEMENTED (client):
+    * bulkTransferToLinkedAccount: removed the WRONG add-match pre-call (it sent our local matchId); replaced with a MAPPER PRE-FLIGHT (/api/transfer/mapper) that resolves + registers everything ONCE before the queue and HARD-ABORTS the batch with the honest message when the platform context can't be established (no more 40 hopeless add-team calls); preflight platformMatchId seeds verification.
+- Verified in-browser end-to-end (dev server + agent-browser): license activation via UI, real match data (OMN-NEP, 94779), 40 teams generated, transfer modal with linked account, mapper pre-flight fires → fails honestly with the staged error → modal shows "40 failed" + per-team actionable message + "Relink via OTP" action; mutex released cleanly. Server log confirms full staged flow. tsc: 84 pre-existing (0 new); eslint: 9 pre-existing (0 new).
+- NOTE: transfer with a REAL linked session is the only remaining untested path (needs a real OTP); every stage is now individually observable in the UI/server logs so any future failure pinpoints its exact stage.
+
+Stage Summary:
+- Transfer now performs the ORIGINAL APK's full automatic-mapper contract: fantasy-app/list → add-match (PLATFORM id into the backend main DB) → getplayerdata → name-mapping → add_mapping → add-team with OUR ids (byte-exact original payload) → list-of-teams success verification.
+- Success is only reported when the team actually appears on the account (or list verification is unavailable); failures name the exact broken stage.
+- REQUIRES: owner redeploy + APK rebuild.

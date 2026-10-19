@@ -3003,38 +3003,73 @@ export async function bulkTransferToLinkedAccount(
     // so we don't need the initial count either. This saves ~1s on startup.
     let initialTeamCount = 0;
     // We'll fetch lazily if a tentative-success happens (see CASE 2 below).
+    // Platform matchId resolved by the mapper pre-flight (used as the
+    // list-of-teams verification matchId fallback).
+    let preflightPlatformMatchId: string | null = null;
 
-    // === STEP 2.5: AUTO-REGISTER MATCH IN BACKEND DB (my11circle / jumbo) ===
-    // The original APK required matches to be registered in the backend DB
-    // (admin "Add to DB" button → POST /api/{platform}/add-match with the
-    // user's authToken) BEFORE teams could be transferred for that match.
-    // The backend's own matches list is currently EMPTY — without registration
-    // add-team rejects the transfer with a generic "Something Went Wrong!".
-    // We register automatically here: idempotent (backend answers
-    // "already exists" → success), non-fatal (if it fails we still try the
-    // transfer and surface its real error), and only for the platforms that
-    // have an add-match endpoint (my11circle, jumbo — same as the APK).
-    if (params.fantasyApp === "my11circle" || params.fantasyApp === "jumbo") {
-      try {
-        console.log(`[bulkTransfer] 📋 Auto-registering match ${params.matchId} for ${params.fantasyApp} (add-match)...`);
-        const regRes = await fetch(`/api/matches/add`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            platform: params.fantasyApp,
-            matchId: String(params.matchId),
-            sport: "cricket",
-            authToken: params.authToken,
-          }),
-          signal: AbortSignal.timeout(20000),
-        });
-        const regData = await regRes.json().catch(() => ({ status: "fail" }));
-        console.log(`[bulkTransfer] 📋 add-match result: ${regData.status} ${regData.message || ""} ${regData.alreadyExists ? "(already existed)" : ""}`);
-      } catch (regErr) {
-        // Non-fatal — the transfer attempt will surface the real error if
-        // registration truly failed.
-        console.warn(`[bulkTransfer] add-match registration failed (continuing):`, regErr instanceof Error ? regErr.message : regErr);
+    // === STEP 2.5: MAPPER PRE-FLIGHT (original automatic-mapper contract) ===
+    // The original APK resolves the PLATFORM match, registers it in the
+    // backend's main matches DB ("Add to DB") and registers the id-mapping
+    // BEFORE any add-team call. Our server does all of that per transfer call
+    // (cached), so here we just run it ONCE up-front so failures are visible
+    // BEFORE we try every team — and so the first add-team isn't slowed by
+    // resolution. Non-fatal: the per-team route re-checks with cache.
+    try {
+      console.log(`[bulkTransfer] 🗺️ Mapper pre-flight for ${params.fantasyApp} match ${params.matchId}...`);
+      const mapperRes = await fetch(`/api/transfer/mapper`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fantasyApp: params.fantasyApp,
+          authToken: params.authToken,
+          matchId: String(params.matchId),
+          leftTeamName: params.leftTeamName,
+          rightTeamName: params.rightTeamName,
+          matchTime: params.matchTime,
+          players: teams[0]?.playerNames?.length
+            ? teams[0].playerIds.map((id, i) => ({ id, name: teams[0].playerNames?.[i] || "", teamIndex: teams[0].playerTeamIndex?.[i] }))
+            : undefined,
+          captainId: teams[0]?.captainId,
+          viceCaptainId: teams[0]?.viceCaptainId,
+        }),
+        signal: AbortSignal.timeout(45000),
+      });
+      const mapperData = await mapperRes.json().catch(() => ({ status: "fail" }));
+      if (mapperData.status === "success") {
+        console.log(
+          `[bulkTransfer] 🗺️ Mapper OK: platform match ${mapperData.platformMatchId}` +
+          ` (${mapperData.platformLeftName || "?"} vs ${mapperData.platformRightName || "?"}),` +
+          ` players=${mapperData.platformPlayerCount}, mapped=${mapperData.mappedCount},` +
+          ` inDb=${mapperData.matchAddedToDb}, mapping=${mapperData.mappingRegistered}`
+        );
+        if (mapperData.platformMatchId) {
+          preflightPlatformMatchId = String(mapperData.platformMatchId);
+        }
+      } else {
+        // Mapper could not establish the platform context. The per-team calls
+        // will retry with the same result — surface it honestly NOW instead
+        // of failing 40 times.
+        if (mapperData.code === "PLATFORM_CONTEXT_FAILED") {
+          console.error(`[bulkTransfer] ❌ Mapper pre-flight FAILED: ${mapperData.error}`);
+          bulkTransferMutex.release();
+          return {
+            totalAttempted: teams.length,
+            successCount: 0,
+            failCount: teams.length,
+            results: teams.map((t) => ({
+              teamNo: t.teamNo,
+              success: false,
+              message: mapperData.error || "Could not match this fixture on the platform using your linked session.",
+            })),
+            transferLinks: [],
+            needsReauth: true,
+            blockReason: mapperData.error,
+          };
+        }
+        console.warn(`[bulkTransfer] ⚠️ Mapper pre-flight soft-failed (${mapperData.code || "UNKNOWN"}) — continuing with per-team resolution`);
       }
+    } catch (mapperErr) {
+      console.warn(`[bulkTransfer] mapper pre-flight error (continuing):`, mapperErr instanceof Error ? mapperErr.message : mapperErr);
     }
 
     // === STEP 3: PRE-TRANSFER AUTH VERIFY (only if skipVerify=false) ===
@@ -3132,7 +3167,7 @@ export async function bulkTransferToLinkedAccount(
     // PROPER TRANSFER FIX — the PLATFORM's own matchId (resolved server-side)
     // is needed ONLY for list-of-teams verification. Transfer requests must
     // keep OUR local matchId — it's the server-side resolver's cache key.
-    let verifyMatchId: string | null = null;
+    let verifyMatchId: string | null = preflightPlatformMatchId;
     let latestKnownTeamCount = initialTeamCount;
     let completedCount = 0;
     let batchNeedsReauth = false; // set if ANY worker hits a permanent auth failure
