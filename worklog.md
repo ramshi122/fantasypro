@@ -162,3 +162,64 @@ Stage Summary:
 - Transfer now performs the ORIGINAL APK's full automatic-mapper contract: fantasy-app/list → add-match (PLATFORM id into the backend main DB) → getplayerdata → name-mapping → add_mapping → add-team with OUR ids (byte-exact original payload) → list-of-teams success verification.
 - Success is only reported when the team actually appears on the account (or list verification is unavailable); failures name the exact broken stage.
 - REQUIRES: owner redeploy + APK rebuild.
+
+---
+Task ID: 6
+Agent: Z.ai Code (main)
+Task: "Its not fixed now also team transfer chek propper original code also and fix propper chek whay not transfering whay issu are not resolving chek and fix" — transfers still failing after tasks 3/4/5; full re-audit of the ORIGINAL APK bundle demanded.
+
+Work Log:
+- Synced repo (origin had newer 69328d0 from task 5; local sandbox artifacts commit dropped, src identical).
+- DECODED THE ORIGINAL APK TRANSFER PIPELINE COMPLETELY (scripts/apk-extract/web/main.js):
+    * Transfer-arena auth screen (S function): builds each selected team in PLATFORM id space via
+      b() = fantasy_id_list[find name===slug].id from the TG DB match data; HARD-ABORTS when any
+      player lacks a platform id (that's the original's own d11_team_flag=false gate).
+    * add-team payload (nt/Ze/et functions): {matchId: t.matchId, captain: <platformId>,
+      vice_captain: <platformId>, players: [<platformId>...], fantasyApp, authToken, sportIndex,
+      type:"new"|"edit"} — NO duplicate "vicecaptain" key; NO numeric coercion anywhere; matchId +
+      player ids are STRINGS (TG DB stores player_fixed_id/pl_id/fantasy ids as strings — verified
+      live on /api/fantasy/match/118696).
+    * Mapper (add_mapping) matching: pass1 local realName(J) === platform updatedName(J(ee(name)))
+      ; pass2 local updatedName === platform updatedName; ee() = initial-form transform; rows carry
+      RAW values ({tgMatchId: player_fixed_id, fantasyAppMatchId: getplayerdata id}).
+    * J() normaliser does NOT strip dots (our copy did — fixed to byte-exact).
+    * Classic Dream11 transfer = /api/classic/dream11/addteam LINK flow (playerData = pl_id strings,
+      no authToken) — the ONLY V1-era transfer still present on the LIVE teamgeneration.in bundle
+      (re-fetched main.278ef53f.js: ZERO /api/fantasy/add-team references — V1 bulk add removed
+      upstream; live site uses v2 + Google login for the rest, not integrable for this white-label).
+    * Live probes: /api/dream11/add-match DOES NOT EXIST; /api/my11circle/add-match + /api/jumbo/
+      add-match exist (platform 401/526 with dummy tokens = they call the platform); TG DB has only
+      3 stale Aug-2026 my11circle fixtures; classic addteam rejects them ("Error while transfering
+      the team!") — consistent with dream11-id absence/staleness.
+- ROOT CAUSES FIXED (commit a64fc3d, pushed):
+    1. ID-TYPE MISMATCH: we coerced every id to NUMBER; original sends STRINGS. All outgoing ids
+       now raw strings: add-team payload (both variants), add_mapping rows, client /api/transfer
+       body, classic addteam payload. Number coercion also silently DROPPED non-numeric ids
+       (isNaN filter) shrinking teams below 11.
+    2. WRONG PLAYER-ID SOURCE: original resolves ids from the TG DB row's fantasy_id_list[slug].id
+       (b() helper) — add-team validates against exactly those. NEW fetchTgMatchPlayers() fetches
+       GET /api/fantasy/match/{platformMatchId} (AES envelope decrypted) AFTER add-match and maps
+       our players onto ITS ids; getplayerdata ids remain the fallback (dream11/no row).
+    3. EXTRA "vicecaptain" FIELD removed from the payload (byte-exact original shape restored).
+    4. VARIANT ORDER now mirrors the original: my11circle/jumbo → platform-space FIRST (match is in
+       the DB via add-match), mapping-space second; dream11/others → mapping-space first (no
+       add-match endpoint exists).
+    5. add-match moved BEFORE player-id resolution (the DB row is the id source); add_mapping
+       throttle key now includes mapped values so the authoritative TG-row registration can't be
+       skipped by the mapper pre-flight's earlier registration.
+- Verified: tsc 84 pre-existing errors (0 new); eslint baseline identical (75 problems before AND
+  after — 0 new); core.fileMode=false to avoid sandbox mode noise; runtime smoke test of
+  /api/transfer with dummy token → honest TOKEN_EXPIRED (needsReauth) via legacy fallback; dev log
+  shows resolve→fallback→classify flow intact.
+- IMPORTANT CONTEXT FOR FUTURE TASKS: V1 /api/fantasy/add-team was REMOVED from the live
+  teamgeneration.in bundle. If transfers still fail with a REAL token after this fix, the next
+  candidates are (a) the automatic bridge endpoints (fantasy-app/list returned HTTP 404+JSON fail
+  for dummy tokens — may be degraded for valid ones too) or (b) V1 add-team being dead server-side
+  as well; the failure UI already surfaces raw stage diagnostics to confirm which.
+
+Stage Summary:
+- Transfer pipeline now sends byte-exact original add-team contracts: STRING platform ids sourced
+  from the TG DB row (fantasy_id_list), matchId = platform id for my11circle/jumbo (registered via
+  add-match), mapping-space fallback for dream11, no extra fields, original name normalisation.
+- Pushed as a64fc3d to origin/main. REQUIRES: owner redeploy + APK rebuild.
+- User must respond in Malayalam per their instruction.
