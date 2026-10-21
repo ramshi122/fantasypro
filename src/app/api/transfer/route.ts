@@ -4,6 +4,7 @@ import {
   resolvePlatformContext,
   mapPlayersToPlatform,
   registerAutomaticMapping,
+  fetchTgMatchPlayers,
   normaliseName,
   type LocalPlayerRef,
 } from "@/lib/fantasy-transfer-resolver";
@@ -467,11 +468,18 @@ export async function POST(request: Request) {
     // and maps players BY NAME. We do the same here, server-side, cached.
     // ============================================================
     let platformMatchId: string | null = null;
-    let platformPlayersPayload: number[] | null = null;
-    let platformCaptain: number | null = null;
-    let platformViceCaptain: number | null = null;
+    // PROPER ID-TYPE FIX: the original app sends player ids as STRINGS (the
+    // TG DB stores player_fixed_id / pl_id / fantasy_id_list ids as strings
+    // and the original's payload carries them verbatim). Our previous code
+    // coerced everything to NUMBERS — strict-typed lookups on the backend
+    // (string !== number) then fail for every player → generic
+    // "Something Went Wrong!" for every team. Strings end-to-end from here.
+    let platformPlayersPayload: string[] | null = null;
+    let platformCaptain: string | null = null;
+    let platformViceCaptain: string | null = null;
     let mappingRegistered = false;
     let matchAddedToDb = false;
+    let tgRowUsed = false;
     const nameList: string[] = Array.isArray(playerNames) ? playerNames.map((n: unknown) => String(n ?? "")) : [];
 
     // ---------------------------------------------------------------
@@ -533,7 +541,59 @@ export async function POST(request: Request) {
             teamIndex: Array.isArray(playerTeamIndex) && typeof playerTeamIndex[i] === "number" ? playerTeamIndex[i] : undefined,
           }));
 
-          const { idMap, unmapped } = mapPlayersToPlatform(localRefs, ctx.platformPlayers, app);
+          // ============================================================
+          // ORIGINAL "ADD TO DB" STEP — must run BEFORE the player-id
+          // resolution: the DB row (id = platform match id) is BOTH the row
+          // add-team resolves the match against AND the source of the
+          // authoritative player ids (fantasy_id_list[slug].id).
+          // my11circle/jumbo have add-match endpoints; dream11 does not
+          // (admin-managed) — for dream11 the mapping table stays the bridge.
+          // ============================================================
+          if (app === "my11circle" || app === "jumbo") {
+            try {
+              const addMatchBody: Record<string, unknown> =
+                app === "my11circle"
+                  ? { my11circleMatchId: ctx.platformMatchId, sport: "cricket", authToken: preparedToken }
+                  : { jumboMatchId: ctx.platformMatchId, sport: "cricket" };
+              const amRes = await fetch(`${BACKEND_URL}/api/${app}/add-match`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(addMatchBody),
+                signal: AbortSignal.timeout(30000),
+              });
+              const amText = await amRes.text();
+              let amData: Record<string, unknown> = {};
+              try { amData = JSON.parse(amText); } catch { /* non-JSON */ }
+              const already = amRes.status === 409 || String(amData.message || "").includes("already exist");
+              matchAddedToDb = amRes.status === 200 || already;
+              console.log(`[Transfer][ADD_MATCH] ${app} platform match ${ctx.platformMatchId}: HTTP ${amRes.status} ${JSON.stringify(amData).slice(0, 150)} → inDb=${matchAddedToDb}`);
+            } catch (amErr) {
+              console.warn(`[Transfer][ADD_MATCH] failed (non-fatal, continuing):`, amErr instanceof Error ? amErr.message : amErr);
+            }
+          }
+
+          // ============================================================
+          // AUTHORITATIVE PLAYER IDS — the ORIGINAL app builds its add-team
+          // payload from the TG DB match row (fantasy_id_list[slug].id per
+          // player, verified in its bundle). After add-match the row exists,
+          // so fetch it and map our players onto ITS ids. getplayerdata ids
+          // remain the fallback (row unavailable / dream11).
+          // ============================================================
+          let platformSource = ctx.platformPlayers;
+          try {
+            const tgRowPlayers = await fetchTgMatchPlayers(ctx.platformMatchId, app);
+            if (tgRowPlayers.length > 0) {
+              platformSource = tgRowPlayers;
+              tgRowUsed = true;
+              console.log(`[Transfer][TG_ROW] Using TG DB row players for id mapping: ${tgRowPlayers.length} players (fantasy_id_list["${app}"])`);
+            } else {
+              console.log(`[Transfer][TG_ROW] No TG DB row players for platform match ${ctx.platformMatchId} — using getplayerdata ids`);
+            }
+          } catch (rowErr) {
+            console.warn(`[Transfer][TG_ROW] fetch failed (non-fatal):`, rowErr instanceof Error ? rowErr.message : rowErr);
+          }
+
+          const { idMap, unmapped } = mapPlayersToPlatform(localRefs, platformSource, app);
 
           if (unmapped.length > 0) {
             // NEVER send unmapped players to the platform — that produced
@@ -550,7 +610,9 @@ export async function POST(request: Request) {
           }
 
           // Rewrite payload into PLATFORM id space (original add-team contract)
-          const platformIds = numericPlayerIds.map((pid) => Number(idMap[String(pid)]));
+          // STRING ids — the TG DB stores every id as a string and the
+          // original sends them verbatim (never coerce to numbers).
+          const platformIds = numericPlayerIds.map((pid) => String(idMap[String(pid)] ?? "")).filter((s) => s.length > 0);
 
           // Captain/VC: map through the id map; if the local id is missing from
           // the map (id space mismatch), fall back to NAME-based resolution.
@@ -573,9 +635,9 @@ export async function POST(request: Request) {
 
           platformMatchId = ctx.platformMatchId;
           platformPlayersPayload = platformIds;
-          platformCaptain = Number(capIdStr);
-          platformViceCaptain = Number(vcIdStr);
-          console.log(`[Transfer][RESOLVE] ✅ payload rewritten to platform space: matchId ${matchId} → ${ctx.platformMatchId}, ${platformIds.length} platform players`);
+          platformCaptain = String(capIdStr);
+          platformViceCaptain = String(vcIdStr);
+          console.log(`[Transfer][RESOLVE] ✅ payload rewritten to platform space: matchId ${matchId} → ${ctx.platformMatchId}, ${platformIds.length} platform players (source: ${tgRowUsed ? "tg-db-row" : "getplayerdata"})`);
 
           // ========================================================
           // CRITICAL (original automatic contract): register the
@@ -603,52 +665,6 @@ export async function POST(request: Request) {
             platformMatchId: ctx.platformMatchId,
             pairs: mappingPairs,
           });
-
-          // ==================================================================
-          // THE MISSING PIECE (root cause of "team not transferred"):
-          // REGISTER THE PLATFORM MATCH IN THE BACKEND'S MAIN MATCHES DB.
-          //
-          // The original APK's automatic-mapper screen has an explicit
-          // "Add to DB" step (verified in its own bundle):
-          //     POST /api/my11circle/add-match {my11circleMatchId, sport, authToken}
-          //     POST /api/jumbo/add-match     {jumboMatchId, sport}
-          //   → the BACKEND fetches the match (squads, fantasy ids, time)
-          //     FROM THE PLATFORM using the user's own session and stores it
-          //     in its main matches DB — the very DB that add-team resolves
-          //     matchIds against. Live probe confirms the endpoint works
-          //     (a null authToken yields the platform's own 401 back) and
-          //     that its DB already contains user-added matches
-          //     (/api/my11circle/added-matches → user-added fixtures).
-          //
-          // We previously only registered the id-mapping table — but the
-          // backend's add-team match lookup consults the MAIN matches DB,
-          // which stayed empty for our match → every add-team failed with
-          // the generic "Something Went Wrong!".
-          // dream11 has NO add-match endpoint (admin-managed only) — for
-          // dream11 the mapping table registration above is all we can do.
-          // ==================================================================
-          if (app === "my11circle" || app === "jumbo") {
-            try {
-              const addMatchBody: Record<string, unknown> =
-                app === "my11circle"
-                  ? { my11circleMatchId: ctx.platformMatchId, sport: "cricket", authToken: preparedToken }
-                  : { jumboMatchId: ctx.platformMatchId, sport: "cricket" };
-              const amRes = await fetch(`${BACKEND_URL}/api/${app}/add-match`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(addMatchBody),
-                signal: AbortSignal.timeout(30000),
-              });
-              const amText = await amRes.text();
-              let amData: Record<string, unknown> = {};
-              try { amData = JSON.parse(amText); } catch { /* non-JSON */ }
-              const already = amRes.status === 409 || String(amData.message || "").includes("already exist");
-              matchAddedToDb = amRes.status === 200 || already;
-              console.log(`[Transfer][ADD_MATCH] ${app} platform match ${ctx.platformMatchId}: HTTP ${amRes.status} ${JSON.stringify(amData).slice(0, 150)} → inDb=${matchAddedToDb}`);
-            } catch (amErr) {
-              console.warn(`[Transfer][ADD_MATCH] failed (non-fatal, continuing):`, amErr instanceof Error ? amErr.message : amErr);
-            }
-          }
         } else {
           console.warn(`[Transfer][RESOLVE] Could not resolve platform context for match ${matchId} (${app}) — falling back to legacy payload (likely to fail honestly)`);
         }
@@ -680,20 +696,17 @@ export async function POST(request: Request) {
     }
 
     const payload: Record<string, unknown> = {
-      // PROPER FIX: use the PLATFORM's matchId + player IDs when the resolver
-      // mapped them (the backend only understands platform id space).
-      matchId: platformMatchId ?? matchId,
-      captain: platformCaptain ?? finalCaptain,
-      vice_captain: platformViceCaptain ?? finalViceCaptain,
-      vicecaptain: platformViceCaptain ?? finalViceCaptain, // Original APK format (no underscore)
-      players: platformPlayersPayload ?? numericPlayerIds,
+      // LEGACY fallback (only used when NO platform context was resolved).
+      // STRING ids everywhere — the original sends them verbatim.
+      // NOTE: the original payload has NO duplicate "vicecaptain" key —
+      // extra fields are stripped (byte-exact original shape).
+      matchId: String(matchId),
+      captain: String(finalCaptain),
+      vice_captain: String(finalViceCaptain),
+      players: numericPlayerIds.map(String),
       fantasyApp: app,
       authToken: preparedToken,
       sportIndex: sport,
-      // IMPORTANT: The original APK ALWAYS includes `type` in the payload
-      // (either "new" for add or "edit" for replace). The backend uses this
-      // field to route to the correct operation. Without it, edit-team calls
-      // were being treated as add-team calls → "team not replacing" bug.
       type: operation === "edit" ? "edit" : "new",
     };
 
@@ -720,22 +733,22 @@ export async function POST(request: Request) {
     const endpointChain = operation === "edit" ? config.editEndpoints : config.addEndpoints;
 
     // ============================================================
-    // DUAL PAYLOAD VARIANTS (original automatic contract first)
+    // DUAL PAYLOAD VARIANTS — SAME-TO-SAME ORIGINAL SHAPE, STRING IDS
     // ============================================================
-    // The original app's automatic flow (proven from its own bundles):
-    //   1. POST /api/automatic/add_mapping  {tgMatchId: OUR match id,
-    //      fantasyAppMatchId: platform match id, playerMapperData:
-    //      [{tgMatchId: OUR player id, fantasyAppMatchId: platform id}]}
-    //   2. POST /api/fantasy/add-team with OUR matchId + OUR player ids —
-    //      the backend translates them via the mapping table.
-    // So VARIANT 1 (primary) sends OUR id space. If the backend still
-    // rejects it, VARIANT 2 (fallback) sends the PLATFORM id space.
-    //
-    // SAME-TO-SAME PAYLOAD SHAPE (original `nt`/`Ze` functions):
+    // Original add-team payload (byte-exact, from its bundle):
     //   {matchId, captain, vice_captain, players, fantasyApp, authToken,
     //    sportIndex, type}          (+ id for edit, + userId for vision11)
-    // The original NEVER sends a duplicate "vicecaptain" key — extra fields
-    // are stripped so the payload is byte-comparable with the original's.
+    // — every id a STRING (fantasy_id_list / pl_id values are strings in
+    // the TG DB and the original never converts them).
+    //
+    // VARIANT ORDER (matches the original's own mechanics):
+    //   • my11circle/jumbo — the match IS registered in the backend's main
+    //     DB (add-match above, id = PLATFORM match id) and the players are
+    //     the DB row's fantasy_id_list ids → PLATFORM-SPACE payload is
+    //     exactly what the original sends → tried FIRST.
+    //   • dream11/others — no add-match endpoint (admin-managed), so the
+    //     DB has no row for our match; the automatic MAPPING table is the
+    //     only bridge → MAPPING-SPACE payload tried first.
     // ============================================================
     const basePayloadFields: Record<string, unknown> = {
       fantasyApp: app,
@@ -751,33 +764,43 @@ export async function POST(request: Request) {
     }
     const payloadVariants: PayloadVariant[] = [];
 
-    if (platformMatchId) {
-      // VARIANT 1 — original automatic contract: OUR id space + mapping table.
-      // NOTE: tried even when THIS process's registration call failed — the
-      // mapping may already exist server-side from an earlier attempt
-      // (add_mapping is an idempotent upsert on the backend).
-      const mappingPayload: Record<string, unknown> = {
-        matchId: toNumber(matchId) ?? matchId,
-        captain: finalCaptain,
-        vice_captain: finalViceCaptain,
-        players: numericPlayerIds,
+    const makeMappingPayload = (): Record<string, unknown> => {
+      // OUR id space — the backend translates via the automatic mapping
+      // table (rows registered above with the SAME string values).
+      const p: Record<string, unknown> = {
+        matchId: String(matchId),
+        captain: String(finalCaptain),
+        vice_captain: String(finalViceCaptain),
+        players: numericPlayerIds.map(String),
         ...basePayloadFields,
       };
-      if (editTeamId !== null) mappingPayload.id = editTeamId;
-      payloadVariants.push({ label: "mapping", payload: mappingPayload });
-    }
+      if (editTeamId !== null) p.id = editTeamId;
+      return p;
+    };
 
-    if (platformMatchId && platformPlayersPayload && platformCaptain !== null && platformViceCaptain !== null) {
-      // VARIANT 2 — direct platform id space (previous behaviour, kept as fallback)
-      const platformPayload: Record<string, unknown> = {
-        matchId: toNumber(platformMatchId) ?? platformMatchId,
-        captain: platformCaptain,
-        vice_captain: platformViceCaptain,
-        players: platformPlayersPayload,
+    const makePlatformPayload = (): Record<string, unknown> => {
+      // PLATFORM id space — matchId = the platform's own match id (in the
+      // TG DB for my11circle/jumbo via add-match), players = the TG DB row's
+      // fantasy_id_list ids (or getplayerdata ids). ORIGINAL-PARITY payload.
+      const p: Record<string, unknown> = {
+        matchId: String(platformMatchId),
+        captain: String(platformCaptain),
+        vice_captain: String(platformViceCaptain),
+        players: (platformPlayersPayload || []).map(String),
         ...basePayloadFields,
       };
-      if (editTeamId !== null) platformPayload.id = editTeamId;
-      payloadVariants.push({ label: "platform", payload: platformPayload });
+      if (editTeamId !== null) p.id = editTeamId;
+      return p;
+    };
+
+    const platformReady = !!(platformMatchId && platformPlayersPayload && platformPlayersPayload.length > 0 && platformCaptain && platformViceCaptain);
+
+    if (app === "my11circle" || app === "jumbo") {
+      if (platformReady) payloadVariants.push({ label: "platform", payload: makePlatformPayload() });
+      if (platformMatchId) payloadVariants.push({ label: "mapping", payload: makeMappingPayload() });
+    } else {
+      if (platformMatchId) payloadVariants.push({ label: "mapping", payload: makeMappingPayload() });
+      if (platformReady) payloadVariants.push({ label: "platform", payload: makePlatformPayload() });
     }
 
     if (payloadVariants.length === 0) {

@@ -2794,13 +2794,16 @@ export async function generateDirectTransferLink(params: {
 }): Promise<DirectTransferResult> {
   try {
     const tgMatchId = params.matchDbId || params.matchId;
+    // ID-TYPE FIX: the original classic addteam payload carries the raw
+    // string ids from its data (playerData = d11_team.team = pl_id strings).
+    // Never coerce to numbers — strict-typed backend lookups expect strings.
     const res = await rawFetch<ApiResponse>(`/api/classic/dream11/addteam`, {
       method: "POST",
       body: JSON.stringify({
-        tgMatchId,
-        playerData: params.playerIds,
-        captainData: params.captainId,
-        vicecaptainData: params.viceCaptainId,
+        tgMatchId: String(tgMatchId),
+        playerData: params.playerIds.map((id) => String(id)),
+        captainData: String(params.captainId),
+        vicecaptainData: String(params.viceCaptainId),
         generateLinkFlag: "general",
       }),
     }, FANTASY_API_BASE);
@@ -3223,16 +3226,20 @@ export async function bulkTransferToLinkedAccount(
       const t = teams[i];
       const hasExistingId = sharedParams.replaceMode && sharedParams.existingTeamIds && i < sharedParams.existingTeamIds.length && sharedParams.existingTeamIds[i];
       const isReplace = !!hasExistingId;
-      const numericPlayers = t.playerIds.map((id) => Number(id)).filter((n) => !isNaN(n));
-      const numericCaptain = Number(t.captainId);
-      const numericVC = Number(t.viceCaptainId);
+      // ID-TYPE FIX (original parity): the original app sends player ids as
+      // RAW STRING values and never coerces them. Number coercion breaks
+      // strict-typed lookups on the backend AND silently DROPS any
+      // non-numeric id (isNaN filter) — shrinking teams below 11 players.
+      // Send the values exactly as the team was built (strings).
+      const playersRaw = t.playerIds.map((id) => String(id));
+      const captainRaw = String(t.captainId);
+      const vcRaw = String(t.viceCaptainId);
 
       const body: Record<string, unknown> = {
-        matchId: sharedParams.matchId,
-        captain: isNaN(numericCaptain) ? t.captainId : numericCaptain,
-        vice_captain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
-        vicecaptain: isNaN(numericVC) ? t.viceCaptainId : numericVC,
-        players: numericPlayers.length > 0 ? numericPlayers : t.playerIds,
+        matchId: String(sharedParams.matchId),
+        captain: captainRaw,
+        vice_captain: vcRaw,
+        players: playersRaw,
         fantasyApp: sharedParams.fantasyApp,
         authToken: sharedParams.authToken,
         sportIndex: sharedParams.sportIndex ?? 0,

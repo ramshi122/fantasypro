@@ -66,14 +66,16 @@ export interface ResolvedPlatformContext {
 /* Name normalisation — exact parity with the original app            */
 /* ------------------------------------------------------------------ */
 
-/** Original `J()` normaliser: strip spaces/quotes/dashes, lowercase. */
+/** Original `J()` normaliser — EXACT parity: strip spaces/quotes/dashes, lowercase.
+ *  (Verified in the original bundle: J=e=>(e=e.replaceAll(" ","")...)
+ *   .replaceAll("'","").replaceAll('"',"").replaceAll("-","").toLowerCase()
+ *  NOTE: the original does NOT strip dots — keep this byte-exact.) */
 export function normaliseName(name: string): string {
   return String(name || "")
     .replaceAll(" ", "")
     .replaceAll("'", "")
     .replaceAll('"', "")
     .replaceAll("-", "")
-    .replaceAll(".", "")
     .toLowerCase();
 }
 
@@ -307,9 +309,20 @@ async function writeCache(
 /** Mappings already registered during this server process (throttle). */
 const mappingRegisteredInProcess = new Set<string>();
 
-function toPlatformIdValue(v: string): number | string {
-  const n = parseInt(v, 10);
-  return isNaN(n) ? v : n;
+/**
+ * THE ORIGINAL APP SENDS IDS AS RAW VALUES, EXACTLY AS THEY COME FROM THE
+ * DATA — and in the TG backend's own DB every player id IS A STRING
+ * (verified live: /api/fantasy/match/118696 → players have
+ * player_fixed_id:"86424", pl_id:"86424", fantasy_id_list[{id:"86424"}]).
+ * The original's add-team payload therefore carries STRING player ids and
+ * its add_mapping rows carry the same raw values. Our previous code
+ * coerced everything to NUMBERS — a strict-typed lookup on the backend
+ * (string === number) never matches, which reproduces the generic
+ * "Something Went Wrong!" rejection for every team.
+ * → NEVER coerce ids here. Strings in, strings out (original parity).
+ */
+function toRawIdValue(v: string): string {
+  return String(v ?? "").trim();
 }
 
 /**
@@ -332,16 +345,20 @@ export async function registerAutomaticMapping(params: {
   const usable = (pairs || []).filter((p) => p.localId && p.platformId);
   if (usable.length === 0) return false;
 
-  const key = `${fantasyApp}:${tgMatchId}:${platformMatchId}:${usable.length}`;
+  // Throttle key INCLUDES the mapped platform id values: the mapper
+  // pre-flight may register getplayerdata ids while the transfer route
+  // registers the authoritative TG-DB-row ids — those must NOT collide
+  // (a same-shape key would silently skip the authoritative registration).
+  const key = `${fantasyApp}:${tgMatchId}:${platformMatchId}:${usable.map((p) => p.platformId).join(",")}`;
   if (mappingRegisteredInProcess.has(key)) return true;
 
   const body = {
-    tgMatchId: toPlatformIdValue(tgMatchId),
-    fantasyAppMatchId: toPlatformIdValue(platformMatchId),
+    tgMatchId: toRawIdValue(tgMatchId),
+    fantasyAppMatchId: toRawIdValue(platformMatchId),
     fantasyAppName: fantasyApp,
     playerMapperData: usable.map((p) => ({
-      tgMatchId: toPlatformIdValue(p.localId),
-      fantasyAppMatchId: toPlatformIdValue(p.platformId),
+      tgMatchId: toRawIdValue(p.localId),
+      fantasyAppMatchId: toRawIdValue(p.platformId),
     })),
   };
 
@@ -354,6 +371,71 @@ export async function registerAutomaticMapping(params: {
     console.warn(`[TransferResolver] add_mapping registration failed (non-fatal): http=${res.httpStatus} body=${JSON.stringify(res.data || {}).slice(0, 200)}`);
   }
   return ok;
+}
+
+/* ------------------------------------------------------------------ */
+/* TG DB MATCH ROW — the authoritative platform player ids            */
+/* ------------------------------------------------------------------ */
+/* The original app builds its teams from ITS OWN match data endpoint:
+ *     GET {backend}/api/fantasy/match/{matchId}
+ *   → {status:"success", data:{...AES-encrypted fields...}}
+ * Each player in left_team_players / right_team_players carries
+ *   player_fixed_id, pl_id and fantasy_id_list: [{name: slug, id}]
+ * — and the ORIGINAL transfer resolves every player's id through
+ * fantasy_id_list[slug].id (verified in its bundle: the b() helper).
+ * add-team validates the sent players against EXACTLY these ids.
+ *
+ * → After registering the match in the DB (add-match), we fetch this row
+ * and map our players onto ITS ids. That makes our add-team payload
+ * byte-equivalent to what the original app would send for the same match.
+ */
+export async function fetchTgMatchPlayers(
+  platformMatchId: string,
+  fantasyApp: string,
+  timeoutMs = 15000
+): Promise<PlatformPlayer[]> {
+  try {
+    const res = await fetch(`${FANTASY_API_BASE}/api/fantasy/match/${encodeURIComponent(platformMatchId)}`, {
+      method: "GET",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const text = await res.text();
+    let parsed: unknown = null;
+    try { parsed = JSON.parse(text); } catch { parsed = null; }
+    if (res.status !== 200 || !parsed || typeof parsed !== "object") return [];
+    const env = parsed as Record<string, unknown>;
+    if (env.status !== "success" || !env.data || typeof env.data !== "object") return [];
+
+    const raw = env.data as Record<string, unknown>;
+    const dec = decryptIfEncrypted(raw) as Record<string, unknown>;
+    const left = Array.isArray(dec.left_team_players) ? (dec.left_team_players as Array<Record<string, unknown>>) : [];
+    const right = Array.isArray(dec.right_team_players) ? (dec.right_team_players as Array<Record<string, unknown>>) : [];
+
+    const out: PlatformPlayer[] = [];
+    for (const p of [...left, ...right]) {
+      // fantasy_id_list[slug].id — the ORIGINAL's own resolution order
+      let id = "";
+      if (Array.isArray(p.fantasy_id_list)) {
+        for (const f of p.fantasy_id_list as Array<Record<string, unknown>>) {
+          if (String(f?.name ?? "") === fantasyApp && f?.id != null) { id = String(f.id); break; }
+        }
+      }
+      if (!id && p.pl_id != null) id = String(p.pl_id);
+      if (!id && p.player_fixed_id != null) id = String(p.player_fixed_id);
+      const name = String(p.name ?? "").trim();
+      if (!id || !name) continue;
+      out.push({
+        id,
+        name,
+        playerRole: typeof p.role === "number" ? p.role : typeof p.player_role === "number" ? p.player_role : undefined,
+        teamIndex: typeof p.team_index === "number" ? p.team_index : undefined,
+        credits: typeof p.credits === "number" ? p.credits : undefined,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 /* ------------------------------------------------------------------ */
